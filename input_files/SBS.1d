@@ -1,0 +1,294 @@
+!----------global simulation parameters----------
+simulation 
+{
+  algorithm = "cuda",
+!  wall_clock_limit = "2:00:00",
+  wall_clock_check = 500,
+  file_format = "zdf",
+  parallel_io = "mpi",
+}
+
+!--------the node configuration for this simulation--------
+node_conf 
+{
+ node_number(1) = 1,
+ n_threads=10,
+ if_periodic(1) = .false.,
+ tile_number(1) = 40,
+ !tile_topology = "hilbert",
+ com_buf_size = 2024,
+ ihole_size_frac = 0.05,
+ nchunks_pad_frac = 0.05,
+}
+
+!----------spatial grid----------
+grid 
+{
+  nx_p(1) =  84052,
+  coordinates = "cartesian",
+}
+
+!----------time step and global data dump timestep number----------
+time_step 
+{
+  dt     =  0.02798,
+  ndump  =  2000, 
+}
+
+!----------restart information----------
+restart 
+{
+  ndump_fac = 0,
+  if_restart=.false.,
+}
+
+!----------spatial limits of the simulations----------
+space 
+{
+  xmin(1) =  -2400.0 ,
+  xmax(1) =   0.0 ,
+  if_move(1)= .true.,
+  !move_u = 2.0,
+}
+
+!----------time limits ----------
+time 
+{
+  tmin = 0.0d0, tmax = 13000.0,
+}
+
+!----------field solver set up----------
+
+el_mag_fld 
+{
+  smooth_type = "none",
+  ext_fld = "none",
+}
+
+
+!----------boundary conditions for em-fields ----------
+emf_bound 
+{
+  type(1:2,1) = "vpml", "vpml",
+  !type(1:2,2) = "vpml", "vpml",
+  !vpml_bnd_size = 30,
+  !vpml_diffuse(1:2) = .true., .true.,
+  !vpml_diffuse(1:2,2) = .true., .true.,
+}
+
+!----------em-field diagnostics---------------
+diag_emf
+  {
+    ndump_fac = 1,
+    ndump_fac_ene_int = 1,
+    reports = "e1", "e3", "b2",
+  }
+
+!----------number of particle species----------
+particles 
+{ 
+  num_cathode = 0,
+  num_species = 2,
+  interpolation = "quadratic",
+}
+
+!----------information for ELECTRONS ----------
+species 
+{
+  name = "electrons",
+  num_par_max = 4249559,
+  rqm=-1.0,
+  num_par_x(1) = 1024,
+  !den_min = 1.d-5,
+  !add_tag = .true.,
+}
+
+!----------information for species ELECTRONS ----------
+udist 
+{
+  use_zpulse_equilibrium = .true.,
+  uth(1:3) = 0.031, 0.031, 0.031,
+  ufl(1:3) = 0.0, 0.00, 0.00,
+}
+
+profile 
+{
+  profile_type(1) = "math func",
+  math_func_expr = "0.3*if(x1<0, 0.0, if(x1<100,sin(1.5708*(x1/100))^2,1.0))",
+}
+
+!----------boundary conditions for this species----------
+spe_bound 
+{
+  type(1:2,1) = "open", "open",
+  !type(1:2,2) = "open", "open",
+  !type(1:2,2) = "thermal", "thermal",
+  !uth_bnd(1:3,1,2) = 0.031, 0.031, 0.031,
+  !uth_bnd(1:3,2,2) = 0.031, 0.031, 0.031,
+}
+
+!----------diagnostic for this species----------
+diag_species 
+{
+ ndump_fac = 1, 
+ !reports = "charge",
+
+ ndump_fac_ene = 1,
+ ndump_fac_pha = 2, 
+ ps_xmin(1) =  -2400.0,
+ ps_xmax(1) =  0.0,
+ ps_nx(1)   =  20000,
+
+ ps_pmin(1:3) = -0.0001, -0.01, -0.1,
+ ps_pmax(1:3) = 0.0001,  0.01,  0.1,
+ ps_np(1:3)   = 256,  512,  256,
+ if_ps_p_auto(1:3) = .true., .true., .true., 
+  
+ ps_gammamin = 1.0, 
+ ps_gammamax = 2.0,
+ ps_ngamma = 512,
+ if_ps_gamma_auto = .true.,
+     
+ phasespaces = "p2x1_m","p1x1_m","x1_m",
+ raw_gamma_limit = 0.0,
+
+ raw_fraction = 1.0,
+ raw_math_expr = "1.0",
+ 
+ 
+! ndump_fac_tracks = 100,
+! niter_tracks = 1,
+! file_tags = "electron.tags",
+}
+
+!----------information for PROTONS ----------
+species 
+{
+  name = "protons",
+  num_par_max = 4249559,
+  rqm=1836,
+  num_par_x(1) = 256,
+  !den_min = 1.d-5,
+  !add_tag = .true.,
+}
+
+!----------information for species PROTONS ----------
+udist 
+{
+  use_zpulse_equilibrium = .true.,
+  uth(1:3) = 0.000231, 0.000231, 0.000231,
+  ufl(1:3) = 0.0, 0.00, 0.00,
+}
+
+!----------density profile for this species----------
+profile 
+{
+  profile_type(1) = "math func",
+  math_func_expr = "0.3*if(x1<0, 0.0, if(x1<100,sin(1.5708*(x1/100))^2,1.0))",
+}
+
+!----------boundary conditions for this species----------
+spe_bound 
+{
+  type(1:2,1) =   "open", "open",
+  !type(1:2,2) = "open", "open",
+
+  !type(1:2,2) = "thermal", "thermal",
+  !uth_bnd(1:3,1,2) = 0.000231, 0.000231, 0.000231,
+  !uth_bnd(1:3,2,2) = 0.000231, 0.000231, 0.000231,
+}
+
+!----------diagnostic for this species----------
+diag_species 
+{
+ ndump_fac = 1, 
+ !reports = "charge",
+
+ ndump_fac_ene = 1,
+ ndump_fac_pha = 2, 
+ ndump_fac_raw = 0,
+ ps_xmin(1) =  -2400.0,
+ ps_xmax(1) =  0.0,
+ ps_nx(1)   =  20000,
+
+ ps_pmin(1:3) = -0.001, -0.001, -0.001,
+ ps_pmax(1:3) = 0.001,  0.001,  0.001,
+ ps_np(1:3)   = 512,  512,  128,
+ if_ps_p_auto(1:3) = .true., .true., .true., 
+  
+ ps_gammamin = 1.0, 
+ ps_gammamax = 2.0,
+ ps_ngamma = 512,
+ if_ps_gamma_auto = .true.,
+     
+ phasespaces = "p1x1_m","p2x1_m","x1_m",
+ raw_gamma_limit = 0.0,
+
+ raw_fraction = 1.0,
+ raw_math_expr = "1.0",
+ 
+ 
+! ndump_fac_tracks = 100,
+! niter_tracks = 1,
+! file_tags = "electron.tags",
+}
+
+zpulse 
+{
+  direction = 1,
+  propagation = "forward",   ! launch the pulse with forward propagation (default)
+  
+  a0 = 0.027037,                ! use a normalized peak value of 1
+  omega0 = 1.0,             ! use a normalized central frequency of 5.0
+  pol = 90.0d0,              ! use a 45 deg polarization angle
+  
+  
+  lon_type = "sin2",   ! use a polynomial longitudinal envelope
+  lon_rise = 189.3,            ! use a 6.4 1/wp rise time
+  lon_flat = 0.0,            ! hold the peak value for 0.0 length (i.e. don't hold it)
+  lon_fall = 189.3,            ! use a 6.4 1/wp fall time. The pulse will have a total length of 12.8
+  lon_start = -200.0,
+
+  per_type = "plane",     ! use a gaussian transverse profile
+  per_focus = 1500,
+  per_w0 = 25,
+  no_div_corr=.true.,
+}
+
+zpulse_mov_wall
+{
+  propagation = "backward",   ! launch the pulse with forward propagation (default)
+
+  launch_time = 0.,
+
+  a0 = 0.027037,          ! use a normalized peak value of 1
+  omega0 = 1.0,            ! use a normalized central frequency of 5.0
+  k0 = 0.83666,          ! wave number consistent with the plasma dispersion relation
+  pol = 90.0d0,              ! use a 45 deg polarization angle
+  xi0=0.0,
+  wall_pos = 0.0,
+  if_launch_from_wall = .true.,
+  if_launch_t0 = .false.,
+  wall_vel = 1.0,
+  if_launch = .true.,
+  tenv_type = "sin2",
+  tenv_rise = 176.0,
+  tenv_flat = 500000,
+  tenv_fall = 176.0,
+}
+
+!----------smoothing for currents----------
+smooth
+{
+  type(1) = "compensated",
+}
+
+!----------diagnostic for currents---------- 
+diag_phy_field 
+{
+}
+
+!-----------diagnostic for charge-----------
+diag_phy_field 
+{
+}
