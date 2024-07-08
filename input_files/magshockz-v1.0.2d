@@ -91,7 +91,7 @@ particles
 !----------information for BACKGROUND ELECTRONS ----------
 species
 {
-  name = "background-electrons",
+  name = "electronsBackground",
   num_par_max = 6000000,
   rqm=-1.0,
   num_par_x(1:2) = 4, 4,
@@ -152,7 +152,7 @@ diag_species
 !----------information for BACKGROUND IONS ----------
 species
 {
-  name = "background-ions",
+  name = "ionsBackground",
   num_par_max = 6000000,
   rqm=1.0,
   num_par_x(1:2) = 4, 4,

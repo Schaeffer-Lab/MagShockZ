@@ -40,9 +40,11 @@ def get_osiris_quantity_1d(quant_path, n_start = 0, n_end = -1, n_skip = 1):
 
 def get_osiris_quantity_2d(quant_path, n_start = 0, n_end = -1, n_skip = 1):
     quant_list = np.sort(np.array(os.listdir(quant_path)))
+    print(quant_list)
     quant_list = quant_list[np.logical_not(quant_list == '.DS_Store')]
     quant_list = remove_repeated_elements(quant_list)
     quant_list = quant_list[n_start:n_end:n_skip]
+    print(quant_list)
     
     n_t = len(quant_list)
     quant = vysxd_get_data(quant_path + quant_list[0]) # Read hdf5 file format
