@@ -6,7 +6,7 @@ ne_cgs = 1e18 # [cm^-3]
 Te_eV = 5.0 # [eV]
 B_gauss = 50000 # [G]
 Z = 1 # [e]
-ion_mass = 32 # [m_e]
+ion_mass = 100 # [m_e]
 print("-"*10+f" n_e = {ne_cgs} cm^-3 "+"-"*10)
 
 
@@ -62,5 +62,6 @@ print(f"in simulation units this would be = {round(lambda_d*omega_pe/c,4)}")
 print("")
 print(f"Te of {Te_eV} eV corresponds to v_th = {np.format_float_scientific(np.sqrt(Te_eV*ergs_per_eV/m_e),2)} cm/s")
 print(f"in simulation units this would be = {round(np.sqrt(Te_eV*ergs_per_eV/m_e)/c,4)}")
+print(f"for the ions, this same temperature would be = {np.format_float_scientific(np.sqrt(1/ion_mass)*np.sqrt(Te_eV*ergs_per_eV/m_e)/c,4)}")
 
 print(f"in order to resolve the debye length, this would require the simulation to have {int(L_box/(lambda_d*omega_pe/c))} cells")
