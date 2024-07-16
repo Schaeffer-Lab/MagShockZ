@@ -149,7 +149,7 @@ def plot_quantity(q: np.ndarray, xmin:float, xmax:float, v:float, x: np.ndarray,
     plt.title(f'integrated along lines of $v_s = {v}$')
 
 def get_temperature(p1x1: list,ufl1: list) -> np.ndarray:
-
+    from scipy.ndimage import zoom
     '''
     Get pressure from phase space data, right now this only works if integrating over x1. Output is NOT NORMALIZED!!!
     '''
@@ -167,8 +167,12 @@ def get_temperature(p1x1: list,ufl1: list) -> np.ndarray:
         first_moment = np.trapz(fv,axis=0)
         zeroth_moment = np.trapz(p1x1[0][i,:,:],axis=0)
 
+        if (np.shape(p1x1[0][:,0,:]) != np.shape(ufl1[0])):
+            res = cv2.resize(img, dsize=(54, 140), interpolation=cv2.INTER_CUBIC)
+            second_moment = zoom(second_moment, np.shape(ufl1[0]), order=1)
+            first_moment = zoom(first_moment, np.shape(ufl1[0]), order=1)
+            zeroth_moment = zoom(zeroth_moment, np.shape(zeroth_moment), order=1 )
         temperature = np.vstack((temperature,second_moment-2*ufl1[0][i]*first_moment+np.square(ufl1[0][i])*zeroth_moment))
     
     # Don't need that first slice because it is just zeros
     return temperature[1:,:]
-
