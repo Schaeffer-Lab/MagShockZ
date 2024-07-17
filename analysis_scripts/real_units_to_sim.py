@@ -4,7 +4,8 @@ You must input these quantities yourself!
 '''
 ne_cgs = 1e18 # [cm^-3]
 Te_eV = 5.0 # [eV]
-B_gauss = 50000 # [G]
+# B_gauss = 50000  # [G]
+B_gauss = 110120  # [G]
 Z = 1 # [e]
 ion_mass = 100 # [m_e]
 print("-"*10+f" n_e = {ne_cgs} cm^-3 "+"-"*10)
