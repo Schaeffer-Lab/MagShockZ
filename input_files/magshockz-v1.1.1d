@@ -155,7 +155,7 @@ diag_species
  ndump_fac_raw = 0,
 
  ps_xmin(1:1) =  0,
- ps_xmax(1:1) =  754,
+ ps_xmax(1:1) =  1333,
  ps_nx(1:1)   =  1024, ! set this to be an ion inertial length
  ps_pmin(1:3) = -0.5, -0.5, -.25, ! can reduce this for ions
  ps_pmax(1:3) = 0.5,  0.5,  .25,
@@ -219,7 +219,7 @@ diag_species
  ndump_fac_raw = 0,
 
  ps_xmin(1:1) =  0,
- ps_xmax(1:1) =  754,
+ ps_xmax(1:1) =  1333,
  ps_nx(1:1)   =  1024,
  ps_pmin(1:3) = -0.1, -0.1, -0.1,
  ps_pmax(1:3) = 0.1,  0.1,  0.1,
@@ -291,7 +291,7 @@ diag_species
  ndump_fac_raw = 0,
 
  ps_xmin(1:1) =  0,
- ps_xmax(1:1) =  754,
+ ps_xmax(1:1) =  1333,
  ps_nx(1:1)   =  1024,
  ps_pmin(1:3) = -0.5, -0.5, -0.25,
  ps_pmax(1:3) = 0.5,  0.5,  0.25,
@@ -364,7 +364,7 @@ diag_species
  ndump_fac_raw = 0,
 
  ps_xmin(1:1) =  0,
- ps_xmax(1:1) =  754,
+ ps_xmax(1:1) =  1333,
  ps_nx(1:1)   =  1024,
  ps_pmin(1:3) = -0.1, -0.1, -0.1,
  ps_pmax(1:3) = 0.1,  0.1,  0.1,
