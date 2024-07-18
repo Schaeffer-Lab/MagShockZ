@@ -39,8 +39,8 @@ restart
 {
   ndump_fac = -1,
   ndump_time = 3600, !once/hour
-  if_restart=.false.,
-  if_remold=.true.,
+  if_restart = .false.,
+  if_remold = .true.,
 }
 
 
@@ -115,7 +115,7 @@ species
 {
   name = "electronsBackground",
   num_par_max = 6000000, !clarify this
-  rqm=-1.0,
+  rqm = -1.0,
   num_par_x(1:1) = 1000, !clarify this
   free_stream = .false.,
   !q_real = -1.0,
@@ -180,7 +180,7 @@ species
 {
   name = "ionsBackground",
   num_par_max = 6000000,
-  rqm=100.0,
+  rqm = 100.0,
   num_par_x(1:1) = 1000,
   free_stream = .false.,
   !q_real = 1.0,
@@ -244,7 +244,7 @@ species
 {
   name = "electronsPiston",
   num_par_max = 6000000,
-  rqm=-1.0,
+  rqm = -1.0,
   num_par_x(1:1) = 1000,
   free_stream = .false.,
   !q_real = -1.0,
@@ -317,7 +317,7 @@ species
 {
   name = "ionsPiston",
   num_par_max = 6000000,
-  rqm=100.0,
+  rqm = 100.0,
   num_par_x(1:1) = 1000,
   free_stream = .false.,
   ! q_real = -1.0,

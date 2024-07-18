@@ -4,74 +4,72 @@ def parse_sections(input_file):
     section_name_pattern = re.compile(r'^([^!{}\s]+)$')
     section_start_pattern = re.compile(r'^\s*{\s*$')
     section_end_pattern = re.compile(r'^\s*}\s*$')
-    assignment_pattern = re.compile(r'([^=]+)=\s*(.+)')  # Pattern to match assignments
-    
+    assignment_pattern = re.compile(r'([^=]+?)\s*=\s*(.+)')
+
     sections = {}
+    section_stack = []  # Stack to track current section and nesting
     current_section = None
-    current_species = None  # Track the current species name
-    section_name_pending = False
+    species_name = None  # Track the name of the species
+
+    def try_convert_to_float(val):
+        try:
+            return float(val)
+        except ValueError:
+            return val  # Return the original value if conversion fails
 
     with open(input_file, 'r') as file:
         for line in file:
-            line = line.split('!', 1)[0].strip()  # Remove comments and whitespace
-            
-            if section_name_pending:
-                if section_start_pattern.match(line):
-                    if current_section == "species":
-                        # For species, we delay adding to sections until name is known
-                        temp_section = {}
-                    else:
-                        sections[current_section] = {}
-                    section_name_pending = False
+            line = line.strip().split('!', 1)[0]  # Remove comments and whitespace
+
+            if section_start_pattern.match(line):
+                if current_section:
+                    section_stack.append(current_section)
+                continue
+
+            if section_end_pattern.match(line):
+                if section_stack:
+                    current_section = section_stack.pop()  # Go back to the previous section
+                else:
+                    current_section = None  # No more sections to pop, reset current_section
+                continue
+
+            name_match = section_name_pattern.match(line)
+            if name_match:
+                current_section = name_match.group(1)
+                if current_section.lower() == "species":
+                    species_name = None  # Reset species name for a new species section
+                continue
+
+            assignment_match = assignment_pattern.match(line)
+            if assignment_match:
+                key, value = assignment_match.groups()
+                print(key,value)
+                key = key.strip().strip('"').rstrip(',')  # Strip whitespace, quotes, and trailing commas
+                value = value.strip().strip('"').rstrip(',')
+
+                if species_name is None and current_section.lower() == "species" and key.lower() == "name":
+                    species_name = value.strip().rstrip(',').strip('"')
+                    sections[species_name] = {}  # Initialize the species entry
                     continue
-                else:
-                    section_name_pending = False
-                    current_section = None
-            
-            if current_section is not None:
-                if section_end_pattern.match(line):
-                    if current_section == "species" and current_species:
-                        # Now that the species section is complete, add it under the species name
-                        sections[current_species] = temp_section
-                        current_species = None  # Reset current_species for the next species section
-                    current_section = None
-                else:
-                    assignment_match = assignment_pattern.match(line)
-                    if assignment_match:
-                        key = assignment_match.group(1).strip()
-                        value = assignment_match.group(2).strip()
-                        values_list = [val.strip().strip('"') for val in value.split(',')]
 
-                        # Attempt to convert each value to a float if possible
-                        converted_values_list = []
-                        for val in values_list:
-                            try:
-                                # Try converting to float
-                                converted_values_list.append(float(val))
-                            except ValueError:
-                                # If conversion fails, keep the value as a string
-                                converted_values_list.append(val)
+                # Determine the correct dictionary to update based on nesting
+                target_dict = sections
+                if species_name:
+                    target_dict = sections[species_name]
 
-                        if len(converted_values_list) == 1:
-                            # If there's only one value, use it directly without a tuple
-                            final_value = converted_values_list[0]
-                        else:
-                            if converted_values_list[-1] == '':
-                                converted_values_list.pop()  # Remove the last element if it's an empty string
-                            final_value = tuple(converted_values_list)
+                for sec in section_stack:
+                    if sec not in target_dict:
+                        target_dict[sec] = {}
+                    target_dict = target_dict[sec]
 
-                        # Decide where to add the assignment based on current_species
-                        target_section = temp_section if current_section == "species" else sections.get(current_species, sections[current_section])
-                        target_section[key] = final_value
-            else:
-                name_match = section_name_pattern.match(line)
-                if name_match:
-                    current_section = name_match.group(1)
-                    section_name_pending = True
+                # Convert value to tuple, attempting to convert each element to a float
+                value_as_tuple = tuple(try_convert_to_float(val) for val in value.split(','))
+                target_dict[key] = value_as_tuple
 
     return sections
 
 # Example usage
 input_file_path = '/home/david/MagShockZ/input_files/magshockz-v1.1.1d'
 sections = parse_sections(input_file_path)
-print(sections)
+
+print(sections['restart'].keys())
