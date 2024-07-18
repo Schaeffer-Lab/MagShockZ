@@ -50,7 +50,7 @@ restart
 space
 {
   xmin(1:1) =   0,
-  xmax(1:1) =   1333,
+  xmax(1:1) =   1333, ! it looks like I am overestimating the needed size of the box by quite a lot
 
   if_move(1:2)= .false., .false.,
 }
@@ -67,7 +67,7 @@ time
 
 
 !----------field solver set up----------
-el_mag_fld !!! adjust this later !!!
+el_mag_fld !!! adjust this later
 {
   smooth_type = "none",
   ext_fld = "static",
@@ -180,7 +180,7 @@ species
 {
   name = "ionsBackground",
   num_par_max = 6000000,
-  rqm=32.0,
+  rqm=100.0,
   num_par_x(1:1) = 1000,
   free_stream = .false.,
   ! q_real = 1.0,
@@ -317,7 +317,7 @@ species
 {
   name = "ionsPiston",
   num_par_max = 6000000,
-  rqm=32.0,
+  rqm=100.0,
   num_par_x(1:1) = 1000,
   free_stream = .false.,
   ! q_real = -1.0,
