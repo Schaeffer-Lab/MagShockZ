@@ -1,7 +1,7 @@
 !----------global simulation parameters---------
 simulation
 {
-  ! n0=1.0e24,
+  !n0=1.0e24,
 }
 
 !--------the node configuration for this simulation--------
@@ -38,7 +38,7 @@ time_step
 restart
 {
   ndump_fac = -1,
-  ndump_time = 3600, ! once/hour
+  ndump_time = 3600, !once/hour
   if_restart=.false.,
   if_remold=.true.,
 }
@@ -50,7 +50,7 @@ restart
 space
 {
   xmin(1:1) =   0,
-  xmax(1:1) =   1333, ! it looks like I am overestimating the needed size of the box by quite a lot
+  xmax(1:1) =   1333, !it looks like I am overestimating the needed size of the box by quite a lot
 
   if_move(1:2)= .false., .false.,
 }
@@ -67,7 +67,7 @@ time
 
 
 !----------field solver set up----------
-el_mag_fld !!! adjust this later
+el_mag_fld !!!adjust this later
 {
   smooth_type = "none",
   ext_fld = "static",
@@ -107,20 +107,20 @@ particles
 { 
   num_cathode = 0,
   num_species = 4,
-  interpolation = "quadratic", ! don't know what this is
+  interpolation = "quadratic", !don't know what this is
 }
 
 !----------information for BACKGROUND ELECTRONS ----------
 species
 {
   name = "electronsBackground",
-  num_par_max = 6000000, ! clarify this
+  num_par_max = 6000000, !clarify this
   rqm=-1.0,
   num_par_x(1:1) = 1000, !clarify this
   free_stream = .false.,
-  ! q_real = -1.0,
-  ! if_collide = .true.,
-  ! if_like_collide = .true.,
+  !q_real = -1.0,
+  !if_collide = .true.,
+  !if_like_collide = .true.,
 }
 
 
@@ -149,17 +149,17 @@ diag_species
 {
  ndump_fac = 1, 
  reports = "charge", "q1",
- rep_udist = "ufl1", ! added ufl2 and ufl3 to this line, look here for errors
+ rep_udist = "ufl1", !added ufl2 and ufl3 to this line, look here for errors
  ndump_fac_ene = 1,
  ndump_fac_pha = 1, 
  ndump_fac_raw = 0,
 
  ps_xmin(1:1) =  0,
  ps_xmax(1:1) =  1333,
- ps_nx(1:1)   =  1024, ! set this to be an ion inertial length
- ps_pmin(1:3) = -0.5, -0.5, -.25, ! can reduce this for ions
+ ps_nx(1:1)   =  1024, !set this to be an ion inertial length
+ ps_pmin(1:3) = -0.5, -0.5, -.25, !can reduce this for ions
  ps_pmax(1:3) = 0.5,  0.5,  .25,
- ps_np(1:3)   = 512,  128,  32, ! more resolution for electrons than ions
+ ps_np(1:3)   = 512,  128,  32, !more resolution for electrons than ions
  if_ps_p_auto(1:3) = .false., .false., .false., 
 
  ps_gammamin = 1.0, 
@@ -183,9 +183,9 @@ species
   rqm=100.0,
   num_par_x(1:1) = 1000,
   free_stream = .false.,
-  ! q_real = 1.0,
-  ! if_collide = .true.,
-  ! if_like_collide = .true.,
+  !q_real = 1.0,
+  !if_collide = .true.,
+  !if_like_collide = .true.,
 }
 
 
@@ -213,7 +213,7 @@ diag_species
 {
  ndump_fac = 1, 
  reports = "charge", "q1",
- rep_udist = "ufl1", ! added ufl2 and ufl3 to this line, look here for errors
+ rep_udist = "ufl1", !added ufl2 and ufl3 to this line, look here for errors
  ndump_fac_ene = 1,
  ndump_fac_pha = 1, 
  ndump_fac_raw = 0,
@@ -247,9 +247,9 @@ species
   rqm=-1.0,
   num_par_x(1:1) = 1000,
   free_stream = .false.,
-  ! q_real = -1.0,
-  ! if_collide = .true.,
-  ! if_like_collide = .true.,
+  !q_real = -1.0,
+  !if_collide = .true.,
+  !if_like_collide = .true.,
 }
 
 
@@ -285,7 +285,7 @@ diag_species
 {
  ndump_fac = 1, 
  reports = "charge", "q1",
- rep_udist = "ufl1", ! added ufl2 and ufl3 to this line, look here for errors
+ rep_udist = "ufl1", !added ufl2 and ufl3 to this line, look here for errors
  ndump_fac_ene = 1,
  ndump_fac_pha = 1, 
  ndump_fac_raw = 0,
@@ -358,7 +358,7 @@ diag_species
 {
  ndump_fac = 1, 
  reports = "charge", "q1",
- rep_udist = "ufl1", ! added ufl2 and ufl3 to this line, look here for errors
+ rep_udist = "ufl1", !added ufl2 and ufl3 to this line, look here for errors
  ndump_fac_ene = 1,
  ndump_fac_pha = 1, 
  ndump_fac_raw = 0,
@@ -388,10 +388,10 @@ diag_species
 
 !collisions
 !{
-! n_collide = 1,  ! collide every time step
-! nx_collision_cells(1) = 1, ! each collision cells has 8x8 PIC cells
+! n_collide = 1,  !collide every time step
+! nx_collision_cells(1) = 1, !each collision cells has 8x8 PIC cells
 !   
-! coulomb_logarithm_automatic = .false., ! fixed Coulomb logarithm
+! coulomb_logarithm_automatic = .false., !fixed Coulomb logarithm
 ! coulomb_logarithm_value = 500,
 ! collision_model = "takizuka",
 !}
