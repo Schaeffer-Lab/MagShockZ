@@ -67,7 +67,7 @@ time
 
 
 !----------field solver set up----------
-el_mag_fld !!!adjust this later
+el_mag_fld
 {
   smooth_type = "none",
   ext_fld = "static",
@@ -339,7 +339,8 @@ udist
 profile 
 {
   profile_type(1) = "math func",
-  math_func_expr = "0.3*if(x1<100.0,1.0,0)",
+  !math_func_expr = "0.3*if(x1<100.0,1.0,0)",
+  math_func_expr = "0.3*if(exp(0.0565*x1))",
   density = 10.0,
 }
 

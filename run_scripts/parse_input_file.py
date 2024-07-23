@@ -69,7 +69,8 @@ def parse_sections(input_file):
     return sections
 
 # Example usage
-input_file_path = '/home/david/MagShockZ/input_files/magshockz-v1.1.1d'
+input_file_path = '/home/david/MagShockZ/input_files/SBS.1d'
 sections = parse_sections(input_file_path)
 
-print(sections['restart'].keys())
+print(sections.keys())
+print(sections['el_mag_fld'].keys())

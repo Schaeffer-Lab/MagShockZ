@@ -12,13 +12,10 @@ def find_species_keys(d):
     return species_keys
 
 def check_dt_lessthan_dx(d):
-    try:
-        dx = (d['space']['xmax(1:1)'][0] - d['space']['xmin(1:1)'][0])/d['grid']['nx_p(1:1)'][0]
-        dt = d['time_step']['dt'][0]
-        if dt > dx:  # Example condition
-            raise CheckError("dt is greater than dx.")
-    except KeyError:
-        raise CheckError("Missing 'grid' or 'nx_p(1:1)' in input.")
+    dx = (d['space']['xmax(1:1)'][0] - d['space']['xmin(1:1)'][0])/d['grid']['nx_p(1:1)'][0]
+    dt = d['time_step']['dt'][0]
+    if dt > dx:  # Example condition
+        raise CheckError("dt is greater than dx.")
     print()
     pass
 
@@ -61,9 +58,8 @@ def perform_checks(d):
 # Usage
 from parse_input_file import parse_sections
 
-sections = parse_sections('/home/david/MagShockZ/input_files/magshockz-v1.1.1d')
+sections = parse_sections('/home/david/MagShockZ/input_files/SBS.1d')
 print(sections.keys())
-print(sections['ionsPiston'])
 
 try:
     perform_checks(sections)

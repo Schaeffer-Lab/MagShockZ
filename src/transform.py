@@ -174,3 +174,8 @@ def get_temperature(p1x1: list,ufl1: list) -> np.ndarray:
     
     # Don't need that first slice because it is just zeros
     return temperature[1:,:]
+
+def pretty_plot():
+    plt.grid(visible=True,which='major',lw=.75)
+    plt.grid(visible=True,which='minor',ls= ':',lw=.5)
+    plt.minorticks_on()
