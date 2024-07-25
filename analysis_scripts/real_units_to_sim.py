@@ -1,19 +1,27 @@
 import numpy as np
+import sys
+import os
+
 '''
 You must input these quantities yourself!
 '''
-ne_cgs = 6.84508518e+18 # [cm^-3]
-Te_eV = 5.0 # [eV]
+print_flag = True
+if print_flag == False:
+     sys.stdout = open(os.devnull, 'w')
+
+ne_cgs = 7e+18 # [cm^-3]
+Te_eV = 30.0 # [eV]
 # B_gauss = 50000  # [G]
 B_gauss = 110120  # [G]
 Z = 1 # [e]
-ion_mass = 1836 # [m_e]
+ion_mass = 100 # [m_e]
+piston_ion_mass = 0.979*ion_mass # this assumes that the piston is Mg and the background is Al
 v_piston = None
 print("-"*10+f" n_e = {ne_cgs} cm^-3 "+"-"*10)
 
 
 e = 4.80320425e-10 # [statC] = [cm^3/2⋅g^1/2⋅s^−1]
-m_e = 9.1093837139e-28 # [g]
+m_e = 9.1093837139e-28 # [g].
 c = 2.99792458e10 # [cm/s]
 kb = 8.617333262e-5 # [eV/K]
 ergs_per_eV = 1.602e-12
@@ -74,22 +82,27 @@ print(f"in order to resolve the debye length, this would require the simulation 
 # Function to convert the input quantity to simulation units
 def convert_to_simulation_units(quantity, units):
     # Conversion factors (example values, adjust as necessary)
+    if '^' in units:
+      units = units.split('^')
+      units[1] = int(units[1])
+    else:
+      units = [units, 1]
+
     conversion_factors = {
         'cm/s': c,
         'cm': c/omega_pe,
         'G': (omega_pe*m_e*c)/e,
-        'cm^-3': (c/omega_pe)**3,
-        'cm^-1': 1/(c/omega_pe)
+        's': 1/omega_pe,
         # Add other units and their conversion to simulation units here
     }
     
-    if units in conversion_factors:
-        return quantity/conversion_factors[units]
+    if units[0] in conversion_factors:
+        return np.format_float_scientific(quantity/(conversion_factors[units[0]]**units[1]),4)
     else:
         print("Unsupported units.")
         return None
 
-while True:
+while False: # Set to true if you would like to use the notebook interactively
       # Take input from the user
       user_input = input("Enter a quantity and its units to convert to simulation units (e.g., '1000 cm/s'): ")
       if user_input.lower() == 'exit':
@@ -104,4 +117,4 @@ while True:
             # Convert to simulation units
             converted_quantity = convert_to_simulation_units(quantity, units)
             if converted_quantity is not None:
-                  print(f"{quantity} {units} in simulation units is approximately {converted_quantity:.4f}")
+                  print(f"{quantity} {units} in simulation units is approximately {converted_quantity}")

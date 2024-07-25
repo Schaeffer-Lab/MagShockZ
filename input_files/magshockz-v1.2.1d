@@ -30,7 +30,7 @@ grid
 time_step
 {
   dt     =  0.03,
-  ndump  =  21383, !.1 ion gyrotime
+  ndump  =  10, !.1 ion gyrotime
 }
 
 !----------restart information----------
@@ -61,7 +61,7 @@ space
 
 time
 {
-  tmin = 0.0d0, tmax  = 14564,
+  tmin = 0.0d0, tmax  = 1,
 }
 
 
@@ -266,8 +266,7 @@ udist
 profile 
 {
   profile_type(1) = "math func",
-  math_func_expr = "0.3*if(x1<100.0,1.0,0)",
-  density = 100.0,
+  math_func_expr = "if(x1<581.0,(-9.8135e-19)*x1^8 + (2.5827e-15)*x1^7 + (-2.6431e-12)*x1^6 + (1.2667e-09)*x1^5 + (-2.3019e-07)*x1^4 + (-3.066e-05)*x1^3 + (1.9860e-02)*x1^2 + (-3.2541e+00)*x1^1 + (2.5617e+02)*x1^0,0)",
 }
 
 !----------boundary conditions for this species----------
@@ -339,8 +338,7 @@ udist
 profile 
 {
   profile_type(1) = "math func",
-  math_func_expr = "0.3*if(x1<100.0,1.0,0)",
-  density = 100.0,
+  math_func_expr = "if(x1<581.0,(-9.8135e-19)*x1^8 + (2.5827e-15)*x1^7 + (-2.6431e-12)*x1^6 + (1.2667e-09)*x1^5 + (-2.3019e-07)*x1^4 + (-3.066e-05)*x1^3 + (1.9860e-02)*x1^2 + (-3.2541e+00)*x1^1 + (2.5617e+02)*x1^0,0)",
 }
 
 !----------boundary conditions for this species----------
