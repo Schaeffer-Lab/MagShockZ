@@ -9,7 +9,7 @@ print_flag = True
 if print_flag == False:
      sys.stdout = open(os.devnull, 'w')
 
-ne_cgs = 7e+18 # [cm^-3]
+ne_cgs = 5e+18 # [cm^-3]
 Te_eV = 30.0 # [eV]
 # B_gauss = 50000  # [G]
 B_gauss = 110120  # [G]
