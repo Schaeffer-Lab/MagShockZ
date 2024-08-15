@@ -8,7 +8,7 @@ def pull_value_at_coord(coordinate: list, field: str, ds: yt.data_objects.static
         field (str): field to extract value from
         ds (yt.data_objects.static_output.Dataset): dataset to extract value from"""
     
-    slc = yt.SlicePlot(ds,"z",(field))
+    slc = yt.SlicePlot(ds,"z",(field),center=[0.0, 0.4, 0.0]).zoom(1.4)
     
     # Convert coordinates to dataset units
     coord = ds.arr(coordinate, 'code_length')

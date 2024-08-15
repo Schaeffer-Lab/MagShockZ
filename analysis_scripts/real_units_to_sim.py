@@ -9,10 +9,11 @@ print_flag = True
 if print_flag == False:
      sys.stdout = open(os.devnull, 'w')
 
-ne_cgs = 5e+18 # [cm^-3]
-Te_eV = 30.0 # [eV]
-# B_gauss = 50000  # [G]
-B_gauss = 110120  # [G]
+ne_cgs = 7.8e+18 # [cm^-3]
+Te_eV = 40.0 # [eV]
+Te_Kelvin = 12974580.64146048 # [Kelvin]
+Ti_Kelvin = 1436956.15327951 # [Kelvin]
+B_gauss = 110000  # [G] Technically, the background is supposed to be 15 T, but i am using the value in the channel
 Z = 1 # [e]
 ion_mass = 100 # [m_e]
 piston_ion_mass = 0.979*ion_mass # this assumes that the piston is Mg and the background is Al
@@ -69,17 +70,44 @@ print("and the maximum bound of the box should be approx "\
 print("-"*50)
 
 ## assume that OSIRIS uses the convention where v_th = sqrt(kT/m)
-lambda_d = np.sqrt(Te_eV*ergs_per_eV/(4*np.pi*ne_cgs*e**2))
+if 'Te_Kelvin' in locals():
+     Te_eV = Te_Kelvin*kb
+     Te_ergs = Te_Kelvin*kb*ergs_per_eV
+else:
+    Te_ergs = Te_eV*ergs_per_eV
+
+if 'Ti_Kelvin' in locals():
+     Ti_eV = Ti_Kelvin*kb
+     Ti_ergs = Ti_Kelvin*kb*ergs_per_eV
+else:
+     Ti_eV = Te_eV
+     Ti_ergs = Te_ergs
+     
+lambda_d = np.sqrt(Te_ergs/(4*np.pi*ne_cgs*e**2))
 print(f"Te of {Te_eV} eV corresponds to debye length of {np.format_float_scientific(lambda_d,2)} cm")
 print(f"in simulation units this would be = {(lambda_d*omega_pe/c):.4f}")
 print("")
-print(f"Te of {Te_eV} eV corresponds to v_th = {np.format_float_scientific(np.sqrt(Te_eV*ergs_per_eV/m_e),2)} cm/s")
-print(f"in simulation units this would be = {(np.sqrt(Te_eV*ergs_per_eV/m_e)/c):.4f}")
-print(f"for the ions, this same temperature would be = {np.format_float_scientific(np.sqrt(1/ion_mass)*np.sqrt(Te_eV*ergs_per_eV/m_e)/c,4)}")
+print(f"Te of {Te_eV} eV corresponds to v_th = {np.format_float_scientific(np.sqrt(Te_ergs/m_e),2)} cm/s")
+print(f"in simulation units this would be = {(np.sqrt(Te_ergs/m_e)/c):.4f}")
+
+print(f"Ti of {Ti_eV} eV corresponds to v_th = {np.format_float_scientific(np.sqrt(1/ion_mass)*np.sqrt(Ti_ergs/m_e),2)} cm/s")
+print(f"in simulation units this would be = {np.format_float_scientific(np.sqrt(1/ion_mass)*np.sqrt(Te_ergs/m_e)/c,4)}")
 
 print(f"in order to resolve the debye length, this would require the simulation to have {int(L_box/(lambda_d*omega_pe/c))} cells")
 
 # Function to convert the input quantity to simulation units
+
+def get_osiris_units():
+     osiris = {
+            'length': c/omega_pe,
+            'B': round(B_sim_units,3),
+            'time': 1/omega_pe,
+            'alfven_speed': alfven_speed_cgs/c,
+            'Te': lambda_d*omega_pe/c,
+            'Tpiston':np.sqrt(1/piston_ion_mass)*np.sqrt(Ti_ergs/m_e)/c
+     }
+     return osiris
+
 def convert_to_simulation_units(quantity, units):
     # Conversion factors (example values, adjust as necessary)
     if '^' in units:
