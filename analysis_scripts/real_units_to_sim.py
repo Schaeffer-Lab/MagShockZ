@@ -61,10 +61,11 @@ print(f"In order to simulate 5 ion gyrotimes by the time the shock has reached h
 print(f"we should set tmax = {int(5*(omega_pe/omega_ci))}")
 Mach_number = 10
 vshock_over_vpiston = 4/3
+length_of_piston = 730
 if v_piston:
-      L_box = (vshock_over_vpiston*v_piston/c)*(5*(omega_pe/omega_ci))*2
+      L_box = (vshock_over_vpiston*v_piston/c)*(5*(omega_pe/omega_ci))*2+length_of_piston
 else:
-      L_box = (vshock_over_vpiston*Mach_number*alfven_speed_cgs/c)*(5*(omega_pe/omega_ci))*2
+      L_box = (vshock_over_vpiston*Mach_number*alfven_speed_cgs/c)*(5*(omega_pe/omega_ci))*2+length_of_piston
 print("and the maximum bound of the box should be approx "\
       f"{int(L_box)}")
 print("-"*50)

@@ -1,6 +1,6 @@
 import yt
 
-def pull_value_at_coord(coordinate: list, field: str, ds: yt.data_objects.static_output.Dataset):
+def pull_value_at_coord(coordinate: list, field: str, ds: yt.data_objects.static_output.Dataset,plot=True):
     """Function to extract the value of a field at a specific coordinate in the dataset,
        also plots said coordinate on a slice plot in z
        Args:
@@ -18,5 +18,5 @@ def pull_value_at_coord(coordinate: list, field: str, ds: yt.data_objects.static
     print(f"{field} at {coord}: {value}")
 
     slc.annotate_marker(coord)
-    slc.show()
+    if plot: slc.show()
     return value

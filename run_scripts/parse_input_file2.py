@@ -14,7 +14,7 @@ def parse_input_file(file_path):
             current_section = line
             if current_section == "species":
                 seen_species = True  # Set flag if we should use the different naming convention
-            if seen_species:
+            if seen_species:    
                 if current_section == "species":
                     for j in range(i + 2, len(lines)):
                         if lines[j].startswith('name'):
