@@ -38,7 +38,7 @@ time_step
 restart
 {
   ndump_fac = -1,
-  ndump_time = 3600, !once/hour
+  ndump_time = 3590, !once/hour
   if_restart = .false.,
   if_remold = .true.,
 }

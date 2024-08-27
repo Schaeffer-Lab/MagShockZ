@@ -9,7 +9,7 @@ def fit_to_region(start_pt: list, end_pt:list, field: str, ds, degree: int, prec
         '''
         euclidean_length_of_ray = np.sqrt((end_pt[0]-start_pt[0])**2 + (end_pt[1]-start_pt[1])**2 + (end_pt[2]-start_pt[2])**2)
         dist_from_origin = np.sqrt(start_pt[0]**2 + start_pt[1]**2 + start_pt[2]**2)
-        return np.array(ds.ray(start_pt, end_pt)[('t')]*euclidean_length_of_ray+dist_from_origin)
+        return np.array(ds.ray(start_pt, end_pt)['t']*euclidean_length_of_ray+dist_from_origin)
     
 
     target_wall = 0.01 # This is hard coded based on the exact simulation I am working with, delete this line before using

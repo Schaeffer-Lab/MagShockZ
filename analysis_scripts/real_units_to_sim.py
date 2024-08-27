@@ -59,7 +59,7 @@ print("")
 
 print(f"In order to simulate 5 ion gyrotimes by the time the shock has reached halfway across the box")
 print(f"we should set tmax = {int(5*(omega_pe/omega_ci))}")
-Mach_number = 10
+Mach_number = 18
 vshock_over_vpiston = 4/3
 length_of_piston = 730
 if v_piston:
