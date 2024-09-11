@@ -1,5 +1,4 @@
-FLASH/OSIRIS_transfer/
-FLASH/OSIRIS_transfer.tgz
+FLASH/OSIRIS_transfer*
 simulations/raw_data/*/
 src/vysxd/__pycache__/
 src/__pycache__/
