@@ -9,11 +9,11 @@ print_flag = True
 if print_flag == False:
      sys.stdout = open(os.devnull, 'w')
 
-ne_cgs = 7.8e+18 # [cm^-3]
+ne_cgs = 5e+18 # [cm^-3]
 Te_eV = 40.0 # [eV]
 Te_Kelvin = 12974580.64146048 # [Kelvin]
 Ti_Kelvin = 1436956.15327951 # [Kelvin]
-B_gauss = 110000  # [G] Technically, the background is supposed to be 15 T, but i am using the value in the channel
+B_gauss = 150000  # [G] Technically, the background is supposed to be 15 T, but i am using the value in the channel
 Z = 1 # [e]
 ion_mass = 100 # [m_e]
 piston_ion_mass = 0.979*ion_mass # this assumes that the piston is Mg and the background is Al

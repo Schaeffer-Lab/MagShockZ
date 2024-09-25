@@ -4,7 +4,7 @@
 
 PATHTOINPUTFILE="$1"
 INPUTFILENAME=$(basename "$PATHTOINPUTFILE")
-OSIRISPATH="/home/${USER}/osiris/osiris-1.0.0/"
+OSIRISPATH="/home/${USER}/osiris/"
 PATHTOPROJECT="/home/${USER}/MagShockZ/"
 OUTPUTDIR="${PATHTOPROJECT}/simulations/raw_data/${INPUTFILENAME}/"
 NUM_NODES=1
@@ -19,14 +19,13 @@ fi
 mkdir -p "${OUTPUTDIR}" || { echo "Failed to create output directory"; exit 1; }
 
 # Copy input file
-cp "$PATHTOINPUTFILE" "${OSIRISPATH}/input_file.txt" || { echo "Failed to copy input file"; exit 1; }
-echo "Copying input file ${INPUTFILENAME}"
+cp "$PATHTOINPUTFILE" "${OUTPUTDIR}/input_file.txt" || { echo "Failed to copy input file"; exit 1; }
+echo "Copying input file ${OUTPUTDIR}/input_file.txt"
 
-pushd "${OSIRISPATH}" || { echo "Failed to change directory to OSIRISPATH"; exit 1; }
-./config/docker/osiris mpirun -n ${NUM_NODES} bin/osiris-1D.e input_file.txt || { echo "Osiris simulation failed"; popd; exit 1; }
+pushd "${OUTPUTDIR}" || { echo "Failed to change directory to ${OUTPUTDIR}"; exit 1; }
+mpirun -n ${NUM_NODES} "${OSIRISPATH}/bin/osiris-1D.e input_file.txt" || { echo "Osiris simulation failed"; popd; exit 1; }
 
 
-mv -f HIST/ MS/ TIMINGS/ run-info "${OUTPUTDIR}" || { echo "Failed to move simulation results"; popd; exit 1; }
 rm input_file.txt || { echo "Failed to remove input file"; popd; exit 1; }
 
 
