@@ -14,7 +14,7 @@ Te_eV = 40.0 # [eV]
 Te_Kelvin = 12974580.64146048 # [Kelvin]
 Ti_Kelvin = 1436956.15327951 # [Kelvin]
 B_gauss = 150000  # [G] Technically, the background is supposed to be 15 T, but i am using the value in the channel
-Z = 1 # [e]
+Z = 13 # [e]
 ion_mass = 100 # [m_e]
 piston_ion_mass = 0.979*ion_mass # this assumes that the piston is Mg and the background is Al
 v_piston = None
@@ -52,7 +52,7 @@ omega_ci = Z*e*B_gauss/(m_e*ion_mass*c)
 print(f"ion gyrotime (with ion mass of {ion_mass}) would be {round(1e9/omega_ci,4)} ns")
 print(f"this corresponds to {round(omega_pe/omega_ci,3)} simulation times")
 print("-"*50)
-alfven_speed_cgs = B_gauss/np.sqrt(4*np.pi*ne_cgs*ion_mass*m_e)
+alfven_speed_cgs = B_gauss/np.sqrt(4*np.pi*ne_cgs/Z*ion_mass*m_e)
 print(f"alfven speed is {np.format_float_scientific(alfven_speed_cgs,2)} cm/s")
 print(f"in simulation units this would be {round(alfven_speed_cgs/c,6)}")
 print("")
