@@ -31,17 +31,17 @@ def set_fld( STATE ):
     # Determine the filename based on the field component
     match STATE['fld']:
         case "e1":
-            filename = "interp/Ex-interp.pkl"
+            filename = "interp/Ex.pkl"
         case "e2":
-            filename = "interp/Ey-interp.pkl"
+            filename = "interp/Ey.pkl"
         case "e3":
-            filename = "interp/Ez-interp.pkl"
+            filename = "interp/Ez.pkl"
         case "b1":
-            filename = "interp/magx-interp.pkl"
+            filename = "interp/magx.pkl"
         case "b2":
-            filename = "interp/magy-interp.pkl"
+            filename = "interp/magy.pkl"
         case "b3":
-            filename = "interp/magz-interp.pkl"
+            filename = "interp/magz.pkl"
 
     with open(filename, "rb") as f:
         loaded_interpolator = pickle.load(f)
@@ -60,17 +60,17 @@ def set_fld_ext( STATE ):
     # Could make decisions based on field component
     # match STATE['fld']:
     #     case "e1":
-    #         filename = "interp/Ex-interp.pkl"
+    #         filename = "interp/Ex.pkl"
     #     case "e2":
-    #         filename = "interp/Ey-interp.pkl"
+    #         filename = "interp/Ey.pkl"
     #     case "e3":
-    #         filename = "interp/Ez-interp.pkl"
+    #         filename = "interp/Ez.pkl"
     #     case "b1":
-    #         filename = "interp/magx-interp.pkl"
+    #         filename = "interp/magx.pkl"
     #     case "b2":
-    #         filename = "interp/magy-interp.pkl"
+    #         filename = "interp/magy.pkl"
     #     case "b3":
-    #         filename = "interp/magz-interp.pkl"
+    #         filename = "interp/magz.pkl"
 
     # Create x arrays that indicate the position (remember indexing order is reversed)
     nx = STATE["data"].shape
@@ -97,7 +97,7 @@ def set_uth_e( STATE ):
     "u" - A real array of size `(3, npart)` containing either the thermal or fluid momenta of the particles.  **This quantity should be set to the desired momentum data.**
     '''
     # print("calling set_uth_e...")
-    with open('interp/vthele-interp.pkl', "rb") as f:
+    with open('interp/vthele.pkl', "rb") as f:
         loaded_interpolator = pickle.load(f)
 
     # Prepare velocity array
@@ -117,7 +117,7 @@ def set_uth_e( STATE ):
 
 def set_uth_i( STATE ):
     # print("calling set_uth_i...")
-    with open('interp/vthion-interp.pkl', "rb") as f:
+    with open('interp/vthion.pkl', "rb") as f:
         loaded_interpolator = pickle.load(f)
 
     # Prepare velocity array
@@ -140,17 +140,17 @@ def set_ufl( STATE ):
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
     # Set uth_x1
-    with open("interp/velx-interp.pkl", "rb") as f:
+    with open("interp/velx.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
     STATE["u"][:,0] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x2
-    with open("interp/vely-interp.pkl", "rb") as f:
+    with open("interp/vely.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
     STATE["u"][:,1] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x3
-    with open("interp/velz-interp.pkl", "rb") as f:
+    with open("interp/velz.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
     STATE["u"][:,2] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
 
@@ -187,7 +187,7 @@ def set_density_e( STATE ):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_e...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/edens-interp.pkl")
+    STATE['data'] = load_and_interpolate_density(STATE, "interp/edens.pkl")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Al( STATE ):
@@ -198,7 +198,7 @@ def set_density_Al( STATE ):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_Al...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/aldens-interp.pkl")
+    STATE['data'] = load_and_interpolate_density(STATE, "interp/aldens.pkl")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Mg(STATE):
@@ -209,4 +209,4 @@ def set_density_Mg(STATE):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_Mg...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/mgdens-interp.pkl")
+    STATE['data'] = load_and_interpolate_density(STATE, "interp/mgdens.pkl")

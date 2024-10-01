@@ -11,10 +11,8 @@ if print_flag == False:
 
 ne_cgs = 5e+18 # [cm^-3]
 Te_eV = 40.0 # [eV]
-Te_Kelvin = 12974580.64146048 # [Kelvin]
-Ti_Kelvin = 1436956.15327951 # [Kelvin]
 B_gauss = 150000  # [G] Technically, the background is supposed to be 15 T, but i am using the value in the channel
-Z = 13 # [e]
+Z = 1 # [e] This is the charge state for the fully ionized aluminum in the channel
 ion_mass = 100 # [m_e]
 piston_ion_mass = 0.979*ion_mass # this assumes that the piston is Mg and the background is Al
 v_piston = None
@@ -71,19 +69,7 @@ print("and the maximum bound of the box should be approx "\
 print("-"*50)
 
 ## assume that OSIRIS uses the convention where v_th = sqrt(kT/m)
-if 'Te_Kelvin' in locals():
-     Te_eV = Te_Kelvin*kb
-     Te_ergs = Te_Kelvin*kb*ergs_per_eV
-else:
-    Te_ergs = Te_eV*ergs_per_eV
-
-if 'Ti_Kelvin' in locals():
-     Ti_eV = Ti_Kelvin*kb
-     Ti_ergs = Ti_Kelvin*kb*ergs_per_eV
-else:
-     Ti_eV = Te_eV
-     Ti_ergs = Te_ergs
-     
+Te_ergs = Te_eV/kb     
 lambda_d = np.sqrt(Te_ergs/(4*np.pi*ne_cgs*e**2))
 print(f"Te of {Te_eV} eV corresponds to debye length of {np.format_float_scientific(lambda_d,2)} cm")
 print(f"in simulation units this would be = {(lambda_d*omega_pe/c):.4f}")
@@ -91,7 +77,7 @@ print("")
 print(f"Te of {Te_eV} eV corresponds to v_th = {np.format_float_scientific(np.sqrt(Te_ergs/m_e),2)} cm/s")
 print(f"in simulation units this would be = {(np.sqrt(Te_ergs/m_e)/c):.4f}")
 
-print(f"Ti of {Ti_eV} eV corresponds to v_th = {np.format_float_scientific(np.sqrt(1/ion_mass)*np.sqrt(Ti_ergs/m_e),2)} cm/s")
+print(f"Ti of {Te_eV} eV corresponds to v_th = {np.format_float_scientific(np.sqrt(1/ion_mass)*np.sqrt(Te_ergs/m_e),2)} cm/s")
 print(f"in simulation units this would be = {np.format_float_scientific(np.sqrt(1/ion_mass)*np.sqrt(Te_ergs/m_e)/c,4)}")
 
 print(f"in order to resolve the debye length, this would require the simulation to have {int(L_box/(lambda_d*omega_pe/c))} cells")
@@ -105,7 +91,7 @@ def get_osiris_units():
             'time': 1/omega_pe,
             'alfven_speed': alfven_speed_cgs/c,
             'Te': lambda_d*omega_pe/c,
-            'Tpiston':np.sqrt(1/piston_ion_mass)*np.sqrt(Ti_ergs/m_e)/c
+            'Tpiston':np.sqrt(1/piston_ion_mass)*np.sqrt(Te_ergs/m_e)/c
      }
      return osiris
 

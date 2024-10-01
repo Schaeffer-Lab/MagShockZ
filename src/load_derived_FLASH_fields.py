@@ -3,7 +3,7 @@ import numpy as np
 import sys
 from pathlib import Path
 
-def derive_fields(path_to_data:str)->yt.data_objects.static_output.Dataset:
+def derive_fields(path_to_data:str, rqm = 100)->yt.data_objects.static_output.Dataset:
     """
     args: path_to_data (str): absolute path to the FLASH dataset to load
     Returns a yt dataset with derived fields for magnesium and aluminum number densities.
@@ -15,7 +15,6 @@ def derive_fields(path_to_data:str)->yt.data_objects.static_output.Dataset:
     magnesium_molecular_weight = 24.305 # from wikipedia
     mg_r = 1/magnesium_molecular_weight # reciprocal molecular weight
 
-    rqm = 100
 
     def make_ion_number_density(field, data):
         avogadros_number = 6.02214076e23
