@@ -8,8 +8,8 @@ set -x  # Print commands and their arguments as they are executed
 PATHTOINPUTFILE="$1"
 INPUTFILENAME=$(basename "$PATHTOINPUTFILE")
 OSIRISPATH="/home/${USER}/osiris"
-PATHTOPROJECT="/home/${USER}/MagShockZ/"
-OUTPUTDIR="${PATHTOPROJECT}/simulations/raw_data/${INPUTFILENAME}/"
+PATHTOPROJECT="/home/${USER}/MagShockZ"
+OUTPUTDIR="${PATHTOPROJECT}/simulations/raw_data/${INPUTFILENAME}"
 NUM_NODES=16
 
 # Validate input file
