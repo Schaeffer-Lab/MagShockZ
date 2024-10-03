@@ -17,15 +17,15 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  1750, 5132,
+  nx_p(1:2) =  175, 51320,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   .565,
-  ndump  =    256,
+  dt     =   .565, ! need to adjust
+  ndump  =    1024,
 }
 
 !----------restart information----------
@@ -49,7 +49,7 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 20000.0,
+  tmax  = 40000.0,
 }
 
 !----------field solver set up----------
@@ -74,7 +74,7 @@ el_mag_fld
 emf_bound
 {
   type(1:2,1) =   "open", "open",
-  type(1:2,2) =   "open", "open",
+  type(1:2,2) =   "conducting", "open",
 }
 
 !----------- electo-magnetic field diagnostics ---------
@@ -87,7 +87,7 @@ diag_emf
 !----------number of particle species----------
 particles
 {
-  interpolation = "linear",
+  interpolation = "quadratic",
   num_species = 3,
 }
 
@@ -95,7 +95,7 @@ particles
 species
 {
   name = "electron",
-  num_par_max = 4096,
+  num_par_max = 131072,
   rqm=-1.0,
   num_par_x(1:2) = 4, 4,
   init_type = "python",
@@ -124,7 +124,7 @@ profile
 spe_bound
 {
   type(1:2,1) =   "open","open",
-  type(1:2,2) =   "open","open",
+  type(1:2,2) =   "reflecting","open",
 }
 
 !----------diagnostic for electrons----------
@@ -145,8 +145,8 @@ diag_species
 species
 {
   name = "Aluminum",
-  num_par_max = 4096,
-  rqm=5000.0,
+  num_par_max = 131072,
+  rqm=100.0,
   num_par_x(1:2) = 4, 4,
   init_type = "python",
 }
@@ -174,7 +174,7 @@ profile
 spe_bound
 {
   type(1:2,1) =   "open","open",
-  type(1:2,2) =   "open","open",
+  type(1:2,2) =   "reflecting","open",
 }
 
 !----------diagnostic for Aluminum----------
@@ -194,8 +194,8 @@ diag_species
 species
 {
   name = "Magnesium",
-  num_par_max = 4096,
-  rqm=4895.0,
+  num_par_max = 131072,
+  rqm=97.9,
   num_par_x(1:2) = 4, 4,
   init_type = "python",
 }
@@ -223,7 +223,7 @@ profile
 spe_bound
 {
   type(1:2,1) =   "open","open",
-  type(1:2,2) =   "open","open",
+  type(1:2,2) =   "reflecting","open",
 }
 
 !----------diagnostic for this Magnesium----------
