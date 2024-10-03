@@ -5,7 +5,6 @@
 ! path to the directory that contains the py-script.py file (current directory).  Finally,
 ! execute `./osiris-2D.e os-stdin-py-util` to run the simulation, which will use the
 ! py-script.py and interp.npy files to set various field and particle data.
-!-----------------------------------------------------------------------------------------
 
 !--------the node configuration for this simulation--------
 node_conf
