@@ -97,40 +97,43 @@ def set_uth_e( STATE ):
     "u" - A real array of size `(3, npart)` containing either the thermal or fluid momenta of the particles.  **This quantity should be set to the desired momentum data.**
     '''
     # print("calling set_uth_e...")
-    with open('interp/vthele.pkl', "rb") as f:
-        loaded_interpolator = pickle.load(f)
+    if "vthele" not in STATE.keys():
+        with open('interp/vthele.pkl', "rb") as f:
+            STATE['vthele'] = pickle.load(f)
 
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
     # Set uth_x1
-    STATE["u"][:,0] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,0] = STATE['vthele']((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x2
-    STATE["u"][:,1] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,1] = STATE['vthele']((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x3
-    STATE["u"][:,2] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,2] = STATE['vthele']((STATE["x"][:,1], STATE["x"][:,0]))
 
     return STATE['u']
 #-----------------------------------------------------------------------------------------
 
 def set_uth_i( STATE ):
     # print("calling set_uth_i...")
-    with open('interp/vthion.pkl', "rb") as f:
-        loaded_interpolator = pickle.load(f)
+
+    if "vthion" not in STATE.keys():
+        with open('interp/vthion.pkl', "rb") as f:
+            STATE['vthion'] = pickle.load(f)
 
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
     # Set uth_x1
-    STATE["u"][:,0] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,0] = STATE['vthion']((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x2
-    STATE["u"][:,1] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,1] = STATE['vthion']((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x3
-    STATE["u"][:,2] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,2] = STATE['vthion']((STATE["x"][:,1], STATE["x"][:,0]))
 
     return STATE['u']
 #-----------------------------------------------------------------------------------------
@@ -164,19 +167,21 @@ def load_and_interpolate_density(STATE, filename):
     filename (str): Path to the file containing the interpolator.
     """
     # Number of points, xmin, and xmax in x and y, respectively
-    STATE["nx"] = np.array(STATE["data"].shape)
-    STATE["xmin"] = STATE['x_bnd'][:,0]
-    STATE["xmax"] = STATE['x_bnd'][:,1]
-
-    x1 = np.linspace(STATE["xmin"][0], STATE["xmax"][0], STATE["nx"][0], endpoint=True)
-    x2 = np.linspace(STATE["xmin"][1], STATE["xmax"][1], STATE["nx"][1], endpoint=True)
-    X1, X2 = np.meshgrid(x1, x2, indexing='xy')  # Matches Fortran array indexing
 
     with open(filename, "rb") as f:
-        loaded_interpolator = pickle.load(f)
+        density_grid = np.load(f)
+    STATE["nx"] = np.array(density_grid.shape)
+    STATE["xmin"] = np.array([-2522.0,36.0])
+    STATE["xmax"] = np.array([2522.0,4206.0])
+
+    # x1 = np.linspace(STATE["xmin"][0], STATE["xmax"][0], STATE["nx"][0], endpoint=True)
+    # x2 = np.linspace(STATE["xmin"][1], STATE["xmax"][1], STATE["nx"][1], endpoint=True)
+    # X1, X2 = np.meshgrid(x1, x2, indexing='xy')  # Matches Fortran array indexing
+
+
 
     # Perform some function to fill in the field values based on the coordinates
-    return loaded_interpolator((X2, X1))
+    return density_grid
 
 #-----------------------------------------------------------------------------------------
 def set_density_e( STATE ):
@@ -187,7 +192,7 @@ def set_density_e( STATE ):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_e...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/edens.pkl")
+    STATE['data'] = load_and_interpolate_density(STATE, "interp/edens.npy")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Al( STATE ):
@@ -198,7 +203,7 @@ def set_density_Al( STATE ):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_Al...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/aldens.pkl")
+    STATE['data'] = load_and_interpolate_density(STATE, "interp/aldens.npy")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Mg(STATE):
@@ -209,4 +214,4 @@ def set_density_Mg(STATE):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_Mg...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/mgdens.pkl")
+    STATE['data'] = load_and_interpolate_density(STATE, "interp/mgdens.npy")

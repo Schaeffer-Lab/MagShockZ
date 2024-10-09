@@ -1,0 +1,271 @@
+!----------------- Input deck illustrating the Python-Fortran interface ------------------
+! To run this input deck as is, first put the input deck, OSIRIS executable, and the
+! py-script.py file all in the same directory.  Then execute `python py-script.py`, which
+! will create the interp.npy data file.  Next, do `export PYTHONPATH=.` to set the Python
+! path to the directory that contains the py-script.py file (current directory).  Finally,
+! execute `./osiris-2D.e os-stdin-py-util` to run the simulation, which will use the
+! py-script.py and interp.npy files to set various field and particle data.
+!-----------------------------------------------------------------------------------------
+
+!----------global simulation parameters----------
+simulation 
+{
+  algorithm = "cuda",
+  !wall_clock_limit = "2:00:00",
+  !wall_clock_check = 500,
+  !file_format = "zdf",
+  !parallel_io = "mpi",
+}
+
+!--------the node configuration for this simulation--------
+node_conf 
+{
+ node_number(1:2) = 1, 2,
+ !n_threads=10,
+ if_periodic(1:2) = .false., .false.,
+ tile_number(1:2) = 2, 4,
+ tile_topology = "hilbert",
+ !com_buf_size = 1024,
+ !ihole_size_frac = 0.05,
+ !nchunks_pad_frac = 0.05,
+}
+
+
+
+!----------spatial grid----------
+grid
+{
+  nx_p(1:2) =  320, 4100,
+  coordinates = "cartesian",
+}
+
+!----------time step and global data dump timestep number----------
+time_step
+{
+  dt     =   0.7075,
+  ndump  =    1,
+}
+
+!----------restart information----------
+restart
+{
+  ndump_fac = -1,
+  ndump_time = 3500, !once/hour
+  if_restart = .false.,
+  if_remold = .true.,
+}
+
+!----------spatial limits of the simulations----------
+space
+{
+  xmin(1:2) =  -2522, 100,
+  xmax(1:2) =  2522, 4206,
+  if_move(1:2) = .false., .false.,
+}
+
+!----------time limits ----------
+time
+{
+  tmin = 0.0,
+  tmax  = 400.0,
+}
+
+!----------field solver set up----------
+el_mag_fld
+{
+  ! Set two of the field components with the Python script
+  ! Note, you need to set PYTHONPATH in the console to the folder containing py-script.py
+  type_init_b(1:3) = "python", "python", "python",
+  type_init_e(1:3) = "python", "python", "python",
+  init_py_mod = "py-script", ! Name of Python file
+  init_py_func = "set_fld", ! Name of function in the Python file to call (same for all components)
+  ! init_move_window = .false., ! May want to declare this for a moving-window simulation
+
+  ! You can also do this with external fields, as functions of time
+  ext_fld = "dynamic",
+  type_ext_b(1:3) = "none", "none", "none",
+  type_ext_e(1:3) = "none", "none", "none",
+  ext_py_mod = "py-script", ! Name of Python file
+  ext_py_func = "set_fld_ext", ! Name of function in the Python file to call (same for all components)
+}
+
+!----------boundary conditions for em-fields ----------
+emf_bound
+{
+  type(1:2,1) =   "conducting", "conducting",
+  type(1:2,2) =   "conducting", "conducting",
+}
+
+!----------- electo-magnetic field diagnostics ---------
+diag_emf
+{
+  ndump_fac = 1,
+  reports = "e1", "e2", "e3", "b1", "b2", "b3"
+}
+
+!----------number of particle species----------
+particles
+{
+  interpolation = "linear",
+  num_species = 3,
+}
+
+!----------information for electrons----------
+species
+{
+  name = "electron",
+  num_par_max = 4096,
+  rqm=-1.0,
+  num_par_x(1:2) = 1, 1,
+  init_type = "python",
+}
+
+!----------inital proper velocities - electron-----------------
+!udist
+!{
+!  use_spatial_uth = .true.,
+!  uth_py_mod = "py-script", ! Name of Python file
+!  uth_py_func = "set_uth_e", ! Name of function in the Python file to call
+!  
+!  ! use_spatial_ufl = .true.,
+!  ufl_py_mod = "py-script", ! Name of Python file
+!  ufl_py_func = "set_ufl", ! Name of function in the Python file to call
+!}
+
+!----------density profile for electrons----------
+profile
+{
+  py_mod = "py-script", ! Name of Python file
+  py_func = "set_density_e", ! Name of function in the Python file to call
+}
+
+!----------boundary conditions for electrons----------
+spe_bound
+{
+  type(1:2,1) =   "specular","specular",
+  type(1:2,2) =   "specular","specular",
+}
+
+!----------diagnostic for electrons----------
+diag_species
+{
+  ndump_fac = 1,
+  reports = "charge",
+  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+  ndump_fac_pha = 1,
+  ps_pmin(1:3) = -0.5, -0.8, -.25,
+  ps_pmax(1:3) = 0.5,  0.8,  .25,
+  ps_np(1:3) = 128, 1024, 32,
+  if_ps_p_auto(1:3) = .true., .true., .true.,
+  phasespaces = "p2x2", "p1x2",
+}
+
+!----------information for Aluminum ions----------
+species
+{
+  name = "Aluminum",
+  num_par_max = 4096,
+  rqm=100.0,
+  num_par_x(1:2) = 1, 1,
+!  init_type = "python",
+}
+
+!----------inital proper velocities - Aluminum-----------------
+udist
+{
+  !use_spatial_uth = .true.,
+  !uth_py_mod = "py-script", ! Name of Python file
+  !uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  
+  ! use_spatial_ufl = .true.,
+  !ufl_py_mod = "py-script", ! Name of Python file
+  !ufl_py_func = "set_ufl", ! Name of function in the Python file to call
+}
+
+!----------density profile for Aluminum----------
+profile
+{
+  !py_mod = "py-script", ! Name of Python file
+  !py_func = "set_density_Al", ! Name of function in the Python file to call
+}
+
+!----------boundary conditions for Aluminum----------
+spe_bound
+{
+  type(1:2,1) =   "specular","specular",
+  type(1:2,2) =   "specular","specular",
+}
+
+!----------diagnostic for Aluminum----------
+diag_species
+{
+  ndump_fac = 1,
+  reports = "charge",
+  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+  ndump_fac_pha = 1,
+  ps_pmin(1:3) = -0.1, -0.15, -0.1,
+  ps_pmax(1:3) = 0.1,  0.15,  0.1,
+  ps_np(1:3)   = 128,  1024,  32,
+  if_ps_p_auto(1:3) = .true., .true., .true.,
+  phasespaces = "p2x2", "p1x2",
+}
+!----------information for Magnesium----------
+species
+{
+  name = "Magnesium",
+  num_par_max = 4096,
+  rqm=97.9,
+  num_par_x(1:2) = 1, 1,
+  !init_type = "python",
+}
+
+!----------inital proper velocities - Magnesium-----------------
+udist
+{
+  !use_spatial_uth = .true.,
+  !uth_py_mod = "py-script", ! Name of Python file
+  !uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  
+  ! use_spatial_ufl = .true.,
+  !ufl_py_mod = "py-script", ! Name of Python file
+  !ufl_py_func = "set_ufl", ! Name of function in the Python file to call
+}
+
+!----------density profile for Magnesium----------
+profile
+{
+  !py_mod = "py-script", ! Name of Python file
+  !py_func = "set_density_Mg", ! Name of function in the Python file to call
+}
+
+!----------boundary conditions for Magnesium----------
+spe_bound
+{
+  type(1:2,1) =   "specular","specular",
+  type(1:2,2) =   "specular","specular",
+}
+
+!----------diagnostic for this Magnesium----------
+diag_species
+{
+  ndump_fac = 1,
+  reports = "charge",
+  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+  ndump_fac_pha = 1,
+  ps_pmin(1:3) = -0.5, -0.8, -0.25,
+  ps_pmax(1:3) = 0.5,  0.8,  0.25,
+  ps_np(1:3)   = 128,  1024,  32,
+  if_ps_p_auto(1:3) = .true., .true., .true.,
+  phasespaces = "p2x2", "p1x2",
+}
+
+!----------smoothing for currents----------
+smooth
+{
+  type="5pass",
+}
+
+!----------diagnostic for currents----------
+diag_current
+{
+}

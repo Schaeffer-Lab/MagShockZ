@@ -57,13 +57,19 @@ def derive_fields(path_to_data:str, rqm = 100)->yt.data_objects.static_output.Da
     ds.add_field(("flash", "Ey"), function=make_Ey, units="code_magnetic*code_length/code_time",sampling_type="cell")
     ds.add_field(("flash", "Ez"), function=make_Ez, units="code_magnetic*code_length/code_time",sampling_type="cell")
 
-    def make_vth_ele_osiris(field, data):
+    def make_vth_ele(field, data):
         return np.sqrt(data['flash','tele']*yt.units.kb_cgs/yt.units.electron_mass_cgs)
 
-    def make_vth_ion_osiris(field, data):
+    def make_vth_al(field, data):
         return np.sqrt(data['flash','tion']*yt.units.kb_cgs/(yt.units.electron_mass_cgs*rqm))
+    
+    def make_vth_mg(field, data):
+        return np.sqrt(data['flash','tion']*yt.units.kb_cgs/(yt.units.electron_mass_cgs*rqm*97.9))
 
-    ds.add_field(("flash", 'vthele'), function=make_vth_ele_osiris, units="code_velocity",sampling_type="cell",force_override=True)
-    ds.add_field(("flash", 'vthion'), function=make_vth_ion_osiris, units="code_velocity",sampling_type="cell",force_override=True)
+    ds.add_field(("flash", 'vthele'), function=make_vth_ele, units="code_velocity",sampling_type="cell",force_override=True)
+    ds.add_field(("flash", 'vthal'), function=make_vth_al, units="code_velocity",sampling_type="cell",force_override=True)
+    ds.add_field(("flash", 'vthmg'), function=make_vth_mg, units="code_velocity",sampling_type="cell",force_override=True)
+
+
 
     return ds

@@ -1,1 +1,0 @@
-../magshockz-v2.0.2d/py-script.py
