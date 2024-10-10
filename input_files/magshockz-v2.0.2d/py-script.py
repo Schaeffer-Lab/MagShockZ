@@ -195,12 +195,12 @@ def load_and_interpolate_density(STATE, filename):
     with open(filename, "rb") as f:
         density_grid = np.load(f)
     STATE["nx"] = np.array((density_grid).shape) # check
-    print(f"nx = {STATE['nx']}")
+    # print(f"nx = {STATE['nx']}")
     STATE["xmin"] = np.array([-2522.0, 36.0])
     STATE["xmax"] = np.array([2522.0, 4206.0])
     STATE['data'] = density_grid.T
-    print(f"STATE['data'].shape = {STATE['data'].shape}")
-    print(f"{type(STATE['data'])}")
+    # print(f"STATE['data'].shape = {STATE['data'].shape}")
+    # print(f"{type(STATE['data'])}")
 
     return STATE
 
@@ -212,7 +212,7 @@ def set_density_e( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    print("calling set_density_e...")
+    # print("calling set_density_e...")
 
     STATE['data'] = load_and_interpolate_density(STATE, "interp/edens.npy")
 
