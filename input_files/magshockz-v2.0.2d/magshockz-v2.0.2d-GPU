@@ -23,7 +23,7 @@ node_conf
  node_number(1:2) = 1, 2,
  !n_threads=10,
  if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = 2, 4,
+ tile_number(1:2) = 16, 32,
  tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
@@ -35,14 +35,14 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  320, 4100,
+  nx_p(1:2) =  176, 352,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   0.7075,
+  dt     =   0.509,
   ndump  =    1,
 }
 
@@ -58,8 +58,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -2522, 100,
-  xmax(1:2) =  2522, 4206,
+  xmin(1:2) =  -2000, 500,
+  xmax(1:2) =  2000, 3806,
   if_move(1:2) = .false., .false.,
 }
 
@@ -121,16 +121,16 @@ species
 }
 
 !----------inital proper velocities - electron-----------------
-!udist
-!{
-!  use_spatial_uth = .true.,
-!  uth_py_mod = "py-script", ! Name of Python file
-!  uth_py_func = "set_uth_e", ! Name of function in the Python file to call
-!  
-!  ! use_spatial_ufl = .true.,
-!  ufl_py_mod = "py-script", ! Name of Python file
-!  ufl_py_func = "set_ufl", ! Name of function in the Python file to call
-!}
+udist
+{
+  use_spatial_uth = .true.,
+  uth_py_mod = "py-script", ! Name of Python file
+  uth_py_func = "set_uth_e", ! Name of function in the Python file to call
+  
+  ! use_spatial_ufl = .true.,
+  ufl_py_mod = "py-script", ! Name of Python file
+  ufl_py_func = "set_ufl", ! Name of function in the Python file to call
+}
 
 !----------density profile for electrons----------
 profile
@@ -167,26 +167,26 @@ species
   num_par_max = 4096,
   rqm=100.0,
   num_par_x(1:2) = 1, 1,
-!  init_type = "python",
+  init_type = "python",
 }
 
 !----------inital proper velocities - Aluminum-----------------
 udist
 {
-  !use_spatial_uth = .true.,
-  !uth_py_mod = "py-script", ! Name of Python file
-  !uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  use_spatial_uth = .true.,
+  uth_py_mod = "py-script", ! Name of Python file
+  uth_py_func = "set_uth_al", ! Name of function in the Python file to call
   
-  ! use_spatial_ufl = .true.,
-  !ufl_py_mod = "py-script", ! Name of Python file
-  !ufl_py_func = "set_ufl", ! Name of function in the Python file to call
+   use_spatial_ufl = .true.,
+  ufl_py_mod = "py-script", ! Name of Python file
+  ufl_py_func = "set_ufl", ! Name of function in the Python file to call
 }
 
 !----------density profile for Aluminum----------
 profile
 {
-  !py_mod = "py-script", ! Name of Python file
-  !py_func = "set_density_Al", ! Name of function in the Python file to call
+  py_mod = "py-script", ! Name of Python file
+  py_func = "set_density_Al", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for Aluminum----------
@@ -216,26 +216,26 @@ species
   num_par_max = 4096,
   rqm=97.9,
   num_par_x(1:2) = 1, 1,
-  !init_type = "python",
+  init_type = "python",
 }
 
 !----------inital proper velocities - Magnesium-----------------
 udist
 {
-  !use_spatial_uth = .true.,
-  !uth_py_mod = "py-script", ! Name of Python file
-  !uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  use_spatial_uth = .true.,
+  uth_py_mod = "py-script", ! Name of Python file
+  uth_py_func = "set_uth_mg", ! Name of function in the Python file to call
   
-  ! use_spatial_ufl = .true.,
-  !ufl_py_mod = "py-script", ! Name of Python file
-  !ufl_py_func = "set_ufl", ! Name of function in the Python file to call
+   use_spatial_ufl = .true.,
+  ufl_py_mod = "py-script", ! Name of Python file
+  ufl_py_func = "set_ufl", ! Name of function in the Python file to call
 }
 
 !----------density profile for Magnesium----------
 profile
 {
-  !py_mod = "py-script", ! Name of Python file
-  !py_func = "set_density_Mg", ! Name of function in the Python file to call
+  py_mod = "py-script", ! Name of Python file
+  py_func = "set_density_Mg", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for Magnesium----------

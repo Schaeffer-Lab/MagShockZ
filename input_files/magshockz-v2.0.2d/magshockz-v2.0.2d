@@ -10,13 +10,13 @@
 node_conf
 {
   node_number(1:2) =  4, 4,
-  if_periodic(1:2) =  .true., .false.,
+  if_periodic(1:2) =  .false., .false.,
 }
 
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  1750, 5132,
+  nx_p(1:2) =  175, 513,
   coordinates = "cartesian",
 }
 
@@ -24,7 +24,7 @@ grid
 time_step
 {
   dt     =   .565,
-  ndump  =    256,
+  ndump  =    16,
 }
 
 !----------restart information----------
@@ -39,8 +39,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -2522, 100,
-  xmax(1:2) =  2522, 4206,
+  xmin(1:2) =  -2000, 300,
+  xmax(1:2) =  2000, 4000,
   if_move(1:2) = .false., .false.,
 }
 
@@ -48,7 +48,7 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 40000.0,
+  tmax  = 400.0,
 }
 
 !----------field solver set up----------
@@ -86,7 +86,7 @@ diag_emf
 !----------number of particle species----------
 particles
 {
-  interpolation = "linear",
+  interpolation = "cubic",
   num_species = 3,
 }
 
@@ -155,7 +155,7 @@ udist
 {
   use_spatial_uth = .true.,
   uth_py_mod = "py-script", ! Name of Python file
-  uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  uth_py_func = "set_uth_al", ! Name of function in the Python file to call
   
   ! use_spatial_ufl = .true.,
   ufl_py_mod = "py-script", ! Name of Python file
@@ -204,7 +204,7 @@ udist
 {
   use_spatial_uth = .true.,
   uth_py_mod = "py-script", ! Name of Python file
-  uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  uth_py_func = "set_uth_mg", ! Name of function in the Python file to call
   
   ! use_spatial_ufl = .true.,
   ufl_py_mod = "py-script", ! Name of Python file

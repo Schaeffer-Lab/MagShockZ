@@ -116,24 +116,47 @@ def set_uth_e( STATE ):
     return STATE['u']
 #-----------------------------------------------------------------------------------------
 
-def set_uth_i( STATE ):
+def set_uth_al( STATE ):
     # print("calling set_uth_i...")
 
-    if "vthion" not in STATE.keys():
-        with open('interp/vthion.pkl', "rb") as f:
-            STATE['vthion'] = pickle.load(f)
+    if "vthal" not in STATE.keys():
+        with open('interp/vthal.pkl', "rb") as f:
+            STATE['vthal'] = pickle.load(f)
 
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
     # Set uth_x1
-    STATE["u"][:,0] = STATE['vthion']((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,0] = STATE['vthal']((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x2
-    STATE["u"][:,1] = STATE['vthion']((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,1] = STATE['vthal']((STATE["x"][:,1], STATE["x"][:,0]))
 
     # # Set uth_x3
-    STATE["u"][:,2] = STATE['vthion']((STATE["x"][:,1], STATE["x"][:,0]))
+    STATE["u"][:,2] = STATE['vthal']((STATE["x"][:,1], STATE["x"][:,0]))
+
+    return STATE['u']
+
+#-----------------------------------------------------------------------------------------
+
+def set_uth_mg( STATE ):
+    # print("calling set_uth_i...")
+
+    if "vthmg" not in STATE.keys():
+        with open('interp/vthmg.pkl', "rb") as f:
+            STATE['vthmg'] = pickle.load(f)
+
+    # Prepare velocity array
+    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+
+    # Set uth_x1
+    STATE["u"][:,0] = STATE['vthmg']((STATE["x"][:,1], STATE["x"][:,0]))
+
+    # # Set uth_x2
+    STATE["u"][:,1] = STATE['vthmg']((STATE["x"][:,1], STATE["x"][:,0]))
+
+    # # Set uth_x3
+    STATE["u"][:,2] = STATE['vthmg']((STATE["x"][:,1], STATE["x"][:,0]))
 
     return STATE['u']
 #-----------------------------------------------------------------------------------------
@@ -168,20 +191,18 @@ def load_and_interpolate_density(STATE, filename):
     """
     # Number of points, xmin, and xmax in x and y, respectively
 
+
     with open(filename, "rb") as f:
         density_grid = np.load(f)
-    STATE["nx"] = np.array(density_grid.shape)
-    STATE["xmin"] = np.array([-2522.0,36.0])
-    STATE["xmax"] = np.array([2522.0,4206.0])
+    STATE["nx"] = np.array((density_grid).shape) # check
+    print(f"nx = {STATE['nx']}")
+    STATE["xmin"] = np.array([-2522.0, 36.0])
+    STATE["xmax"] = np.array([2522.0, 4206.0])
+    STATE['data'] = density_grid.T
+    print(f"STATE['data'].shape = {STATE['data'].shape}")
+    print(f"{type(STATE['data'])}")
 
-    # x1 = np.linspace(STATE["xmin"][0], STATE["xmax"][0], STATE["nx"][0], endpoint=True)
-    # x2 = np.linspace(STATE["xmin"][1], STATE["xmax"][1], STATE["nx"][1], endpoint=True)
-    # X1, X2 = np.meshgrid(x1, x2, indexing='xy')  # Matches Fortran array indexing
-
-
-
-    # Perform some function to fill in the field values based on the coordinates
-    return density_grid
+    return STATE
 
 #-----------------------------------------------------------------------------------------
 def set_density_e( STATE ):
@@ -191,7 +212,8 @@ def set_density_e( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    # print("calling set_density_e...")
+    print("calling set_density_e...")
+
     STATE['data'] = load_and_interpolate_density(STATE, "interp/edens.npy")
 
 #-----------------------------------------------------------------------------------------
@@ -202,8 +224,8 @@ def set_density_Al( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    # print("calling set_density_Al...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/aldens.npy")
+    print("calling set_density_Al...")
+    STATE = load_and_interpolate_density(STATE, "interp/aldens.npy")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Mg(STATE):
@@ -213,5 +235,5 @@ def set_density_Mg(STATE):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    # print("calling set_density_Mg...")
+    print("calling set_density_Mg...")
     STATE['data'] = load_and_interpolate_density(STATE, "interp/mgdens.npy")
