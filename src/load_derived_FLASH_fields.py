@@ -3,7 +3,7 @@ import numpy as np
 import sys
 from pathlib import Path
 
-def derive_fields(path_to_data:str, rqm = 100)->yt.data_objects.static_output.Dataset:
+def derive_fields(path_to_data:str, rqm:int = 100)->yt.data_objects.static_output.Dataset:
     """
     args: path_to_data (str): absolute path to the FLASH dataset to load
     Returns a yt dataset with derived fields for magnesium and aluminum number densities.
@@ -64,12 +64,10 @@ def derive_fields(path_to_data:str, rqm = 100)->yt.data_objects.static_output.Da
         return np.sqrt(data['flash','tion']*yt.units.kb_cgs/(yt.units.electron_mass_cgs*rqm))
     
     def make_vth_mg(field, data):
-        return np.sqrt(data['flash','tion']*yt.units.kb_cgs/(yt.units.electron_mass_cgs*rqm*97.9))
+        return np.sqrt(data['flash','tion']*yt.units.kb_cgs/(yt.units.electron_mass_cgs*rqm*.979))
 
     ds.add_field(("flash", 'vthele'), function=make_vth_ele, units="code_velocity",sampling_type="cell",force_override=True)
     ds.add_field(("flash", 'vthal'), function=make_vth_al, units="code_velocity",sampling_type="cell",force_override=True)
     ds.add_field(("flash", 'vthmg'), function=make_vth_mg, units="code_velocity",sampling_type="cell",force_override=True)
-
-
 
     return ds

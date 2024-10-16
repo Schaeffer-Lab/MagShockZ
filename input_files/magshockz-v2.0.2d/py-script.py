@@ -189,20 +189,14 @@ def load_and_interpolate_density(STATE, filename):
     STATE (dict): Dictionary containing the state information, including positional boundary data.
     filename (str): Path to the file containing the interpolator.
     """
-    # Number of points, xmin, and xmax in x and y, respectively
 
-
-    with open(filename, "rb") as f:
-        density_grid = np.load(f)
-    STATE["nx"] = np.array((density_grid).shape) # check
-    # print(f"nx = {STATE['nx']}")
+    density_grid = np.load(filename)
+    STATE["nx"] = np.array(density_grid.shape)//2
     STATE["xmin"] = np.array([-2522.0, 36.0])
     STATE["xmax"] = np.array([2522.0, 4206.0])
-    STATE['data'] = density_grid.T
-    # print(f"STATE['data'].shape = {STATE['data'].shape}")
-    # print(f"{type(STATE['data'])}")
+    STATE['data'] = density_grid[::2,::2].T.astype(np.float32)  
 
-    return STATE
+    return
 
 #-----------------------------------------------------------------------------------------
 def set_density_e( STATE ):
@@ -214,7 +208,7 @@ def set_density_e( STATE ):
     """
     # print("calling set_density_e...")
 
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/edens.npy")
+    load_and_interpolate_density(STATE, "interp/edens.npy")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Al( STATE ):
@@ -224,8 +218,8 @@ def set_density_Al( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    print("calling set_density_Al...")
-    STATE = load_and_interpolate_density(STATE, "interp/aldens.npy")
+    # print("calling set_density_Al...")
+    load_and_interpolate_density(STATE, "interp/aldens.npy")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Mg(STATE):
@@ -235,5 +229,5 @@ def set_density_Mg(STATE):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    print("calling set_density_Mg...")
-    STATE['data'] = load_and_interpolate_density(STATE, "interp/mgdens.npy")
+    # print("calling set_density_Mg...")
+    load_and_interpolate_density(STATE, "interp/mgdens.npy")

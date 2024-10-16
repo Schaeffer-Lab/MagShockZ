@@ -23,7 +23,7 @@ node_conf
  node_number(1:2) = 1, 2,
  !n_threads=10,
  if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = 16, 32,
+ tile_number(1:2) = 64, 128,
  tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
@@ -35,15 +35,15 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  176, 352,
+  nx_p(1:2) =  2760, 5520,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   0.509,
-  ndump  =    1,
+  dt     =   0.654,
+  ndump  =    32,
 }
 
 !----------restart information----------
@@ -58,8 +58,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -2000, 500,
-  xmax(1:2) =  2000, 3806,
+  xmin(1:2) =  -2400, 200,
+  xmax(1:2) =  2400, 4100,
   if_move(1:2) = .false., .false.,
 }
 
@@ -67,7 +67,7 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 400.0,
+  tmax  = 100000.0,
 }
 
 !----------field solver set up----------
@@ -92,8 +92,8 @@ el_mag_fld
 !----------boundary conditions for em-fields ----------
 emf_bound
 {
-  type(1:2,1) =   "conducting", "conducting",
-  type(1:2,2) =   "conducting", "conducting",
+  type(1:2,1) =   "open", "open",
+  type(1:2,2) =   "conducting", "open",
 }
 
 !----------- electo-magnetic field diagnostics ---------
@@ -106,7 +106,7 @@ diag_emf
 !----------number of particle species----------
 particles
 {
-  interpolation = "linear",
+  interpolation = "cubic",
   num_species = 3,
 }
 
@@ -114,9 +114,9 @@ particles
 species
 {
   name = "electron",
-  num_par_max = 4096,
+  num_par_max = 65536,
   rqm=-1.0,
-  num_par_x(1:2) = 1, 1,
+  num_par_x(1:2) = 3, 3,
   init_type = "python",
 }
 
@@ -142,8 +142,8 @@ profile
 !----------boundary conditions for electrons----------
 spe_bound
 {
-  type(1:2,1) =   "specular","specular",
-  type(1:2,2) =   "specular","specular",
+  type(1:2,1) =   "open","open",
+  type(1:2,2) =   "specular","open",
 }
 
 !----------diagnostic for electrons----------
@@ -164,9 +164,9 @@ diag_species
 species
 {
   name = "Aluminum",
-  num_par_max = 4096,
+  num_par_max = 65536,
   rqm=100.0,
-  num_par_x(1:2) = 1, 1,
+  num_par_x(1:2) = 3, 3,
   init_type = "python",
 }
 
@@ -192,8 +192,8 @@ profile
 !----------boundary conditions for Aluminum----------
 spe_bound
 {
-  type(1:2,1) =   "specular","specular",
-  type(1:2,2) =   "specular","specular",
+  type(1:2,1) =   "open","open",
+  type(1:2,2) =   "specular","open",
 }
 
 !----------diagnostic for Aluminum----------
@@ -213,9 +213,9 @@ diag_species
 species
 {
   name = "Magnesium",
-  num_par_max = 4096,
+  num_par_max = 65536,
   rqm=97.9,
-  num_par_x(1:2) = 1, 1,
+  num_par_x(1:2) = 3, 3,
   init_type = "python",
 }
 
@@ -241,8 +241,8 @@ profile
 !----------boundary conditions for Magnesium----------
 spe_bound
 {
-  type(1:2,1) =   "specular","specular",
-  type(1:2,2) =   "specular","specular",
+  type(1:2,1) =   "open","open",
+  type(1:2,2) =   "specular","open",
 }
 
 !----------diagnostic for this Magnesium----------
@@ -260,10 +260,13 @@ diag_species
 }
 
 !----------smoothing for currents----------
-smooth
+
+smooth 
 {
-  type="5pass",
+  !order(1:2) = 3,
+  type(1:2) = "5pass",
 }
+
 
 !----------diagnostic for currents----------
 diag_current
