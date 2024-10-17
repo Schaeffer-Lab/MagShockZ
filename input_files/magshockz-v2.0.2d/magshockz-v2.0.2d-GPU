@@ -35,14 +35,14 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  2760, 5520,
+  nx_p(1:2) =  113026, 79118,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   0.654,
+  dt     =   6.256e-3,
   ndump  =    32,
 }
 
@@ -58,8 +58,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -2400, 200,
-  xmax(1:2) =  2400, 4100,
+  xmin(1:2) =  -500, 100,
+  xmax(1:2) =  500, 800,
   if_move(1:2) = .false., .false.,
 }
 
@@ -67,7 +67,7 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 100000.0,
+  tmax  = 10.0,
 }
 
 !----------field solver set up----------
@@ -100,6 +100,7 @@ emf_bound
 diag_emf
 {
   ndump_fac = 1,
+  ndump_fac_ene_int = 1,
   reports = "e1", "e2", "e3", "b1", "b2", "b3"
 }
 
@@ -116,7 +117,7 @@ species
   name = "electron",
   num_par_max = 65536,
   rqm=-1.0,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -166,7 +167,7 @@ species
   name = "Aluminum",
   num_par_max = 65536,
   rqm=100.0,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -215,7 +216,7 @@ species
   name = "Magnesium",
   num_par_max = 65536,
   rqm=97.9,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -269,6 +270,8 @@ smooth
 
 
 !----------diagnostic for currents----------
-diag_current
+  diag_current
 {
+  !ndump_fac = 1,
+  !reports = "j1", "j2", "j3" , 
 }
