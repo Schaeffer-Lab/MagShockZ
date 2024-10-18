@@ -7,29 +7,43 @@
 ! py-script.py and interp.npy files to set various field and particle data.
 !-----------------------------------------------------------------------------------------
 
-!--------the node configuration for this simulation--------
-node_conf
+!----------global simulation parameters----------
+simulation 
 {
-  node_number(1:2) =  4, 4,
-  if_periodic(1:2) =  .true., .false.,
+  algorithm = "cuda",
+  !wall_clock_limit = "2:00:00",
+  !wall_clock_check = 500,
+  !file_format = "zdf",
+  !parallel_io = "mpi",
 }
+
+!--------the node configuration for this simulation--------
+node_conf 
+{
+ node_number(1:2) = 1, 2,
+ !n_threads=10,
+ if_periodic(1:2) = .false., .false.,
+ tile_number(1:2) = 64, 128,
+ tile_topology = "hilbert",
+ !com_buf_size = 1024,
+ !ihole_size_frac = 0.05,
+ !nchunks_pad_frac = 0.05,
+}
+
+
 
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  200, 66666,
+  nx_p(1:2) =  113026, 79118,
   coordinates = "cartesian",
-  !load_balance(1:2) = .false., .true.,
-  !lb_type = "dynamic",
-  !n_dynamic = 128,
-  !cell_weight = 1.5,
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   3e-2, ! need to adjust
-  ndump  =    512,
+  dt     =   6.256e-3,
+  ndump  =    32,
 }
 
 !----------restart information----------
@@ -44,8 +58,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -1500, 100,
-  xmax(1:2) =  1000, 2100,
+  xmin(1:2) =  -500, 100,
+  xmax(1:2) =  500, 800,
   if_move(1:2) = .false., .false.,
 }
 
@@ -53,12 +67,13 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 40000.0,
+  tmax  = 10.0,
 }
 
 !----------field solver set up----------
 el_mag_fld
 {
+  ! Set two of the field components with the Python script
   ! Note, you need to set PYTHONPATH in the console to the folder containing py-script.py
   type_init_b(1:3) = "python", "python", "python",
   type_init_e(1:3) = "python", "python", "python",
@@ -85,13 +100,14 @@ emf_bound
 diag_emf
 {
   ndump_fac = 1,
+  ndump_fac_ene_int = 1,
   reports = "e1", "e2", "e3", "b1", "b2", "b3"
 }
 
 !----------number of particle species----------
 particles
 {
-  interpolation = "quadratic",
+  interpolation = "cubic",
   num_species = 3,
 }
 
@@ -101,7 +117,7 @@ species
   name = "electron",
   num_par_max = 65536,
   rqm=-1.0,
-  num_par_x(1:2) = 4, 4,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -128,13 +144,15 @@ profile
 spe_bound
 {
   type(1:2,1) =   "open","open",
-  type(1:2,2) =   "reflecting","open",
+  type(1:2,2) =   "specular","open",
 }
 
 !----------diagnostic for electrons----------
 diag_species
 {
   ndump_fac = 1,
+  ndump_fac_temp = 1,
+  ndump_fac_ene = 1,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
@@ -151,7 +169,7 @@ species
   name = "Aluminum",
   num_par_max = 65536,
   rqm=100.0,
-  num_par_x(1:2) = 4, 4,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -160,9 +178,9 @@ udist
 {
   use_spatial_uth = .true.,
   uth_py_mod = "py-script", ! Name of Python file
-  uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  uth_py_func = "set_uth_al", ! Name of function in the Python file to call
   
-  ! use_spatial_ufl = .true.,
+   use_spatial_ufl = .true.,
   ufl_py_mod = "py-script", ! Name of Python file
   ufl_py_func = "set_ufl", ! Name of function in the Python file to call
 }
@@ -178,13 +196,15 @@ profile
 spe_bound
 {
   type(1:2,1) =   "open","open",
-  type(1:2,2) =   "reflecting","open",
+  type(1:2,2) =   "specular","open",
 }
 
 !----------diagnostic for Aluminum----------
 diag_species
 {
   ndump_fac = 1,
+  ndump_fac_temp = 1,
+  ndump_fac_ene = 1,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
@@ -200,7 +220,7 @@ species
   name = "Magnesium",
   num_par_max = 65536,
   rqm=97.9,
-  num_par_x(1:2) = 4, 4,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -209,9 +229,9 @@ udist
 {
   use_spatial_uth = .true.,
   uth_py_mod = "py-script", ! Name of Python file
-  uth_py_func = "set_uth_i", ! Name of function in the Python file to call
+  uth_py_func = "set_uth_mg", ! Name of function in the Python file to call
   
-  ! use_spatial_ufl = .true.,
+   use_spatial_ufl = .true.,
   ufl_py_mod = "py-script", ! Name of Python file
   ufl_py_func = "set_ufl", ! Name of function in the Python file to call
 }
@@ -227,13 +247,15 @@ profile
 spe_bound
 {
   type(1:2,1) =   "open","open",
-  type(1:2,2) =   "reflecting","open",
+  type(1:2,2) =   "specular","open",
 }
 
 !----------diagnostic for this Magnesium----------
 diag_species
 {
   ndump_fac = 1,
+  ndump_fac_temp = 1,
+  ndump_fac_ene = 1,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
@@ -245,12 +267,17 @@ diag_species
 }
 
 !----------smoothing for currents----------
-smooth
+
+smooth 
 {
-  type="5pass",
+  !order(1:2) = 3,
+  type(1:2) = "5pass",
 }
 
+
 !----------diagnostic for currents----------
-diag_current
+  diag_current
 {
+  !ndump_fac = 1,
+  !reports = "j1", "j2", "j3" , 
 }

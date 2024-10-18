@@ -31,18 +31,17 @@ node_conf
 }
 
 
-
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  113026, 79118,
+  nx_p(1:2) =  3000, 5700,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   6.256e-3,
+  dt     =   0.07,
   ndump  =    32,
 }
 
@@ -58,8 +57,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -500, 100,
-  xmax(1:2) =  500, 800,
+  xmin(1:2) =  -2500, 100,
+  xmax(1:2) =  2500, 4200,
   if_move(1:2) = .false., .false.,
 }
 
@@ -151,6 +150,8 @@ spe_bound
 diag_species
 {
   ndump_fac = 1,
+  ndump_fac_temp = 1,
+  ndump_fac_ene = 1,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
@@ -201,6 +202,8 @@ spe_bound
 diag_species
 {
   ndump_fac = 1,
+  ndump_fac_temp = 1,
+  ndump_fac_ene = 1,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
@@ -250,6 +253,8 @@ spe_bound
 diag_species
 {
   ndump_fac = 1,
+  ndump_fac_temp = 1,
+  ndump_fac_ene = 1,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
