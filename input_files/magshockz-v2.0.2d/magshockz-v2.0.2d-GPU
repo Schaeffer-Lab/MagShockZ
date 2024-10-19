@@ -23,7 +23,7 @@ node_conf
  node_number(1:2) = 1, 2,
  !n_threads=10,
  if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = 64, 128,
+ tile_number(1:2) = 512, 256,
  tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
@@ -34,14 +34,14 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  3000, 5700,
+  nx_p(1:2) =  14000, 9800,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   0.07,
+  dt     =   5.05e-2,
   ndump  =    32,
 }
 
@@ -57,8 +57,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -2500, 100,
-  xmax(1:2) =  2500, 4200,
+  xmin(1:2) =  -500, 100,
+  xmax(1:2) =  500, 800,
   if_move(1:2) = .false., .false.,
 }
 
