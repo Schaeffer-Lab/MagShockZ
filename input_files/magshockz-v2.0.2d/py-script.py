@@ -185,6 +185,7 @@ def load_and_interpolate_density(STATE, filename):
     STATE (dict): Dictionary containing the state information, including positional boundary data.
     filename (str): Path to the file containing the interpolator.
     """
+    # Free up a little bit of memory
     print(STATE.keys())
     if "fld" in STATE.keys():
         del STATE["fld"]
@@ -218,6 +219,8 @@ def set_density_Al( STATE ):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_Al...")
+    if "vthele" in STATE.keys():
+        del STATE["vthele"]
     load_and_interpolate_density(STATE, "interp/aldens.npy")
 
 #-----------------------------------------------------------------------------------------
@@ -229,4 +232,6 @@ def set_density_Mg(STATE):
     STATE (dict): Dictionary containing the state information.
     """
     # print("calling set_density_Mg...")
+    if "vthal" in STATE.keys():
+        del STATE["vthal"]
     load_and_interpolate_density(STATE, "interp/mgdens.npy")
