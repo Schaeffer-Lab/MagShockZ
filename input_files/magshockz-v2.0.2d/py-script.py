@@ -90,7 +90,7 @@ def set_fld_ext( STATE ):
 
 def set_uth_e( STATE ):
     '''
-    In each of the above cases, the `STATE` dictionary will be prepared with the following key:
+    The `STATE` dictionary will be prepared with the following key:
     "x" - A real array of size `(p_x_dim, npart)` containing the positions of the particles.
 
     The desired momentum array can then be created and set based on the positions `"x"`.  This array should be passed to the `STATE` array with the following key:
@@ -104,16 +104,14 @@ def set_uth_e( STATE ):
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    # Set uth_x1
-    STATE["u"][:,0] = STATE['vthele']((STATE["x"][:,1], STATE["x"][:,0]))
+    chunk_size = 1000  # Define a chunk size
+    for start in range(0, len(STATE["u"][:,0]), chunk_size):
+        end = start + chunk_size
+        STATE["u"][start:end, 0] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 1] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 2] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
 
-    # # Set uth_x2
-    STATE["u"][:,1] = STATE['vthele']((STATE["x"][:,1], STATE["x"][:,0]))
-
-    # # Set uth_x3
-    STATE["u"][:,2] = STATE['vthele']((STATE["x"][:,1], STATE["x"][:,0]))
-
-    return STATE['u']
+    return
 #-----------------------------------------------------------------------------------------
 
 def set_uth_al( STATE ):
@@ -126,16 +124,14 @@ def set_uth_al( STATE ):
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    # Set uth_x1
-    STATE["u"][:,0] = STATE['vthal']((STATE["x"][:,1], STATE["x"][:,0]))
+    chunk_size = 1000  # Define a chunk size
+    for start in range(0, len(STATE["u"][:,0]), chunk_size):
+        end = start + chunk_size
+        STATE["u"][start:end, 0] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 1] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 2] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
 
-    # # Set uth_x2
-    STATE["u"][:,1] = STATE['vthal']((STATE["x"][:,1], STATE["x"][:,0]))
-
-    # # Set uth_x3
-    STATE["u"][:,2] = STATE['vthal']((STATE["x"][:,1], STATE["x"][:,0]))
-
-    return STATE['u']
+    return
 
 #-----------------------------------------------------------------------------------------
 
@@ -149,16 +145,14 @@ def set_uth_mg( STATE ):
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    # Set uth_x1
-    STATE["u"][:,0] = STATE['vthmg']((STATE["x"][:,1], STATE["x"][:,0]))
+    chunk_size = 1000  # Define a chunk size
+    for start in range(0, len(STATE["u"][:,0]), chunk_size):
+        end = start + chunk_size
+        STATE["u"][start:end, 0] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 1] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 2] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
 
-    # # Set uth_x2
-    STATE["u"][:,1] = STATE['vthmg']((STATE["x"][:,1], STATE["x"][:,0]))
-
-    # # Set uth_x3
-    STATE["u"][:,2] = STATE['vthmg']((STATE["x"][:,1], STATE["x"][:,0]))
-
-    return STATE['u']
+    return
 #-----------------------------------------------------------------------------------------
 def set_ufl( STATE ):
     # print("calling set_ufl...")
@@ -180,6 +174,8 @@ def set_ufl( STATE ):
         loaded_interpolator = pickle.load(f)
     STATE["u"][:,2] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
 
+    return
+
 #-----------------------------------------------------------------------------------------
 def load_and_interpolate_density(STATE, filename):
     """
@@ -189,7 +185,10 @@ def load_and_interpolate_density(STATE, filename):
     STATE (dict): Dictionary containing the state information, including positional boundary data.
     filename (str): Path to the file containing the interpolator.
     """
-
+    print(STATE.keys())
+    if "fld" in STATE.keys():
+        del STATE["fld"]
+    
     density_grid = np.load(filename)
     STATE["nx"] = np.array(density_grid.shape)//2
     STATE["xmin"] = np.array([-2522.0, 36.0])
