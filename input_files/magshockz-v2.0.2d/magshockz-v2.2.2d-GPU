@@ -10,7 +10,7 @@
 !----------global simulation parameters----------
 simulation 
 {
-  !algorithm = "cuda",
+  algorithm = "cuda",
   !wall_clock_limit = "2:00:00",
   !wall_clock_check = 500,
   !file_format = "zdf",
@@ -20,11 +20,11 @@ simulation
 !--------the node configuration for this simulation--------
 node_conf 
 {
- node_number(1:2) = 4, 4,
+ node_number(1:2) = 1, 2,
  !n_threads=10,
  if_periodic(1:2) = .false., .false.,
- !tile_number(1:2) = 128, 128,
- !tile_topology = "hilbert",
+ tile_number(1:2) = 128, 128,
+ tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
  !nchunks_pad_frac = 0.05,
@@ -92,7 +92,7 @@ el_mag_fld
 emf_bound
 {
   type(1:2,1) =   "open", "open",
-  type(1:2,2) =   "conducting", "open",
+  type(1:2,2) =   "open", "open",
 }
 
 !----------- electo-magnetic field diagnostics ---------
@@ -114,7 +114,8 @@ particles
 species
 {
   name = "electron",
-  num_par_max = 50,
+  n_sort = 0,
+  num_par_max = 46387,
   rqm=-1.0,
   num_par_x(1:2) = 5, 5,
   init_type = "python",
@@ -166,7 +167,8 @@ diag_species
 species
 {
   name = "Aluminum",
-  num_par_max = 50,
+  n_sort = 0,
+  num_par_max = 46387,
   rqm=100.0,
   num_par_x(1:2) = 5, 5,
   init_type = "python",
@@ -217,7 +219,8 @@ diag_species
 species
 {
   name = "Magnesium",
-  num_par_max = 50,
+  n_sort = 0,
+  num_par_max = 46387,
   rqm=97.9,
   num_par_x(1:2) = 5, 5,
   init_type = "python",

@@ -14,7 +14,7 @@ simulation
   !wall_clock_limit = "2:00:00",
   !wall_clock_check = 500,
   !file_format = "zdf",
-  !parallel_io = "mpi",
+  parallel_io = "mpi",
 }
 
 !--------the node configuration for this simulation--------
@@ -23,7 +23,7 @@ node_conf
  node_number(1:2) = 1, 2,
  !n_threads=10,
  if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = 512, 256,
+ tile_number(1:2) = 128, 128,
  tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
@@ -34,15 +34,15 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  14000, 9800,
+  nx_p(1:2) =  4000, 3800,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   5.05e-2,
-  ndump  =    32,
+  dt     =   0.07,
+  ndump  =    1,
 }
 
 !----------restart information----------
@@ -57,8 +57,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -500, 100,
-  xmax(1:2) =  500, 800,
+  xmin(1:2) =  -1000, 100,
+  xmax(1:2) =  1000, 2000,
   if_move(1:2) = .false., .false.,
 }
 
@@ -92,7 +92,7 @@ el_mag_fld
 emf_bound
 {
   type(1:2,1) =   "open", "open",
-  type(1:2,2) =   "conducting", "open",
+  type(1:2,2) =   "open", "open",
 }
 
 !----------- electo-magnetic field diagnostics ---------
@@ -106,7 +106,7 @@ diag_emf
 !----------number of particle species----------
 particles
 {
-  interpolation = "cubic",
+  interpolation = "quadratic",
   num_species = 3,
 }
 
@@ -114,7 +114,7 @@ particles
 species
 {
   name = "electron",
-  num_par_max = 65536,
+  num_par_max = 3711,
   rqm=-1.0,
   num_par_x(1:2) = 1, 1,
   init_type = "python",
@@ -166,7 +166,7 @@ diag_species
 species
 {
   name = "Aluminum",
-  num_par_max = 65536,
+  num_par_max = 3711,
   rqm=100.0,
   num_par_x(1:2) = 1, 1,
   init_type = "python",
@@ -179,7 +179,7 @@ udist
   uth_py_mod = "py-script", ! Name of Python file
   uth_py_func = "set_uth_al", ! Name of function in the Python file to call
   
-   use_spatial_ufl = .true.,
+  ! use_spatial_ufl = .true.,
   ufl_py_mod = "py-script", ! Name of Python file
   ufl_py_func = "set_ufl", ! Name of function in the Python file to call
 }
@@ -205,7 +205,7 @@ diag_species
   ndump_fac_temp = 1,
   ndump_fac_ene = 1,
   reports = "charge",
-  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+  rep_udist = "ufl1", "ufl2", "uth1", "uth2",
   ndump_fac_pha = 1,
   ps_pmin(1:3) = -0.1, -0.15, -0.1,
   ps_pmax(1:3) = 0.1,  0.15,  0.1,
@@ -217,7 +217,7 @@ diag_species
 species
 {
   name = "Magnesium",
-  num_par_max = 65536,
+  num_par_max = 3711,
   rqm=97.9,
   num_par_x(1:2) = 1, 1,
   init_type = "python",
@@ -230,7 +230,7 @@ udist
   uth_py_mod = "py-script", ! Name of Python file
   uth_py_func = "set_uth_mg", ! Name of function in the Python file to call
   
-   use_spatial_ufl = .true.,
+  ! use_spatial_ufl = .true.,
   ufl_py_mod = "py-script", ! Name of Python file
   ufl_py_func = "set_ufl", ! Name of function in the Python file to call
 }
