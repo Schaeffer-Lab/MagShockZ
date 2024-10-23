@@ -46,7 +46,7 @@ def set_fld( STATE ):
     with open(filename, "rb") as f:
         loaded_interpolator = pickle.load(f)
 
-    STATE["data"] = loaded_interpolator((X2, X1))
+    STATE["data"] = loaded_interpolator((X2, X1)).astype(np.float32)
 
 
 #-----------------------------------------------------------------------------------------
@@ -106,9 +106,7 @@ def set_uth_e( STATE ):
 
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = start + chunk_size
-        if end > len(STATE["u"][:,0]):
-            end = len(STATE["u"][:,0])
+        end = min(start + chunk_size, len(STATE["u"][:,0]))
         STATE["u"][start:end, 0] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 1] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 2] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
@@ -128,9 +126,7 @@ def set_uth_al( STATE ):
 
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = start + chunk_size
-        if end > len(STATE["u"][:,0]):
-            end = len(STATE["u"][:,0])
+        end = min(start + chunk_size, len(STATE["u"][:,0]))
         STATE["u"][start:end, 0] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 1] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 2] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
@@ -152,9 +148,7 @@ def set_uth_mg( STATE ):
 
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = start + chunk_size
-        if end > len(STATE["u"][:,0]):
-            end = len(STATE["u"][:,0])
+        end = min(start + chunk_size, len(STATE["u"][:,0]))
         STATE["u"][start:end, 0] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 1] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 2] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
@@ -166,34 +160,27 @@ def set_ufl( STATE ):
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    # Set ufl_x1
+    chunk_size = 1024  # Define a chunk size
+
+        # Set ufl_x1
     with open("interp/velx.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
-        chunk_size = 1024  # Define a chunk size
         for start in range(0, len(STATE["u"][:,0]), chunk_size):
-            end = start + chunk_size
-            if end > len(STATE["u"][:,0]):
-                end = len(STATE["u"][:,0])
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
             STATE["u"][start:end,0] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
 
-    # # Set ufl_x2
+    # Set ufl_x2
     with open("interp/vely.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
-        chunk_size = 1024  # Define a chunk size
         for start in range(0, len(STATE["u"][:,0]), chunk_size):
-            end = start + chunk_size
-            if end > len(STATE["u"][:,0]):
-                end = len(STATE["u"][:,0])
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
             STATE["u"][start:end,1] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
 
-    # # Set ufl_x3
+        # Set ufl_x3
     with open("interp/velz.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
-        chunk_size = 1024  # Define a chunk size
         for start in range(0, len(STATE["u"][:,0]), chunk_size):
-            end = start + chunk_size
-            if end > len(STATE["u"][:,0]):
-                end = len(STATE["u"][:,0])
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
             STATE["u"][start:end,2] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
 
     return
