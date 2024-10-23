@@ -104,9 +104,11 @@ def set_uth_e( STATE ):
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    chunk_size = 1000  # Define a chunk size
+    chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = start + chunk_size
+        if end > len(STATE["u"][:,0]):
+            end = len(STATE["u"][:,0])
         STATE["u"][start:end, 0] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 1] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 2] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
@@ -124,9 +126,11 @@ def set_uth_al( STATE ):
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    chunk_size = 1000  # Define a chunk size
+    chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = start + chunk_size
+        if end > len(STATE["u"][:,0]):
+            end = len(STATE["u"][:,0])
         STATE["u"][start:end, 0] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 1] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 2] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
@@ -139,15 +143,18 @@ def set_uth_mg( STATE ):
     # print("calling set_uth_i...")
 
     if "vthmg" not in STATE.keys():
+        print("loading vthmg")
         with open('interp/vthmg.pkl', "rb") as f:
             STATE['vthmg'] = pickle.load(f)
 
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    chunk_size = 1000  # Define a chunk size
+    chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = start + chunk_size
+        if end > len(STATE["u"][:,0]):
+            end = len(STATE["u"][:,0])
         STATE["u"][start:end, 0] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 1] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
         STATE["u"][start:end, 2] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
@@ -159,20 +166,35 @@ def set_ufl( STATE ):
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    # Set uth_x1
+    # Set ufl_x1
     with open("interp/velx.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
-    STATE["u"][:,0] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+        chunk_size = 1024  # Define a chunk size
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = start + chunk_size
+            if end > len(STATE["u"][:,0]):
+                end = len(STATE["u"][:,0])
+            STATE["u"][start:end,0] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
 
-    # # Set uth_x2
+    # # Set ufl_x2
     with open("interp/vely.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
-    STATE["u"][:,1] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+        chunk_size = 1024  # Define a chunk size
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = start + chunk_size
+            if end > len(STATE["u"][:,0]):
+                end = len(STATE["u"][:,0])
+            STATE["u"][start:end,1] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
 
-    # # Set uth_x3
+    # # Set ufl_x3
     with open("interp/velz.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
-    STATE["u"][:,2] = loaded_interpolator((STATE["x"][:,1], STATE["x"][:,0]))
+        chunk_size = 1024  # Define a chunk size
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = start + chunk_size
+            if end > len(STATE["u"][:,0]):
+                end = len(STATE["u"][:,0])
+            STATE["u"][start:end,2] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
 
     return
 
@@ -186,7 +208,7 @@ def load_and_interpolate_density(STATE, filename):
     filename (str): Path to the file containing the interpolator.
     """
     # Free up a little bit of memory
-    print(STATE.keys())
+    # print(STATE.keys())
     if "fld" in STATE.keys():
         del STATE["fld"]
     
@@ -206,7 +228,7 @@ def set_density_e( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    # print("calling set_density_e...")
+    print("setting ELECTRON DENSITY...")
 
     load_and_interpolate_density(STATE, "interp/edens.npy")
 
@@ -218,9 +240,7 @@ def set_density_Al( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    # print("calling set_density_Al...")
-    if "vthele" in STATE.keys():
-        del STATE["vthele"]
+    print("setting ALUMINUM DENSITY...")
     load_and_interpolate_density(STATE, "interp/aldens.npy")
 
 #-----------------------------------------------------------------------------------------
@@ -231,7 +251,5 @@ def set_density_Mg(STATE):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    # print("calling set_density_Mg...")
-    if "vthal" in STATE.keys():
-        del STATE["vthal"]
+    print("setting MAGNESIUM DENSITY...")
     load_and_interpolate_density(STATE, "interp/mgdens.npy")
