@@ -13,7 +13,7 @@ ne_cgs = 5e+18 # [cm^-3]
 Te_eV = 40.0 # [eV]
 B_gauss = 150000  # [G] Technically, the background is supposed to be 15 T, but i am using the value in the channel
 Z = 1 # [e] This is the charge state for the fully ionized aluminum in the channel
-ion_mass = 100 # [m_e]
+ion_mass = 25 # [m_e]
 piston_ion_mass = 0.979*ion_mass # this assumes that the piston is Mg and the background is Al
 v_piston = None
 print("-"*10+f" n_e = {ne_cgs} cm^-3 "+"-"*10)
@@ -69,7 +69,7 @@ print("and the maximum bound of the box should be approx "\
 print("-"*50)
 
 ## assume that OSIRIS uses the convention where v_th = sqrt(kT/m)
-Te_ergs = Te_eV/kb     
+Te_ergs = Te_eV*ergs_per_eV
 lambda_d = np.sqrt(Te_ergs/(4*np.pi*ne_cgs*e**2))
 print(f"Te of {Te_eV} eV corresponds to debye length of {np.format_float_scientific(lambda_d,2)} cm")
 print(f"in simulation units this would be = {(lambda_d*omega_pe/c):.4f}")

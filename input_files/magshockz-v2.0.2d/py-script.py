@@ -3,6 +3,7 @@
 # print("I am at the module scope.")
 import numpy as np
 import pickle
+
 #-----------------------------------------------------------------------------------------
 # Functions callable by OSIRIS
 #-----------------------------------------------------------------------------------------
@@ -139,7 +140,6 @@ def set_uth_mg( STATE ):
     # print("calling set_uth_i...")
 
     if "vthmg" not in STATE.keys():
-        print("loading vthmg")
         with open('interp/vthmg.pkl', "rb") as f:
             STATE['vthmg'] = pickle.load(f)
 

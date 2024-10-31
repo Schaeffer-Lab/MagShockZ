@@ -44,7 +44,7 @@ cp "$PATHTOINPUTFILE" "${OUTPUTDIR}/input_file.txt" || { echo "Failed to copy in
 echo "Copying input file ${INPUTFILENAME}"
 
 pushd "${OUTPUTDIR}" || { echo "Failed to change directory to OUTPUTDIR"; exit 1; }
-nohup mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-2D.e input_file.txt > osiris_output.log 2>&1 || { echo "Osiris simulation failed"; popd; exit 1; } & exit
+mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-2D.e input_file.txt || { echo "Osiris simulation failed"; popd; exit 1; }
 
 # rm input_file.txt || { echo "Failed to remove input file"; popd; exit 1; }
 # rm py-script.py || { echo "Failed to remove python script"; popd; exit 1; }

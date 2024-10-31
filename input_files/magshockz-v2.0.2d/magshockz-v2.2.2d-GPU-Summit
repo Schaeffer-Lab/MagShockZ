@@ -20,12 +20,12 @@ simulation
 !--------the node configuration for this simulation--------
 node_conf 
 {
- node_number(1:2) = 10, 6, ! This needs to multiply out to the number of GPUs
+ node_number(1:2) = 16, 24, ! This needs to multiply out to the number of GPUs, planning on using 64 nodes for this one
  !n_threads=10, ! find number of allowed threads/node, can leave this unset for now
- if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = 512, 512,
+ if_periodic(1:2) = .true., .false.,
+ tile_number(1:2) = 1024, 1024,
  tile_topology = "hilbert",
- com_buf_size = 1024,
+ !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
  !nchunks_pad_frac = 0.05,
 }
@@ -35,15 +35,15 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  14000, 9800,
+  nx_p(1:2) =  20000, 19000,
   coordinates = "cartesian",
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   5.05e-2,
-  ndump  =   64,
+  dt     =   7e-2,
+  ndump  =   2024,
 }
 
 !----------restart information----------
@@ -58,8 +58,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -500, 100,
-  xmax(1:2) =  500, 800,
+  xmin(1:2) =  -2000, 100,
+  xmax(1:2) =  2000, 4000,
   if_move(1:2) = .false., .false.,
 }
 
@@ -67,7 +67,7 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 1000.0,
+  tmax  = 30000.0,
 }
 
 !----------field solver set up----------
@@ -93,7 +93,7 @@ el_mag_fld
 emf_bound
 {
   type(1:2,1) =   "open", "open",
-  type(1:2,2) =   "conducting", "open",
+  type(1:2,2) =   "reflecting", "open",
 }
 
 !----------- electo-magnetic field diagnostics ---------
@@ -116,9 +116,9 @@ species
 {
   name = "electron",
   n_sort = 0,  
-  num_par_max = 4188,
+  num_par_max = 27657,
   rqm=-1.0,
-  num_par_x(1:2) = 2, 2,
+  num_par_x(1:2) = 5, 5,
   init_type = "python",
 }
 
@@ -144,8 +144,8 @@ profile
 !----------boundary conditions for electrons----------
 spe_bound
 {
-  type(1:2,1) =   "open","open",
-  type(1:2,2) =   "specular","open",
+  type(1:2,1) =   "reflecting","reflecting",
+  type(1:2,2) =   "reflecting","open",
 }
 
 !----------diagnostic for electrons----------
@@ -157,9 +157,10 @@ diag_species
   ndump_fac_pha = 1,
   ndump_fac_ene = 1,
   ndump_fac_temp = 1,
+  ps_xmin(1:2) = 
   ps_pmin(1:3) = -0.5, -0.8, -.25,
   ps_pmax(1:3) = 0.5,  0.8,  .25,
-  ps_np(1:3) = 128, 1024, 32,
+  ps_np(1:3) = 1024, 1024, 32,
   if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2", "p3x2",
 }
@@ -169,9 +170,9 @@ species
 {
   name = "Aluminum",
   n_sort = 0,  
-  num_par_max = 4188,
+  num_par_max = 27657,
   rqm=100.0,
-  num_par_x(1:2) = 2, 2,
+  num_par_x(1:2) = 5, 5,
   init_type = "python",
 }
 
@@ -197,8 +198,8 @@ profile
 !----------boundary conditions for Aluminum----------
 spe_bound
 {
-  type(1:2,1) =   "open","open",
-  type(1:2,2) =   "specular","open",
+  type(1:2,1) =   "reflecting","reflecting",
+  type(1:2,2) =   "reflecting","open",
 }
 
 !----------diagnostic for Aluminum----------
@@ -212,7 +213,7 @@ diag_species
   ndump_fac_temp = 1,  
   ps_pmin(1:3) = -0.1, -0.15, -0.1,
   ps_pmax(1:3) = 0.1,  0.15,  0.1,
-  ps_np(1:3)   = 128,  1024,  32,
+  ps_np(1:3)   = 1024,  1024,  32,
   if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2", "p3x2",
 }
@@ -221,9 +222,9 @@ species
 {
   name = "Magnesium",
   n_sort = 0,  
-  num_par_max = 4188,
+  num_par_max = 27657,
   rqm=97.9,
-  num_par_x(1:2) = 2, 2,
+  num_par_x(1:2) = 5, 5,
   init_type = "python",
 }
 
@@ -249,8 +250,8 @@ profile
 !----------boundary conditions for Magnesium----------
 spe_bound
 {
-  type(1:2,1) =   "open","open",
-  type(1:2,2) =   "specular","open",
+  type(1:2,1) =   "reflecting","reflecting",
+  type(1:2,2) =   "reflecting","open",
 }
 
 !----------diagnostic for this Magnesium----------
@@ -264,7 +265,7 @@ diag_species
   ndump_fac_ene = 1,  
   ps_pmin(1:3) = -0.5, -0.8, -0.25,
   ps_pmax(1:3) = 0.5,  0.8,  0.25,
-  ps_np(1:3)   = 128,  1024,  32,
+  ps_np(1:3)   = 1024,  1024,  32,
   if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }

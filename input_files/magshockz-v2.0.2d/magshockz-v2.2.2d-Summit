@@ -21,7 +21,7 @@ simulation
 node_conf 
 {
  node_number(1:2) = 8, 16, ! This needs to multiply out to the number of GPUs, planning on using 64 nodes for this one
- !n_threads=10, ! find number of allowed threads/node, can leave this unset for now
+ n_threads=42, ! For CPU, this should be n_cpu/RS
  if_periodic(1:2) = .true., .false.,
  !tile_number(1:2) = 1024, 1024,
  !tile_topology = "hilbert",
