@@ -10,7 +10,7 @@
 !----------global simulation parameters----------
 simulation 
 {
-  algorithm = "cuda",
+  algorithm = "tiles",
   !wall_clock_limit = "2:00:00",
   !wall_clock_check = 500,
   !file_format = "zdf",
@@ -20,37 +20,43 @@ simulation
 !--------the node configuration for this simulation--------
 node_conf 
 {
- node_number(1:2) = 50, 24, ! This needs to multiply out to the number of GPUs, planning on using 148 nodes for this one
- !n_threads=10, ! find number of allowed threads/node, can leave this unset for now
+ node_number(1:2) = 4, 4,
+ n_threads=2,
  if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = 1500, 1024,
- tile_topology = "hilbert",
+ tile_number(1:2) = 128, 128,
+ tile_topology = "snake",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
  !nchunks_pad_frac = 0.05,
 }
 
 
-
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  40000, 39000,
+  nx_p(1:2) =  4000, 3800,
   coordinates = "cartesian",
+  load_balance(1:2) = .true., .true.,
+  lb_type = "dynamic",
+  n_dynamic = 64, ! estimate this to be once per crossing time
+  !cell_weight = 1.0,
+  !dump_global_load = 1,
+  !start_load_balance = 1000,
+  balance_on_start = .false.,
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   7e-2,
-  ndump  =   2024,
+  dt     =   0.07,
+  ndump  =    1024,
 }
 
 !----------restart information----------
 restart
 {
   ndump_fac = -1,
-  ndump_time = 3400, !once/hour
+  ndump_time = 3500, !once/hour
   if_restart = .false.,
   if_remold = .true.,
 }
@@ -58,8 +64,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -2000, 100,
-  xmax(1:2) =  2000, 4000,
+  xmin(1:2) =  -1000, 100,
+  xmax(1:2) =  1000, 2000,
   if_move(1:2) = .false., .false.,
 }
 
@@ -67,7 +73,7 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 40000.0,
+  tmax  = 30000.0,
 }
 
 !----------field solver set up----------
@@ -126,10 +132,9 @@ particles
 species
 {
   name = "electron",
-  n_sort = 0,  
-  !num_par_max = 50782,
+  !num_par_max = 18,
   rqm=-1.0,
-  num_par_x(1:2) = 5, 5,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -179,7 +184,7 @@ diag_species
   ps_xmin(1:2) = -250.0, 100.0,
   ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 512, 4096,
+  ps_nx(1:2) = 128, 512,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
@@ -188,10 +193,9 @@ diag_species
 species
 {
   name = "Aluminum",
-  n_sort = 0,  
-  !num_par_max = 50782,
+  !num_par_max = 18,
   rqm=100.0,
-  num_par_x(1:2) = 4, 4,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -226,6 +230,7 @@ spe_bound
   thermal_type(1:2,2) = "half max", "half max",
   thermal_type(1:2,1) = "half max", "half max",
 }
+
 !----------diagnostic for Aluminum----------
 diag_species
 {
@@ -240,18 +245,18 @@ diag_species
   ps_xmin(1:2) = -250.0, 100.0,
   ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 512, 4096,
+  ps_nx(1:2) = 128, 512,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
+
 !----------information for Magnesium----------
 species
 {
   name = "Magnesium",
-  n_sort = 0,  
-  !num_par_max = 50782,
+  !num_par_max = 18,
   rqm=97.9,
-  num_par_x(1:2) = 6, 6,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -301,7 +306,7 @@ diag_species
   ps_xmin(1:2) = -250.0, 100.0,
   ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 512, 4096,
+  ps_nx(1:2) = 128, 512,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
@@ -320,4 +325,7 @@ smooth
 {
   !ndump_fac = 1,
   !reports = "j1", "j2", "j3" , 
+
 }
+
+!---------- end of osiris input file -------------

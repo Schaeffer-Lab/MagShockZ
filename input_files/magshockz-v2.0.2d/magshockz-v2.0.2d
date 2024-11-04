@@ -10,21 +10,21 @@
 !----------global simulation parameters----------
 simulation 
 {
-  algorithm = "tiles",
+  !algorithm = "tiles",
   !wall_clock_limit = "2:00:00",
   !wall_clock_check = 500,
   !file_format = "zdf",
-  !parallel_io = "mpi",
+  parallel_io = "mpi",
 }
 
 !--------the node configuration for this simulation--------
 node_conf 
 {
  node_number(1:2) = 4, 4,
- n_threads=1,
+ n_threads=2,
  if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = 128, 128,
- tile_topology = "snake",
+ !tile_number(1:2) = 128, 128,
+ !tile_topology = "snake",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
  !nchunks_pad_frac = 0.05,
@@ -36,12 +36,12 @@ grid
 {
   nx_p(1:2) =  4000, 3800,
   coordinates = "cartesian",
-  load_balance(1:2) = .true., .true.,
-  lb_type = "dynamic",
-  n_dynamic = 200, ! estimate this to be once per crossing time
+  !load_balance(1:2) = .true., .true.,
+  !lb_type = "dynamic",
+  !n_dynamic = 200, ! estimate this to be once per crossing time
   ! cell_weight = 1.0,
   ! dump_global_load = 1,
-  start_load_balance = 100,
+  !start_load_balance = 100,
 }
 
 !----------time step and global data dump timestep number----------
@@ -98,7 +98,7 @@ el_mag_fld
 emf_bound
 {
   type(1:2,1) =   "open", "open",
-  type(1:2,2) =   "conducting", "open",
+  type(1:2,2) =   "reflecting", "open",
 }
 
 !----------- electo-magnetic field diagnostics ---------
@@ -173,16 +173,19 @@ spe_bound
 diag_species
 {
   ndump_fac = 1,
-  ndump_fac_temp = 1,
-  ndump_fac_ene = 1,
+  ndump_fac_temp = 2,
+  ndump_fac_ene = 2,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
-  ps_pmin(1:3) = -0.5, -0.8, -.25,
-  ps_pmax(1:3) = 0.5,  0.8,  .25,
-  ps_np(1:3) = 128, 1024, 32,
-  if_ps_p_auto(1:3) = .true., .true., .true.,
-  phasespaces = "p2x2", "p1x2",
+  ps_pmin(1:3) = -0.02, -0.05, -0.02,
+  ps_pmax(1:3) = 0.02,  0.05,  0.02,
+  ps_xmin(1:2) = -250.0, 100.0,
+  ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
+  ps_np(1:2) = 2048, 2048,
+  ps_nx(1:2) = 512, 512,
+  !if_ps_p_auto(1:3) = .true., .true., .true.,
+  phasespaces = "p1x2", "p2x2","p3x2",
 }
 
 !----------information for Aluminum ions----------
@@ -217,27 +220,35 @@ profile
 !----------boundary conditions for Aluminum----------
 spe_bound
 {
-  type(1:2,1) =   "open","open",
-  type(1:2,2) =   "specular","thermal",
+  type(1:2,1) =   "thermal","thermal",
+  type(1:2,2) =   "thermal","thermal",
+  uth_bnd(1:3,1,1)= 1.7694e-03,1.7694e-03,1.7694e-03,
+  uth_bnd(1:3,1,2)= 1.7694e-03,1.7694e-03,1.7694e-03,
+  uth_bnd(1:3,2,1)= 1.7694e-03,1.7694e-03,1.7694e-03,
   uth_bnd(1:3,2,2)= 1.7694e-03,1.7694e-03,1.7694e-03, ! 40 eV background temp
-  thermal_type(1:2,2) = "half max",
+  thermal_type(1:2,2) = "half max", "half max",
+  thermal_type(1:2,1) = "half max", "half max",
 }
 
 !----------diagnostic for Aluminum----------
 diag_species
 {
   ndump_fac = 1,
-  ndump_fac_temp = 1,
-  ndump_fac_ene = 1,
+  ndump_fac_temp = 2,
+  ndump_fac_ene = 2,
   reports = "charge",
-  rep_udist = "ufl1", "ufl2", "uth1", "uth2",
+  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
-  ps_pmin(1:3) = -0.1, -0.15, -0.1,
-  ps_pmax(1:3) = 0.1,  0.15,  0.1,
-  ps_np(1:3)   = 128,  1024,  32,
-  if_ps_p_auto(1:3) = .true., .true., .true.,
-  phasespaces = "p2x2", "p1x2",
+  ps_pmin(1:3) = -0.02, -0.05, -0.02,
+  ps_pmax(1:3) = 0.02,  0.05,  0.02,
+  ps_xmin(1:2) = -250.0, 100.0,
+  ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
+  ps_np(1:2) = 2048, 2048,
+  ps_nx(1:2) = 512, 512,
+  !if_ps_p_auto(1:3) = .true., .true., .true.,
+  phasespaces = "p1x2", "p2x2","p3x2",
 }
+
 !----------information for Magnesium----------
 species
 {
@@ -270,26 +281,33 @@ profile
 !----------boundary conditions for Magnesium----------
 spe_bound
 {
-  type(1:2,1) =   "open","open",
-  type(1:2,2) =   "specular","thermal",
+  type(1:2,1) =   "thermal","thermal",
+  type(1:2,2) =   "thermal","thermal",
+  uth_bnd(1:3,1,1)= 1.7694e-03,1.7694e-03,1.7694e-03,
+  uth_bnd(1:3,1,2)= 1.7694e-03,1.7694e-03,1.7694e-03,
+  uth_bnd(1:3,2,1)= 1.7694e-03,1.7694e-03,1.7694e-03,
   uth_bnd(1:3,2,2)= 1.7694e-03,1.7694e-03,1.7694e-03, ! 40 eV background temp
-  thermal_type(1:2,2) = "half max",
+  thermal_type(1:2,2) = "half max", "half max",
+  thermal_type(1:2,1) = "half max", "half max",
 }
 
 !----------diagnostic for this Magnesium----------
 diag_species
 {
   ndump_fac = 1,
-  ndump_fac_temp = 1,
-  ndump_fac_ene = 1,
+  ndump_fac_temp = 2,
+  ndump_fac_ene = 2,
   reports = "charge",
   rep_udist = "uth1", "uth2", "ufl1", "ufl2",
   ndump_fac_pha = 1,
-  ps_pmin(1:3) = -0.5, -0.8, -0.25,
-  ps_pmax(1:3) = 0.5,  0.8,  0.25,
-  ps_np(1:3)   = 128,  1024,  32,
-  if_ps_p_auto(1:3) = .true., .true., .true.,
-  phasespaces = "p2x2", "p1x2",
+  ps_pmin(1:3) = -0.02, -0.05, -0.02,
+  ps_pmax(1:3) = 0.02,  0.05,  0.02,
+  ps_xmin(1:2) = -250.0, 100.0,
+  ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
+  ps_np(1:2) = 2048, 2048,
+  ps_nx(1:2) = 512, 512,
+  !if_ps_p_auto(1:3) = .true., .true., .true.,
+  phasespaces = "p1x2", "p2x2","p3x2",
 }
 
 !----------smoothing for currents----------
