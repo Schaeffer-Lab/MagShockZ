@@ -10,7 +10,7 @@
 !----------global simulation parameters----------
 simulation 
 {
-  !algorithm = "tiles",
+  algorithm = "cuda",
   !wall_clock_limit = "2:00:00",
   !wall_clock_check = 500,
   !file_format = "zdf",
@@ -20,11 +20,11 @@ simulation
 !--------the node configuration for this simulation--------
 node_conf 
 {
- node_number(1:2) = 4, 4,
- n_threads=2,
+ node_number(1:2) = 10, 15, ! 25 nodes
+ !n_threads=2,
  if_periodic(1:2) = .false., .false.,
  !tile_number(1:2) = 1024, 1024,
- !tile_topology = "snake",
+ tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
  !nchunks_pad_frac = 0.05,
@@ -134,7 +134,7 @@ species
   
   !num_par_max = 18,
   rqm=-1.0,
-  num_par_x(1:2) = 4, 4,
+  num_par_x(1:2) = 5, 5,
   init_type = "python",
 }
 
@@ -181,8 +181,8 @@ diag_species
   ndump_fac_pha = 1,
   ps_pmin(1:3) = -0.02, -0.05, -0.02,
   ps_pmax(1:3) = 0.02,  0.05,  0.02,
-  ps_xmin(1:2) = -250.0, 100.0,
-  ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
+  ps_xmin(1:2) = -250.0, 1801.0,
+  ps_xmax(1:2) = 250.0, 8000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
   ps_nx(1:2) = 1024, 1024,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
@@ -195,7 +195,7 @@ species
   name = "Aluminum",
   !num_par_max = 18,
   rqm=100.0,
-  num_par_x(1:2) = 4, 4,
+  num_par_x(1:2) = 5, 5,
   init_type = "python",
 }
 
@@ -242,8 +242,8 @@ diag_species
   ndump_fac_pha = 1,
   ps_pmin(1:3) = -0.02, -0.05, -0.02,
   ps_pmax(1:3) = 0.02,  0.05,  0.02,
-  ps_xmin(1:2) = -250.0, 100.0,
-  ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
+  ps_xmin(1:2) = -250.0, 1801.0,
+  ps_xmax(1:2) = 250.0, 8000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
   ps_nx(1:2) = 1024, 1024,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
@@ -256,7 +256,7 @@ species
   name = "Silicon",
   !num_par_max = 18,
   rqm=104,
-  num_par_x(1:2) = 4, 4,
+  num_par_x(1:2) = 5, 5,
   init_type = "python",
 }
 
@@ -303,8 +303,8 @@ diag_species
   ndump_fac_pha = 1,
   ps_pmin(1:3) = -0.02, -0.05, -0.02,
   ps_pmax(1:3) = 0.02,  0.05,  0.02,
-  ps_xmin(1:2) = -250.0, 100.0,
-  ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
+  ps_xmin(1:2) = -250.0, 1801.0,
+  ps_xmax(1:2) = 250.0, 8000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
   ps_nx(1:2) = 1024, 1024,
   !if_ps_p_auto(1:3) = .true., .true., .true.,

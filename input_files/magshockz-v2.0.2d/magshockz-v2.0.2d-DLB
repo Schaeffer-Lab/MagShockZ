@@ -38,10 +38,10 @@ grid
   coordinates = "cartesian",
   load_balance(1:2) = .true., .true.,
   lb_type = "dynamic",
-  n_dynamic = 2000, ! estimate this to be once per crossing time
-  !cell_weight = 1.0,
-  !dump_global_load = 1,
-  start_load_balance = 1000,
+  n_dynamic = 200, ! estimate this to be once per crossing time
+  cell_weight = 1.0,
+  ndump_global_load = 1,
+  start_load_balance = 100,
   !balance_on_start = .false.,
 }
 
@@ -125,7 +125,7 @@ diag_emf
 particles
 {
   interpolation = "quadratic",
-  num_species = 3,
+  num_species = 2,
 }
 
 !----------information for electrons----------
@@ -188,7 +188,6 @@ diag_species
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
-
 !----------information for Aluminum ions----------
 species
 {
@@ -245,68 +244,7 @@ diag_species
   ps_xmin(1:2) = -250.0, 100.0,
   ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 128, 512,
-  !if_ps_p_auto(1:3) = .true., .true., .true.,
-  phasespaces = "p1x2", "p2x2","p3x2",
-}
-
-!----------information for Magnesium----------
-species
-{
-  name = "Magnesium",
-  !num_par_max = 18,
-  rqm=97.9,
-  num_par_x(1:2) = 1, 1,
-  init_type = "python",
-}
-
-!----------inital proper velocities - Magnesium-----------------
-udist
-{
-  use_spatial_uth = .true.,
-  uth_py_mod = "py-script", ! Name of Python file
-  uth_py_func = "set_uth_mg", ! Name of function in the Python file to call
-  
-  ! use_spatial_ufl = .true.,
-  ufl_py_mod = "py-script", ! Name of Python file
-  ufl_py_func = "set_ufl", ! Name of function in the Python file to call
-}
-
-!----------density profile for Magnesium----------
-profile
-{
-  py_mod = "py-script", ! Name of Python file
-  py_func = "set_density_Mg", ! Name of function in the Python file to call
-}
-
-!----------boundary conditions for Magnesium----------
-spe_bound
-{
-  type(1:2,1) =   "thermal","thermal",
-  type(1:2,2) =   "thermal","thermal",
-  uth_bnd(1:3,1,1)= 1.7694e-03,1.7694e-03,1.7694e-03,
-  uth_bnd(1:3,1,2)= 1.7694e-03,1.7694e-03,1.7694e-03,
-  uth_bnd(1:3,2,1)= 1.7694e-03,1.7694e-03,1.7694e-03,
-  uth_bnd(1:3,2,2)= 1.7694e-03,1.7694e-03,1.7694e-03, ! 40 eV background temp
-  thermal_type(1:2,2) = "half max", "half max",
-  thermal_type(1:2,1) = "half max", "half max",
-}
-
-!----------diagnostic for this Magnesium----------
-diag_species
-{
-  ndump_fac = 1,
-  ndump_fac_temp = 2,
-  ndump_fac_ene = 2,
-  reports = "charge",
-  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
-  ndump_fac_pha = 1,
-  ps_pmin(1:3) = -0.02, -0.05, -0.02,
-  ps_pmax(1:3) = 0.02,  0.05,  0.02,
-  ps_xmin(1:2) = -250.0, 100.0,
-  ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
-  ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 128, 512,
+  ps_nx(1:2) = 1024, 1024,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
