@@ -23,7 +23,7 @@ node_conf
  node_number(1:2) = 4, 4,
  n_threads=2,
  if_periodic(1:2) = .false., .false.,
- !tile_number(1:2) = 128, 128,
+ !tile_number(1:2) = 1024, 1024,
  !tile_topology = "snake",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
@@ -34,7 +34,7 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  3900, 3900,
+  nx_p(1:2) =  24000, 24796,
   coordinates = "cartesian",
   !load_balance(1:2) = .true., .true.,
   !lb_type = "dynamic",
@@ -47,8 +47,8 @@ grid
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   0.22,
-  ndump  =    512,
+  dt     =   0.176,
+  ndump  =    1024,
 }
 
 !----------restart information----------
@@ -63,8 +63,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -2000, 1801,
-  xmax(1:2) =  2000, 4000,
+  xmin(1:2) =  -3000, 1801,
+  xmax(1:2) =  3000, 8000,
   if_move(1:2) = .false., .false.,
 }
 
@@ -72,7 +72,7 @@ space
 time
 {
   tmin = 0.0,
-  tmax  = 30000.0,
+  tmax  = 50000.0,
 }
 
 !----------field solver set up----------
@@ -134,7 +134,7 @@ species
   
   !num_par_max = 18,
   rqm=-1.0,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 4, 4,
   init_type = "python",
 }
 
@@ -195,7 +195,7 @@ species
   name = "Aluminum",
   !num_par_max = 18,
   rqm=100.0,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 4, 4,
   init_type = "python",
 }
 
@@ -256,7 +256,7 @@ species
   name = "Silicon",
   !num_par_max = 18,
   rqm=104,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 4, 4,
   init_type = "python",
 }
 
