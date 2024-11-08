@@ -198,8 +198,10 @@ def load_and_interpolate_density(STATE, filename):
     # print(STATE.keys())
     if "fld" in STATE.keys():
         del STATE["fld"]
-    
-    density_grid = np.load(filename)
+    if filename == "interp/edens.npy":
+        density_grid = np.load("interp/aldens.npy") + np.load("interp/mgdens.npy")
+    else:
+        density_grid = np.load(filename)
     STATE["nx"] = np.array(density_grid.shape)//2
     STATE["xmin"] = np.array([-2522.0, 36.0])
     STATE["xmax"] = np.array([2522.0, 4206.0])

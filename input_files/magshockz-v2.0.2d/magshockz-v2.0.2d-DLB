@@ -20,7 +20,7 @@ simulation
 !--------the node configuration for this simulation--------
 node_conf 
 {
- node_number(1:2) = 4, 4,
+ node_number(1:2) = 4,4,
  n_threads=2,
  if_periodic(1:2) = .false., .false.,
  tile_number(1:2) = 128, 128,
@@ -38,11 +38,11 @@ grid
   coordinates = "cartesian",
   load_balance(1:2) = .true., .true.,
   lb_type = "dynamic",
-  n_dynamic = 64, ! estimate this to be once per crossing time
+  n_dynamic = 2000, ! estimate this to be once per crossing time
   !cell_weight = 1.0,
   !dump_global_load = 1,
-  !start_load_balance = 1000,
-  balance_on_start = .false.,
+  start_load_balance = 1000,
+  !balance_on_start = .false.,
 }
 
 !----------time step and global data dump timestep number----------
