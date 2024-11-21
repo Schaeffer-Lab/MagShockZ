@@ -25,8 +25,8 @@ def set_fld( STATE ):
     # print(f"nx = {nx}")
 
     # Create x arrays that indicate the position (remember indexing order is reversed)
-    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True )
-    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True )
+    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True ).astype(np.float32)
+    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True ).astype(np.float32)
     X1, X2 = np.meshgrid( x1, x2, indexing='xy' )
 
     # Determine the filename based on the field component
@@ -75,8 +75,8 @@ def set_fld_ext( STATE ):
 
     # Create x arrays that indicate the position (remember indexing order is reversed)
     nx = STATE["data"].shape
-    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True )
-    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True )
+    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True ).astype(np.float32)
+    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True ).astype(np.float32)
     X1, X2 = np.meshgrid( x1, x2, indexing='xy' ) # Matches Fortran array indexing
 
     # # Perform some function to fill in the field values based on the coordinates
@@ -108,9 +108,9 @@ def set_uth_e( STATE ):
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end, 0] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 1] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 2] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 0] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 1] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 2] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
 
     return
 #-----------------------------------------------------------------------------------------
@@ -128,9 +128,9 @@ def set_uth_al( STATE ):
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end, 0] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 1] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 2] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 0] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 1] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 2] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
 
     return
 
@@ -149,9 +149,9 @@ def set_uth_mg( STATE ):
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end, 0] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 1] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 2] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 0] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 1] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 2] = STATE['vthmg']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
 
     return
 #-----------------------------------------------------------------------------------------
@@ -167,21 +167,21 @@ def set_ufl( STATE ):
         loaded_interpolator = pickle.load(f)
         for start in range(0, len(STATE["u"][:,0]), chunk_size):
             end = min(start + chunk_size, len(STATE["u"][:,0]))
-            STATE["u"][start:end,0] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+            STATE["u"][start:end,0] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0])).astype(np.float32)
 
     # Set ufl_x2
     with open("interp/vely.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
         for start in range(0, len(STATE["u"][:,0]), chunk_size):
             end = min(start + chunk_size, len(STATE["u"][:,0]))
-            STATE["u"][start:end,1] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+            STATE["u"][start:end,1] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0])).astype(np.float32)
 
         # Set ufl_x3
     with open("interp/velz.pkl", "rb") as f:
         loaded_interpolator = pickle.load(f)
         for start in range(0, len(STATE["u"][:,0]), chunk_size):
             end = min(start + chunk_size, len(STATE["u"][:,0]))
-            STATE["u"][start:end,2] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+            STATE["u"][start:end,2] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0])).astype(np.float32)
 
     return
 

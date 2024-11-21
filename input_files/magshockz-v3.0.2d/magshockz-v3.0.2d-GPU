@@ -10,7 +10,7 @@
 !----------global simulation parameters----------
 simulation 
 {
-  !algorithm = "tiles",
+  algorithm = "cuda",
   !wall_clock_limit = "2:00:00",
   !wall_clock_check = 500,
   !file_format = "zdf",
@@ -20,11 +20,11 @@ simulation
 !--------the node configuration for this simulation--------
 node_conf 
 {
- node_number(1:2) = 4, 4,
- n_threads=2,
+ node_number(1:2) = 1,2,
+ !n_threads=2,
  if_periodic(1:2) = .false., .false.,
- !tile_number(1:2) = 128, 128,
- !tile_topology = "snake",
+ tile_number(1:2) = 128, 128,
+ tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
  !nchunks_pad_frac = 0.05,
@@ -34,7 +34,7 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:2) =  3900, 3900,
+  nx_p(1:2) =  2000, 2000,
   coordinates = "cartesian",
   !load_balance(1:2) = .true., .true.,
   !lb_type = "dynamic",
@@ -63,8 +63,8 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-  xmin(1:2) =  -3000, 2000,
-  xmax(1:2) =  3000, 8000,
+  xmin(1:2) =  -2000, 1890,
+  xmax(1:2) =  2000, 4000,
   if_move(1:2) = .false., .false.,
 }
 
@@ -134,7 +134,7 @@ species
   
   !num_par_max = 18,
   rqm=-1.0,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -184,7 +184,7 @@ diag_species
   ps_xmin(1:2) = -250.0, 100.0,
   ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 1024, 1024,
+  ps_nx(1:2) = 2048, 2048,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
@@ -195,7 +195,7 @@ species
   name = "Aluminum",
   !num_par_max = 18,
   rqm=100.0,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -245,7 +245,7 @@ diag_species
   ps_xmin(1:2) = -250.0, 100.0,
   ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 1024, 1024,
+  ps_nx(1:2) = 2048, 2048,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
@@ -256,7 +256,7 @@ species
   name = "Silicon",
   !num_par_max = 18,
   rqm=104,
-  num_par_x(1:2) = 3, 3,
+  num_par_x(1:2) = 1, 1,
   init_type = "python",
 }
 
@@ -306,7 +306,7 @@ diag_species
   ps_xmin(1:2) = -250.0, 100.0,
   ps_xmax(1:2) = 250.0, 2000.0, ! Make sure to adjust this to the upper x bound
   ps_np(1:2) = 2048, 2048,
-  ps_nx(1:2) = 1024, 1024,
+  ps_nx(1:2) = 2048, 2048,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
   phasespaces = "p1x2", "p2x2","p3x2",
 }
