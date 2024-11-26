@@ -7,6 +7,10 @@ import pickle
 #-----------------------------------------------------------------------------------------
 # Functions callable by OSIRIS
 #-----------------------------------------------------------------------------------------
+import numpy as np
+start_pt = [0, 0]
+end_pt = [0, 0]
+
 def set_fld( STATE ):
     """
     Function to set the field data in the STATE dictionary based on the field component.
@@ -18,16 +22,14 @@ def set_fld( STATE ):
     
     # Positional boundary data (makes a copy, but it's small)
     x_bnd = STATE["x_bnd"]
-    # print(f"x_bnd = {x_bnd}")
+    print(f"x_bnd = {x_bnd}")
 
     # Shape of the data array
     nx = STATE["data"].shape
-    # print(f"nx = {nx}")
+    print(f"nx = {nx}")
 
     # Create x arrays that indicate the position (remember indexing order is reversed)
-    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True ).astype(np.float32)
-    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True ).astype(np.float32)
-    X1, X2 = np.meshgrid( x1, x2, indexing='xy' )
+    x = np.linspace( x_bnd[0], x_bnd[1], nx[0], endpoint=True ).astype(np.float32)
 
     # Determine the filename based on the field component
     match STATE['fld']:
@@ -47,7 +49,7 @@ def set_fld( STATE ):
     with open(filename, "rb") as f:
         loaded_interpolator = pickle.load(f)
 
-    STATE["data"] = loaded_interpolator((X2, X1)).astype(np.float32)
+    STATE["data"] = loaded_interpolator((r*np.cos(theta), r*np.sin(theta))).astype(np.float32)
 
 
 #-----------------------------------------------------------------------------------------
@@ -75,15 +77,14 @@ def set_fld_ext( STATE ):
 
     # Create x arrays that indicate the position (remember indexing order is reversed)
     nx = STATE["data"].shape
-    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True )
-    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True )
-    X1, X2 = np.meshgrid( x1, x2, indexing='xy' ) # Matches Fortran array indexing
+    r = np.linspace( x_bnd[0], x_bnd[1], nx[0], endpoint=True ).astype(np.float32)
+    # X1, X2 = np.meshgrid( x1, x2, indexing='xy' ) # Matches Fortran array indexing
 
     # # Perform some function to fill in the field values based on the coordinates
     # with open(filename, "rb") as f:
     #     loaded_interpolator = pickle.load(f)
 
-    # STATE["data"] = loaded_interpolator((X2, X1)).astype(np.float32)
+    # STATE["data"] = loaded_interpolator((r*np.cos(theta), r)).astype(np.float32)
 
 
 

@@ -4,6 +4,7 @@
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
+alias rm="rm -i"
 OSIRISPATH="/home/${USER}/osiris"
 NUM_NODES=16
 restart='false'
@@ -23,16 +24,22 @@ print_usage() {
 }
 
 while getopts 'rin:f:v' flag; do
-  case "${flag}" in
-    r) restart='true';;
-    i) interactive='true' ;;
-    n) NUM_NODES="${OPTARG}" ;;
-    f) INPUTFILENAME=$(basename "${OPTARG}") PATHTOINPUTFILE="${OPTARG}" ;;
-    v) verbose='true' ;;
-    *) print_usage
-       exit 1 ;;
-  esac
+    case "${flag}" in
+        r) restart='true';;
+        i) interactive='true' ;;
+        n) NUM_NODES="${OPTARG}" ;;
+        f) INPUTFILENAME=$(basename "${OPTARG}") PATHTOINPUTFILE="${OPTARG}" ;;
+        v) verbose='true' ;;
+        *) print_usage
+             exit 1 ;;
+    esac
 done
+
+if [ -z "$INPUTFILENAME" ]; then
+    echo "Error: Input file name must be specified with -f option."
+    print_usage
+    exit 1
+fi
 
 OUTPUTDIR="${PATHTOPROJECT}/simulations/raw_data/${INPUTFILENAME}"
 

@@ -3,7 +3,7 @@
 # hard code in where your project is and where osiris is on your hard drive
 
 set -e  # Exit immediately if a command exits with a non-zero status
-
+alias rm="rm -i"
 OSIRISPATH="/home/${USER}/osiris"
 NUM_NODES=16
 restart='false'
@@ -23,16 +23,22 @@ print_usage() {
 }
 
 while getopts 'rin:f:v' flag; do
-  case "${flag}" in
-    r) restart='true';;
-    i) interactive='true' ;;
-    n) NUM_NODES="${OPTARG}" ;;
-    f) INPUTFILENAME=$(basename "${OPTARG}") PATHTOINPUTFILE="${OPTARG}" ;;
-    v) verbose='true' ;;
-    *) print_usage
-       exit 1 ;;
-  esac
+    case "${flag}" in
+        r) restart='true';;
+        i) interactive='true' ;;
+        n) NUM_NODES="${OPTARG}" ;;
+        f) INPUTFILENAME=$(basename "${OPTARG}") PATHTOINPUTFILE="${OPTARG}" ;;
+        v) verbose='true' ;;
+        *) print_usage
+             exit 1 ;;
+    esac
 done
+
+if [ -z "$INPUTFILENAME" ]; then
+    echo "Error: Input file name must be specified with -f option."
+    print_usage
+    exit 1
+fi
 
 OUTPUTDIR="${PATHTOPROJECT}/simulations/raw_data/${INPUTFILENAME}"
 
@@ -51,10 +57,10 @@ export PYTHONPATH=.
 if [ "$restart" = 'true' ]; then
     if [ "$interactive" = 'true' ]; then
         echo "Restarting simulation"
-        mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-2D.e -r input_file.txt > osiris_output_restart.log 2>&1 || { echo "Osiris simulation failed"; exit 1; }
+        mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-1D.e -r input_file.txt > osiris_output_restart.log 2>&1 || { echo "Osiris simulation failed"; exit 1; }
     else
         echo "Restarting simulation"
-        nohup mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-2D.e -r input_file.txt > osiris_output_restart.log 2>&1 || { echo "Osiris simulation failed"; exit 1; } &
+        nohup mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-1D.e -r input_file.txt > osiris_output_restart.log 2>&1 || { echo "Osiris simulation failed"; exit 1; } &
     fi
 else
     if [ -d "${OUTPUTDIR}" ]; then
@@ -73,7 +79,7 @@ else
     cd "${OUTPUTDIR}" || { echo "Failed to change directory to OUTPUTDIR"; exit 1; }
     if [ "$interactive" = 'true' ]; then
         echo "Running simulation"
-        mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-2D.e input_file.txt || { echo "Osiris simulation failed"; exit 1; }
+        mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-1D.e input_file.txt || { echo "Osiris simulation failed"; exit 1; }
     else
         echo "Running simulation"
         nohup mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-1D.e input_file.txt > osiris_output.log 2>&1 || { echo "Osiris simulation failed"; exit 1; } &
