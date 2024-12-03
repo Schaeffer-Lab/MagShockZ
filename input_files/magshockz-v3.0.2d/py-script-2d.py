@@ -4,6 +4,18 @@
 import numpy as np
 import pickle
 
+# Parameters of FLASH simulation
+ions_1 = 'al'
+ions_2 = 'si'
+
+# Define bounds of box in osiris units, ensure that this is larger than the bounds specified in input file
+box_bounds = {
+    "xmin": -3362.0, 
+    "xmax": 3362.0,
+    "ymin": 1889.0,
+    "ymax": 8411.0,
+}
+
 #-----------------------------------------------------------------------------------------
 # Functions callable by OSIRIS
 #-----------------------------------------------------------------------------------------
@@ -118,9 +130,9 @@ def set_uth_e( STATE ):
 def set_uth_al( STATE ):
     # print("calling set_uth_i...")
 
-    if "vthal" not in STATE.keys():
-        with open('interp/vthal.pkl', "rb") as f:
-            STATE['vthal'] = pickle.load(f)
+    if f"vth{ions_1}" not in STATE.keys():
+        with open(f'interp/vth{ions_1}.pkl', "rb") as f:
+            STATE[f'vth{ions_1}'] = pickle.load(f)
 
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
@@ -128,9 +140,9 @@ def set_uth_al( STATE ):
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end, 0] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
-        STATE["u"][start:end, 1] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
-        STATE["u"][start:end, 2] = STATE['vthal']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 0] = STATE[f'vth{ions_1}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 1] = STATE[f'vth{ions_1}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 2] = STATE[f'vth{ions_1}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
 
     return
 
@@ -140,8 +152,8 @@ def set_uth_si( STATE ):
     # print("calling set_uth_i...")
 
     if "vthsi" not in STATE.keys():
-        with open('interp/vthsi.pkl', "rb") as f:
-            STATE['vthsi'] = pickle.load(f)
+        with open(f'interp/vth{ions_2}.pkl', "rb") as f:
+            STATE[f'vth{ions_2}'] = pickle.load(f)
 
     # Prepare velocity array
     STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
@@ -149,9 +161,9 @@ def set_uth_si( STATE ):
     chunk_size = 1024  # Define a chunk size
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end, 0] = STATE['vthsi']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
-        STATE["u"][start:end, 1] = STATE['vthsi']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
-        STATE["u"][start:end, 2] = STATE['vthsi']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 0] = STATE[f'vth{ions_2}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 1] = STATE[f'vth{ions_2}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
+        STATE["u"][start:end, 2] = STATE[f'vth{ions_2}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0])).astype(np.float32)
 
     return
 #-----------------------------------------------------------------------------------------
@@ -199,7 +211,7 @@ def load_and_interpolate_density(STATE, filename):
     if "fld" in STATE.keys():
         del STATE["fld"]
     if filename == "interp/edens.npy":
-        density_grid = np.load("interp/aldens.npy") + np.load("interp/sidens.npy")
+        density_grid = np.load(f"interp/{ions_1}dens.npy") + np.load(f"interp/{ions_2}dens.npy")
     else:
         density_grid = np.load(filename)
     STATE["nx"] = np.array(density_grid.shape)//2
@@ -229,8 +241,8 @@ def set_density_Al( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    print("setting ALUMINUM DENSITY...")
-    load_and_interpolate_density(STATE, "interp/aldens.npy")
+    print(f"setting {str.upper(ions_1)} DENSITY...")
+    load_and_interpolate_density(STATE, f"interp/{ions_1}dens.npy")
 
 #-----------------------------------------------------------------------------------------
 def set_density_Si(STATE):
@@ -240,5 +252,5 @@ def set_density_Si(STATE):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    print("setting MAGNESIUM DENSITY...")
-    load_and_interpolate_density(STATE, "interp/sidens.npy")
+    print(f"setting {str.upper(ions_2)} DENSITY...")
+    load_and_interpolate_density(STATE, f"interp/{ions_2}dens.npy")
