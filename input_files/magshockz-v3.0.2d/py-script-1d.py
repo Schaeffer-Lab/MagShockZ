@@ -9,7 +9,7 @@ import pickle
 #-----------------------------------------------------------------------------------------
 
 # Define the start point for the ray in OSIRIS units
-start_point = [0, 1890]
+start_point = [0, 450]
 theta = np.pi/2 # angle that ray makes with the x axis [radians]
 
 # Parameters of FLASH simualation
@@ -19,7 +19,7 @@ ions_2 = 'si'
 box_bounds = {
     "xmin": -3362.0,
     "xmax": 3362.0,
-    "ymin": 1889.0,
+    "ymin": -307.0,
     "ymax": 8411.0,
 }
 
@@ -34,13 +34,14 @@ def set_fld( STATE ):
     
     # Positional boundary data (makes a copy, but it's small)
     x_bnd = STATE["x_bnd"]
+    print(f'x_bnd: {x_bnd}')
 
     # Shape of the data array
     nx = STATE["data"].shape
 
     # Create x arrays that indicate the position (remember indexing order is reversed)
-    x = np.linspace(x_bnd[0][0] * np.cos(theta), x_bnd[0][1] * np.cos(theta), nx[0], endpoint=True).astype(np.float32) + start_point[0]
-    y = np.linspace(x_bnd[0][0] * np.sin(theta), x_bnd[0][1] * np.sin(theta), nx[0], endpoint=True).astype(np.float32) + start_point[1]
+    x = np.linspace(x_bnd[0][0] * np.cos(theta), x_bnd[0][1] * np.cos(theta), nx[0], endpoint=True) + start_point[0]
+    y = np.linspace(x_bnd[0][0] * np.sin(theta), x_bnd[0][1] * np.sin(theta), nx[0], endpoint=True) + start_point[1]
 
     # Dictionary to map field components to their respective filenames and operations
     field_map = {
@@ -252,15 +253,15 @@ def load_and_interpolate_density(STATE, filename):
 
     STATE["nx"] = np.array([4096])
     STATE["xmin"] = np.array([0.0])
-    STATE["xmax"] = np.array([4000.0]) # a little more than the final distance specified in input file
+    STATE["xmax"] = np.array([7900.0]) # a little more than the final distance specified in input file
 
     from scipy.interpolate import RegularGridInterpolator
     loaded_interpolator = RegularGridInterpolator((np.linspace(box_bounds["xmin"], box_bounds['xmax'], density_grid.shape[0]), 
                                                    np.linspace(box_bounds['ymin'], box_bounds['ymax'], density_grid.shape[1])), 
                                                    density_grid, bounds_error=True, fill_value=None)
 
-    x = np.linspace(STATE['xmin']*np.cos(theta), STATE['xmax']*np.cos(theta), STATE['nx'][0], endpoint=True ) + start_point[0]
-    y = np.linspace( STATE['xmin']*np.sin(theta), STATE['xmax']*np.sin(theta), STATE['nx'][0], endpoint=True ) + start_point[1]
+    x = np.linspace(STATE['xmin'][0]*np.cos(theta), STATE['xmax'][0]*np.cos(theta), STATE['nx'][0], endpoint=True ) + start_point[0]
+    y = np.linspace(STATE['xmin'][0]*np.sin(theta), STATE['xmax'][0]*np.sin(theta), STATE['nx'][0], endpoint=True ) + start_point[1]
     
     # print(loaded_interpolator((x, y)).shape)
     STATE["data"] = loaded_interpolator((x, y)) # This one is reversed because it does not come pre-interpolated

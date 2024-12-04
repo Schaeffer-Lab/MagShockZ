@@ -12,7 +12,7 @@ ions_2 = 'si'
 box_bounds = {
     "xmin": -3362.0, 
     "xmax": 3362.0,
-    "ymin": 1889.0,
+    "ymin": -307.0,
     "ymax": 8411.0,
 }
 

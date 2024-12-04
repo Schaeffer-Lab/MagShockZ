@@ -9,7 +9,7 @@ import pickle
 #-----------------------------------------------------------------------------------------
 
 # Define the start point for the ray in OSIRIS units
-start_point = [0, 80]
+start_point = [0, 80] # does this need to be <100?
 theta = np.pi/2 # angle that ray makes with the x axis [radians]
 
 # Parameters of FLASH simualation

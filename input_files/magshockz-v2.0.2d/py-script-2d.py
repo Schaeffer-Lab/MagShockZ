@@ -217,10 +217,10 @@ def load_and_interpolate_density(STATE, filename):
         density_grid = np.load(f"interp/{ions_1}dens.npy") + np.load(f"interp/{ions_2}dens.npy")
     else:
         density_grid = np.load(filename)
-    STATE["nx"] = np.array(density_grid.shape)//2
-    STATE["xmin"] = np.array([-3362.0, 1889.0])
-    STATE["xmax"] = np.array([3362.0, 8411.0])
-    STATE['data'] = density_grid[::2,::2].T.astype(np.float32)  
+    STATE["nx"] = np.array(density_grid.shape)
+    STATE["xmin"] = np.array([box_bounds["xmin"], box_bounds['ymin']])
+    STATE["xmax"] = np.array([box_bounds['xmax'], box_bounds['ymax']])
+    STATE['data'] = density_grid.T.astype(np.float32)  
 
     return
 
