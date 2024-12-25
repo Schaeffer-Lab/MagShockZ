@@ -24,7 +24,7 @@ node_conf
  node_number(1:1) = 4,
  n_threads=8,
  if_periodic(1:1) = .false.,
- !tile_number(1:1) = 128,
+ !tile_number(1:1) = 256,
  !tile_topology = "hilbert",
  !com_buf_size = 1024,
  !ihole_size_frac = 0.05,
@@ -48,8 +48,8 @@ grid
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   4.84e-2,
-  ndump  =    4096,
+  dt     =   3.18e-2,
+  ndump  =    16384,
 }
 
 !----------restart information----------
@@ -66,14 +66,14 @@ space
 { ! This is euclidean distance, not the span in y direction
   ! Start point in 2D plane is specified in py-script-1d
   xmin =  0, ! This should always be == 0
-  xmax =  7800,
+  xmax =  5100,
 }
 
 !----------time limits ----------
 time
 {
   tmin = 0.0,
-  tmax  = 200000.0,
+  tmax  = 350000.0,
 }
 
 !----------field solver set up----------

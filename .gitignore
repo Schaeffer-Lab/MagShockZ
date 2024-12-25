@@ -1,5 +1,6 @@
 FLASH/OSIRIS_transfer*
 simulations/raw_data/*/
+simulations/save_data/*/
 results/
 .vscode/
 .python-fortran-interface/MS/*
