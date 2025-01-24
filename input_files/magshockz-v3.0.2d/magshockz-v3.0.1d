@@ -22,7 +22,7 @@ simulation
 node_conf 
 {
  node_number(1:1) = 4,
- n_threads=8,
+ n_threads=4,
  if_periodic(1:1) = .false.,
  !tile_number(1:1) = 256,
  !tile_topology = "hilbert",
@@ -134,7 +134,7 @@ species
   
   !num_par_max = 18,
   rqm=-1.0,
-  num_par_x(1) = 100,
+  num_par_x(1) = 30,
   init_type = "python",
 }
 
@@ -191,7 +191,7 @@ species
   name = "Aluminum",
   !num_par_max = 18,
   rqm=100.0,
-  num_par_x(1) = 100,
+  num_par_x(1) = 30,
   init_type = "python",
 }
 
@@ -249,7 +249,7 @@ species
   name = "Silicon",
   !num_par_max = 18,
   rqm=104,
-  num_par_x(1) = 100,
+  num_par_x(1) = 30,
   init_type = "python",
 }
 
