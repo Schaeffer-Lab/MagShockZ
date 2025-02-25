@@ -35,19 +35,19 @@ def derive_fields(path_to_data:str, rqm:int = 100,ion_2='Si') -> yt.data_objects
 
     def make_ion_number_density(field, data):
         avogadros_number = 6.02214076e23
-        ion_number_density = avogadros_number*data["flash","dens"]*data["flash","sumy"]
+        ion_number_density = avogadros_number*data["flash","dens"]*data["flash","sumy"]/yt.units.gram
         return ion_number_density
     try:
-        ds.add_field(("flash", "idens"), function=make_ion_number_density, units="code_mass/code_length**3",sampling_type="cell") # technically the units are wrong here, should be massless
+        ds.add_field(("flash", "idens"), function=make_ion_number_density, units="1/code_length**3",sampling_type="cell") # technically the units are wrong here, should be massless
     except Exception as e:
         print(f"Error adding field idens: {e}")
 
     def make_electron_number_density(field, data):
         avogadros_number = 6.02214076e23
-        electron_number_density = avogadros_number*data["flash","dens"]*data["flash","ye"]
+        electron_number_density = avogadros_number*data["flash","dens"]*data["flash","ye"]/yt.units.gram
         return electron_number_density
     try:
-        ds.add_field(("flash", "edens"), function=make_electron_number_density, units="code_mass/code_length**3",sampling_type="cell") # same here
+        ds.add_field(("flash", "edens"), function=make_electron_number_density, units="1/code_length**3",sampling_type="cell") # same here
     except Exception as e:
         print(f"Error adding field edens: {e}")
 
@@ -56,7 +56,7 @@ def derive_fields(path_to_data:str, rqm:int = 100,ion_2='Si') -> yt.data_objects
         ion2_number_density = ion2_percentage*data["flash","edens"] # we did this because Zbar is ye/sumy, so we can just use edens instead to get the number density in units that are useful to osiris
         return ion2_number_density
     try:
-        ds.add_field(("flash", f"{str.lower(ion_2)}dens"), function=make_ion_2_number_density, units="code_mass/code_length**3",sampling_type="cell", force_override=True) # technically the units are wrong here, should be massless
+        ds.add_field(("flash", f"{str.lower(ion_2)}dens"), function=make_ion_2_number_density, units="1/code_length**3",sampling_type="cell", force_override=True) # technically the units are wrong here, should be massless
     except Exception as e:
         print(f"Error adding field {ion_2}dens: {e}")
 
@@ -65,7 +65,7 @@ def derive_fields(path_to_data:str, rqm:int = 100,ion_2='Si') -> yt.data_objects
         ion1_number_density = (1 - ion2_percentage) * data["flash", "edens"]
         return ion1_number_density
     try:
-        ds.add_field(("flash", f"{str.lower(ion_1)}dens"), function=make_ion_1_number_density, units="code_mass/code_length**3",sampling_type="cell",force_override=True)
+        ds.add_field(("flash", f"{str.lower(ion_1)}dens"), function=make_ion_1_number_density, units="1/code_length**3",sampling_type="cell",force_override=True)
     except Exception as e:
         print(f"Error adding field {str.lower(ion_1)}dens: {e}")
 

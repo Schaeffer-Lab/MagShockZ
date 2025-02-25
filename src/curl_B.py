@@ -1,55 +1,78 @@
 import numpy as np
+import yt
+import yt.units as u
 
-def curl_B(Bx,By,Bz, dx=1.0):
-    """
-    Calculate the curl of a 3D magnetic field.
-    
-    Parameters:
-    Bx : numpy array of shape (nx, ny, nz) representing x-component
-    By : numpy array of shape (nx, ny, nz) representing y-component
-    Bz : numpy array of shape (nx, ny, nz) representing z-component
+def add_current_density(ds):
 
-    dx : float, grid spacing in x direction
-    dy : float, grid spacing in y direction
-    dz : float, grid spacing in z direction
+    c = u.speed_of_light_cgs
+    conv_factor = c/(4*np.pi)
     
-    Returns:
-    curl : numpy array of shape (3, nx, ny, nz) representing (curl_x, curl_y, curl_z)
-    """
-    
-    # Get gradients using numpy's gradient function with specified spacing
-    Bx_grad = np.gradient(Bx, dx)
-    By_grad = np.gradient(By, dx)
-    Bz_grad = np.gradient(Bz, dx)
-    # Extract individual components
-    
-    c = 2.99792458e10 # Speed of light in cgs units
+    ds.add_gradient_fields(('flash', 'magx'))
+    ds.add_gradient_fields(('flash', 'magy'))
+    ds.add_gradient_fields(('flash', 'magz'))
 
-    # Calculate curl components
-    J_x = c/(4*np.pi)*(Bz_grad[1] - By_grad[2])
-    J_y = c/(4*np.pi)*(Bx_grad[2] - Bz_grad[0])
-    J_z = c/(4*np.pi)*(By_grad[0] - Bx_grad[1])
+    def make_Jx(field, data):
+        return conv_factor * (data["flash","magz_gradient_y"] - data["flash","magy_gradient_z"])
+    def make_Jy(field, data):
+        return conv_factor * (data["flash","magx_gradient_z"] - data["flash","magz_gradient_x"])
+    def make_Jz(field, data):
+        return conv_factor * (data["flash","magy_gradient_x"] - data["flash","magx_gradient_y"])
     
-    # Stack the components into a single array
-    
-    return [J_x, J_y, J_z]
 
-def add_vi_and_ve(data, J):
+    ds.add_field(('flash', 'Jx'), function=make_Jx, units='code_magnetic/code_time', sampling_type='cell')
+    ds.add_field(('flash', 'Jy'), function=make_Jy, units='code_magnetic/code_time', sampling_type='cell')
+    ds.add_field(('flash', 'Jz'), function=make_Jz, units='code_magnetic/code_time', sampling_type='cell')
+
+    ds.force_periodicity()
+    return ds
+
+
+def add_vi_and_ve(ds):
+
+
     """
     Add ion and electron velocities to the dataset.
 
     Parameters:
-    data : YtCoveringGrid
-    J : list of numpy arrays of shape (nx, ny, nz) representing current density
+    ds : yt.Dataset
     """
     
-    e = 4.80320425e-10 # Elementary charge in statcoulombs
-    m_e = 9.10938356e-28 # Electron mass in grams
+    e = u.electron_charge_cgs
+    m_e = u.mass_electron_cgs
 
-    data['v_iy'] = m_e*J[1].value/(data['dens'].value*e) + data['vely'].value
-    data['v_iz'] = m_e*J[2].value/(data['dens'].value*e) + data['velz'].value
-    data['v_ix'] = m_e*J[0].value/(data['dens'].value*e) + data['velx'].value
+    def _v_ix(field, data):
+        return ((m_e*data['flash','Jx']/(data['flash','dens']*e)) + data['flash','velx'])
+    def _v_iy(field, data):
+        return ((m_e*data['flash','Jy']/(data['flash','dens']*e)) + data['flash','vely'])
+    def _v_iz(field, data):
+        return ((m_e*data['flash','Jz']/(data['flash','dens']*e)) + data['flash','velz'])
+    
+    def _v_ex(field, data):
+        return ((m_e*data['flash','Jx']/(data['flash','dens']*e) - data['flash','Jx']/(data['flash','edens']*e)) + data['flash','velx'])
+    def _v_ey(field, data):
+        return ((m_e*data['flash','Jy']/(data['flash','dens']*e) - data['flash','Jy']/(data['flash','edens']*e)) + data['flash','vely'])
+    def _v_ez(field, data):
+        return ((m_e*data['flash','Jz']/(data['flash','dens']*e) - data['flash','Jz']/(data['flash','edens']*e)) + data['flash','velz'])
+    
+    # Update the field definitions
+    ds.add_field(('flash', 'v_ix'), function=_v_ix, units='code_velocity', sampling_type='cell')
+    ds.add_field(('flash', 'v_iy'), function=_v_iy, units='code_velocity', sampling_type='cell')
+    ds.add_field(('flash', 'v_iz'), function=_v_iz, units='code_velocity', sampling_type='cell')
+    ds.add_field(('flash', 'v_ex'), function=_v_ex, units='code_velocity', sampling_type='cell')
+    ds.add_field(('flash', 'v_ey'), function=_v_ey, units='code_velocity', sampling_type='cell')
+    ds.add_field(('flash', 'v_ez'), function=_v_ez, units='code_velocity', sampling_type='cell')
 
-    data['v_ex'] = m_e*J[0].value/(data['dens'].value*e) - J[0].value/(data['edens'].value*e) + data['velx'].value
-    data['v_ey'] = m_e*J[1].value/(data['dens'].value*e) - J[1].value/(data['edens'].value*e) + data['vely'].value
-    data['v_ez'] = m_e*J[2].value/(data['dens'].value*e) - J[2].value/(data['edens'].value*e) + data['velz'].value
+    return ds
+
+
+# from pathlib import Path
+# plot_path = "~/shared/data/VAC_DEREK3D_20um/MagShockZ_hdf5_chk_0028"
+# from load_derived_FLASH_fields import derive_fields
+
+# ds = derive_fields(plot_path,rqm=100,ion_2='Si')
+# ds = add_current_density(ds)
+
+
+# ds = add_vi_and_ve(ds)
+
+# yt.SlicePlot(ds, 'z', ('flash', 'v_iy')).save('v_iy.png')
