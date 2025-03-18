@@ -35,7 +35,7 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:1) = 60000,
+  nx_p(1:1) = 100000,
   coordinates = "cartesian",
   !load_balance(1:1) = .true.,
   !lb_type = "dynamic",
@@ -48,7 +48,7 @@ grid
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   8.49e-2,
+  dt     =   .07,
   ndump  =    8192,
 }
 
@@ -66,14 +66,14 @@ space
 { ! This is euclidean distance, not the span in y direction
   ! Start point in 2D plane is specified in py-script-1d
   xmin =  0, ! This should always be == 0
-  xmax =  5100,
+  xmax =  7100,
 }
 
 !----------time limits ----------
 time
 {
   tmin = 0.0,
-  tmax  = 250000.0,
+  tmax  = 100000.0,
 }
 
 !----------field solver set up----------
@@ -130,7 +130,7 @@ particles
 !----------information for electrons----------
 species
 {
-  name = "electron",
+  name = "electrons",
   
   !num_par_max = 18,
   rqm=-1.0,
@@ -161,8 +161,8 @@ profile
 spe_bound
 {
   type(1:2,1) =   "thermal","thermal",
-  uth_bnd(1:3,1,1)= 6.311e-04, 6.311e-04, 6.311e-04,
-  uth_bnd(1:3,2,1)= 3.408e-03, 3.408e-03, 3.408e-03,
+  uth_bnd(1:3,1,1)= 8.078e-03, 8.078e-03, 8.078e-03,
+  uth_bnd(1:3,2,1)= 3.004e-02, 3.004e-02, 3.004e-02,
   !thermal_type(1:2,1) = "half max", "half max",
 }
 
@@ -178,7 +178,7 @@ diag_species
   ps_pmin(1:3) = -0.05, -0.05, -0.02,
   ps_pmax(1:3) = 0.05,  0.05,  0.02,
   ps_xmin(1:1) = 0.0, ! make sure to adjust this to the lower x bound
-  ps_xmax(1:1) = 7000.0, ! Make sure to adjust this to the upper x bound
+  ps_xmax(1:1) = 5100.0, ! Make sure to adjust this to the upper x bound
   ps_np = 4096,
   ps_nx = 4096,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
@@ -190,7 +190,7 @@ species
 {
   name = "Aluminum",
   !num_par_max = 18,
-  rqm=50,
+  rqm=100,
   num_par_x(1) = 100,
   init_type = "python",
 }
@@ -217,9 +217,9 @@ profile
 !----------boundary conditions for Aluminum----------
 spe_bound
 {
-  type(1:2,1) =   "open","open",
-  uth_bnd(1:3,1,1)= 8.925e-05,8.925e-05,8.925e-05,
-  uth_bnd(1:3,2,1)= 3.009e-04,3.009e-04,3.009e-04,
+  type(1:2,1) =   "thermal","thermal",
+  uth_bnd(1:3,1,1)= 8.078e-04,8.078e-04,8.078e-04,
+  uth_bnd(1:3,2,1)= 1.722e-03,1.722e-03,1.722e-03,
   !thermal_type(1:2,1) = "half max", "half max",
 }
 
@@ -235,7 +235,7 @@ diag_species
   ps_pmin(1:3) = -0.05, -0.05, -0.02,
   ps_pmax(1:3) = 0.05,  0.05,  0.02,
   ps_xmin(1:1) = 0.0,
-  ps_xmax(1:1) = 7000.0, ! Make sure to adjust this to the upper x bound
+  ps_xmax(1:1) = 5100.0, ! Make sure to adjust this to the upper x bound
   ps_np = 4096,
   ps_nx = 4096,
   !if_ps_p_auto(1:3) = .true., .true., .true.,
@@ -248,8 +248,8 @@ species
 {
   name = "Silicon",
   !num_par_max = 18,
-  rqm=52,
-  num_par_x(1) = 100,
+  rqm=104,
+  num_par_x(1) = 200,
   init_type = "python",
 }
 
@@ -275,9 +275,9 @@ profile
 !----------boundary conditions for Silicon----------
 spe_bound
 {
-  type(1:2,1) =   "open","open",
-  uth_bnd(1:3,1,1)= 8.748e-05,8.748e-05,8.748e-05,
-  uth_bnd(1:3,2,1)= 2.95e-04,2.95e-04,2.95e-04,
+  type(1:2,1) =   "thermal","thermal",
+  uth_bnd(1:3,1,1)= 7.917e-04,7.917e-04,7.917e-04,
+  uth_bnd(1:3,2,1)= 1.688e-03,1.688e-03,1.688e-03,
   !thermal_type(1:2,1) = "half max", "half max",
 }
 

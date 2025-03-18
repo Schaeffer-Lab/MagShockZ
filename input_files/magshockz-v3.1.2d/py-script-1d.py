@@ -9,7 +9,7 @@ import pickle
 #-----------------------------------------------------------------------------------------
 
 # Define the start point for the ray in OSIRIS units
-start_point = [0, 350]
+start_point = [0, 150]
 theta = np.pi/2 # angle that ray makes with the x axis [radians]
 
 # Parameters of FLASH simualation
@@ -17,10 +17,10 @@ ions_1 = 'al'
 ions_2 = 'si'
 
 box_bounds = {
-    "xmin": -2227.0,
-    "xmax": 2227.0,
-    "ymin": -203.0,
-    "ymax": 5576.0,
+    "xmin": -3357.0,
+    "xmax": 3357.0,
+    "ymin": -307.0,
+    "ymax": 8407.0,
 }
 
 def set_fld( STATE ):
@@ -288,7 +288,7 @@ def load_and_interpolate_density(STATE, filename):
 
     STATE["nx"] = np.array([4096])
     STATE["xmin"] = np.array([0.0])
-    STATE["xmax"] = np.array([5150]) # a little more than the final distance specified in input file
+    STATE["xmax"] = np.array([7150]) # a little more than the final distance specified in input file
 
     from scipy.interpolate import RegularGridInterpolator
     loaded_interpolator = RegularGridInterpolator((np.linspace(box_bounds["xmin"], box_bounds['xmax'], density_grid.shape[0]), 
