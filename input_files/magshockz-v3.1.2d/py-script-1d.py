@@ -23,7 +23,7 @@ box_bounds = {
     "ymax": 8407.0,
 }
 
-def set_fld( STATE ):
+def set_fld_int( STATE ):
     """
     Function to set the field data in th, STATE dictionary based on the field component.
     
@@ -69,38 +69,46 @@ def set_fld( STATE ):
 
 #-----------------------------------------------------------------------------------------
 def set_fld_ext( STATE ):
-    # print("calling set_fld_ext...")
+    """
+    Function to set the field data in th, STATE dictionary based on the field component.
+    
+    Parameters:
+    STATE (dict): Dictionary containing the state information, including field component and positional boundary data.
+    """
+    # print("calling set_fld...")
+    
     # Positional boundary data (makes a copy, but it's small)
-    # x_bnd = STATE["x_bnd"]
+    x_bnd = STATE["x_bnd"]
+    print(f'x_bnd: {x_bnd}')
 
-    # # Shape of the data array
-    # nx = STATE["data"].shape
+    # Shape of the data array
+    nx = STATE["data"].shape
 
-    # # Create x arrays that indicate the position (remember indexing order is reversed)
-    # x = np.linspace(x_bnd[0][0] * np.cos(theta), x_bnd[0][1] * np.cos(theta), nx[0], endpoint=True).astype(np.float32) + start_point[0]
-    # y = np.linspace(x_bnd[0][0] * np.sin(theta), x_bnd[0][1] * np.sin(theta), nx[0], endpoint=True).astype(np.float32) + start_point[1]
+    # Create x arrays that indicate the position (remember indexing order is reversed)
+    x = np.linspace(x_bnd[0][0] * np.cos(theta), x_bnd[0][1] * np.cos(theta), nx[0], endpoint=True) + start_point[0]
+    y = np.linspace(x_bnd[0][0] * np.sin(theta), x_bnd[0][1] * np.sin(theta), nx[0], endpoint=True) + start_point[1]
 
-    # # Dictionary to map field components to their respective filenames and operations
-    # field_map = {
-    #     "e1": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
-    #     "e2": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
-    #     "e3": ("interp/Ez.pkl", None, lambda Ez, _: Ez),
-    #     "b1": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
-    #     "b2": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
-    #     "b3": ("interp/magz.pkl", None, lambda Bz, _: Bz)
-    # }
+    # Dictionary to map field components to their respective filenames and operations
+    field_map = {
+        "e1": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
+        "e2": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
+        "e3": ("interp/Ez.pkl", None, lambda Ez, _: Ez),
+        "b1": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
+        "b2": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
+        "b3": ("interp/magz.pkl", None, lambda Bz, _: Bz)
+    }
 
-    # # Determine the filenames and operation based on the field component
-    # filename1, filename2, operation = field_map.get(STATE['fld'], (None, None, None))
+    # Determine the filenames and operation based on the field component
+    filename1, filename2, operation = field_map.get(STATE['fld'], (None, None, None))
 
-    # if filename1:
-    #     with open(filename1, "rb") as f:
-    #         field1 = pickle.load(f)
-    #     field2 = None
-    #     if filename2:
-    #         with open(filename2, "rb") as f:
-    #             field2 = pickle.load(f)
-    #     STATE["data"] = operation(field1((y, x)), field2((y, x)) if field2 else None)
+    if filename1:
+        with open(filename1, "rb") as f:
+            field1 = pickle.load(f)
+        field2 = None
+        if filename2:
+            with open(filename2, "rb") as f:
+                field2 = pickle.load(f)
+        STATE["data"] = operation(field1((y, x)), field2((y, x)) if field2 else None)
 
     return
 
