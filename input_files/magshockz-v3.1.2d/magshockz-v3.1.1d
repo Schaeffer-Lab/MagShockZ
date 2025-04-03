@@ -35,7 +35,7 @@ node_conf
 !----------spatial grid----------
 grid
 {
-  nx_p(1:1) = 100000,
+  nx_p(1:1) = 50000,
   coordinates = "cartesian",
   !load_balance(1:1) = .true.,
   !lb_type = "dynamic",
@@ -48,7 +48,7 @@ grid
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   .07,
+  dt     =   .14,
   ndump  =    8192,
 }
 
@@ -84,13 +84,13 @@ el_mag_fld
   type_init_b(1:3) = "python", "python", "python",
   type_init_e(1:3) = "python", "python", "python",
   init_py_mod = "py-script-1d", ! Name of Python file
-  init_py_func = "set_fld", ! Name of function in the Python file to call (same for all components)
+  init_py_func = "set_fld_int", ! Name of function in the Python file to call (same for all components)
   ! init_move_window = .false., ! May want to declare this for a moving-window simulation
 
   ! You can also do this with external fields, as functions of time
-  ext_fld = "dynamic",
-  type_ext_b(1:3) = "none", "none", "none",
-  type_ext_e(1:3) = "none", "none", "none",
+  ext_fld = "static",
+  type_ext_b(1:3) = "python", "none", "none",
+  type_ext_e(1:3) = "none", "python", "python",
   ext_py_mod = "py-script-1d", ! Name of Python file
   ext_py_func = "set_fld_ext", ! Name of function in the Python file to call (same for all components)
 }
@@ -134,7 +134,7 @@ species
   
   !num_par_max = 18,
   rqm=-1.0,
-  num_par_x(1) = 40,
+  num_par_x(1) = 80,
   init_type = "python",
 }
 
@@ -191,7 +191,7 @@ species
   name = "Aluminum",
   !num_par_max = 18,
   rqm=100,
-  num_par_x(1) = 40,
+  num_par_x(1) = 80,
   init_type = "python",
 }
 
@@ -249,7 +249,7 @@ species
   name = "Silicon",
   !num_par_max = 18,
   rqm=104,
-  num_par_x(1) = 40,
+  num_par_x(1) = 160,
   init_type = "python",
 }
 

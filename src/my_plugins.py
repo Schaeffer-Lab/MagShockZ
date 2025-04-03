@@ -67,7 +67,6 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
         ds = load(filename)
         ds.add_field(('flash','rqm'),
                        lambda field, data: rqm,
-                       units = "unitless",
                        sampling_type="cell")
         c = units.speed_of_light_cgs
         e = units.electron_charge_cgs

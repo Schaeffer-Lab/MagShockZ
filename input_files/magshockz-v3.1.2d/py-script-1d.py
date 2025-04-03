@@ -9,7 +9,7 @@ import pickle
 #-----------------------------------------------------------------------------------------
 
 # Define the start point for the ray in OSIRIS units
-start_point = [0, 150]
+start_point = [0, 240]
 theta = np.pi/2 # angle that ray makes with the x axis [radians]
 
 # Parameters of FLASH simualation
@@ -45,12 +45,12 @@ def set_fld_int( STATE ):
 
     # Dictionary to map field components to their respective filenames and operations
     field_map = {
-        "e1": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
-        "e2": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
-        "e3": ("interp/Ez.pkl", None, lambda Ez, _: Ez),
-        "b1": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
-        "b2": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
-        "b3": ("interp/magz.pkl", None, lambda Bz, _: Bz)
+        "e1": ("interp/Ex_int.pkl", "interp/Ey_int.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
+        "e2": ("interp/Ex_int.pkl", "interp/Ey_int.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
+        "e3": ("interp/Ez_int.pkl", None, lambda Ez, _: Ez),
+        "b1": ("interp/Bx_int.pkl", "interp/By_int.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
+        "b2": ("interp/Bx_int.pkl", "interp/By_int.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
+        "b3": ("interp/Bz_int.pkl", None, lambda Bz, _: Bz)
     }
 
     # Determine the filenames and operation based on the field component
@@ -70,7 +70,8 @@ def set_fld_int( STATE ):
 #-----------------------------------------------------------------------------------------
 def set_fld_ext( STATE ):
     """
-    Function to set the field data in th, STATE dictionary based on the field component.
+    Function to set external field data, STATE dictionary based on the field component.
+    It seems like osiris will make repeated calls to this if it is used and the external fields are set to "dynamic" avoid that by setting fields to "static"
     
     Parameters:
     STATE (dict): Dictionary containing the state information, including field component and positional boundary data.
@@ -90,12 +91,12 @@ def set_fld_ext( STATE ):
 
     # Dictionary to map field components to their respective filenames and operations
     field_map = {
-        "e1": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
-        "e2": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
-        "e3": ("interp/Ez.pkl", None, lambda Ez, _: Ez),
-        "b1": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
-        "b2": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
-        "b3": ("interp/magz.pkl", None, lambda Bz, _: Bz)
+        "e1": ("interp/Ex_ext.pkl", "interp/Ey_ext.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
+        "e2": ("interp/Ex_ext.pkl", "interp/Ey_ext.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
+        "e3": ("interp/Ez_ext.pkl", None, lambda Ez, _: Ez),
+        "b1": ("interp/Bx_ext.pkl", "interp/By_ext.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
+        "b2": ("interp/Bx_ext.pkl", "interp/By_ext.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
+        "b3": ("interp/Bz_ext.pkl", None, lambda Bz, _: Bz)
     }
 
     # Determine the filenames and operation based on the field component

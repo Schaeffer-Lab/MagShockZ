@@ -18,7 +18,7 @@ def generate_frame(args):
     if len(np.shape(data)) == 1:
         osh5vis.osplot(data, ylim=[vlimits[0], vlimits[1]]) if vlimits else osh5vis.osplot(data)
     else:
-        osh5vis.osplot(data, vmax=vlimits[1], vmin=vlimits[0]) if vlimits else osh5vis.osplot(data).set_ticks([])
+        osh5vis.osplot(data, vmax=vlimits[1], vmin=vlimits[0]) if vlimits else osh5vis.osplot(data)
     
     if gyrotime_scale:
         plt.title(f"{data.run_attrs['NAME']} {round(data.run_attrs['TIME'][0]/gyrotime, 2)}" + r" $\omega_{ci}$")
