@@ -1,9 +1,9 @@
 ### USAGE INSTRUCTIONS ###
-# FIRST, COPY THIS FILE TO ~/.config/yt/my_plugins.py
+# FIRST, LINK THIS FILE TO ~/.config/yt/my_plugins.py (`ln -s /path/to/this/file ~/.config/yt/my_plugins.py`)
 # THEN, ADD `yt.enable_plugins()` TO YOUR SCRIPT
 
 
-# This file is a plugin for yt that adds custom fields and functions to create OSIRIS-relevant fields from FLASH data
+# This file is a plugin for yt that adds OSIRIS-relevant fields to yt datasets
 
 import numpy as np
 
@@ -33,6 +33,7 @@ def _Ey(field, data):
 def _Ez(field, data):
         Ez = data['flash','vely']*data["flash","magx"]-data["flash","velx"]*data["flash","magy"]
         return Ez
+
 
 def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, ion_2:str = 'Si'):
         """"
@@ -153,40 +154,34 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
 
         # Internal electric fields
         ds.add_field(("flash","Ex_int"),
-                       lambda field, data: data['flash', 'velz'] * data["flash", "By_int"] -
-                                        data["flash", "vely"] * data["flash", "Bz_int"],
-                       units = "code_magnetic*code_length/code_time",
-                       sampling_type="cell")
+                     lambda field, data: -(data['flash', 'vely'] * data["flash", "Bz_int"] - data["flash", "velz"] * data["flash", "By_int"]),
+                     units = "code_magnetic*code_length/code_time",
+                     sampling_type="cell")
         
         ds.add_field(("flash","Ey_int"),
-                       lambda field, data: data['flash', 'velz'] * data["flash", "Bx_int"] -
-                                        data["flash", "velx"] * data["flash", "Bz_int"],
-                       units = "code_magnetic*code_length/code_time",
-                       sampling_type="cell")
+                     lambda field, data: -(data['flash', 'velz'] * data["flash", "Bx_int"] - data["flash", "velx"] * data["flash", "Bz_int"]),
+                     units = "code_magnetic*code_length/code_time",
+                     sampling_type="cell")
         
         ds.add_field(("flash","Ez_int"),
-                       lambda field, data: data['flash', 'vely'] * data["flash", "Bx_int"] -
-                                        data["flash", "velx"] * data["flash", "By_int"],
-                       units = "code_magnetic*code_length/code_time",
-                       sampling_type="cell")
+                     lambda field, data: -(data['flash', 'velx'] * data["flash", "By_int"] - data["flash", "vely"] * data["flash", "Bx_int"]),
+                     units = "code_magnetic*code_length/code_time",
+                     sampling_type="cell")
 
         # External electric fields
         ds.add_field(("flash","Ex_ext"),
-                       lambda field, data: data["flash", "velz"] * data["flash", "By_ext"] -
-                                        data["flash", "vely"] * data["flash", "Bz_ext"],
-                       units = "code_magnetic*code_length/code_time",
-                       sampling_type="cell")
+                     lambda field, data: -(data['flash', 'vely'] * data["flash", "Bz_ext"] - data["flash", "velz"] * data["flash", "By_ext"]),
+                     units = "code_magnetic*code_length/code_time",
+                     sampling_type="cell")
         ds.add_field(("flash","Ey_ext"),
-                       lambda field, data: data["flash", "velx"] * data["flash", "Bz_ext"] -
-                                        data["flash", "velz"] * data["flash", "Bx_ext"],
-                       units = "code_magnetic*code_length/code_time",
-                       sampling_type="cell")
+                     lambda field, data: -(data['flash', 'velz'] * data["flash", "Bx_ext"] - data["flash", "velx"] * data["flash", "Bz_ext"]),
+                     units = "code_magnetic*code_length/code_time",
+                     sampling_type="cell")
         
         ds.add_field(("flash","Ez_ext"),
-                       lambda field, data: data['flash', 'vely'] * data["flash", "Bx_ext"] - 
-                                        data["flash", "velx"] * data["flash", "By_ext"],
-                       units = "code_magnetic*code_length/code_time",
-                       sampling_type="cell")
+                     lambda field, data: -(data['flash', 'velx'] * data["flash", "By_ext"] - data["flash", "vely"] * data["flash", "Bx_ext"]),
+                     units = "code_magnetic*code_length/code_time",
+                     sampling_type="cell")
         
         def make_vth_ele(field, data):
                 return np.sqrt(data['flash','tele']*units.kb_cgs/m_e)
