@@ -151,7 +151,6 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
                         lambda field, data: data["flash", "magz"],
                         units = "Gauss",
                         sampling_type="cell")
-
         # Internal electric fields
         ds.add_field(("flash","Ex_int"),
                      lambda field, data: -(data['flash', 'vely'] * data["flash", "Bz_int"] - data["flash", "velz"] * data["flash", "By_int"]),

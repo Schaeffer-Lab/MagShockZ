@@ -1,6 +1,3 @@
-# Outside of the function definition, any included code only runs once at the
-# initialization. You could, e.g., load an ML model from a file here
-# print("I am at the module scope.")
 import numpy as np
 import pickle
 
@@ -203,7 +200,7 @@ def set_uth_si( STATE ):
         y_positions = start_point[1] + np.sin(theta) * STATE["x"][start:end, 0]
 
         STATE["u"][start:end, 0] = STATE[f'vth{ions_2}']((y_positions, x_positions))
-        STATE["u"][start:end, 1] = STATE[f'vth{ions_2}']((y_positions, x_positions))
+        STATE["u"][start:end, 2] = STATE[f'vth{ions_2}']((y_positions, x_positions))
         STATE["u"][start:end, 2] = STATE[f'vth{ions_2}']((y_positions, x_positions))
 
     return
