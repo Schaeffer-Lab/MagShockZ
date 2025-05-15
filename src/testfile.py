@@ -2,7 +2,7 @@ import yt
 
 yt.enable_plugins()
 
-ds = yt.load_for_osiris(filename = "~/shared/data/VAC_DEREK3D_20um/MagShockZ_hdf5_chk_0006",rqm = 100, B_background = 75000,)
+ds = yt.load_for_osiris(filename = "~/shared/data/VAC_DEREK3D_20um/MagShockZ_hdf5_chk_0006",rqm = 100, B_background = 75000)
 
 level = 0
 dims = ds.domain_dimensions * ds.refine_by**level
@@ -21,3 +21,9 @@ all_data = ds.covering_grid(
 all_data
 import matplotlib.pyplot as plt
 plt.imshow(all_data['flash',"idens"][:,:,(all_data['flash',"idens"].shape[0])//2])
+
+yt.SlicePlot(ds, "z", ("flash", "sidens"), center = ds.domain_center).save("sidens.png")
+yt.SlicePlot(ds, "z", ("flash", "channeldens"), center = ds.domain_center).save("channel.png")
+yt.SlicePlot(ds, "z", ("flash", "sheathedens"), center = ds.domain_center).save("sheathe.png")
+yt.SlicePlot(ds, "z", ("flash", "backgrounddens"), center = ds.domain_center).save("background.png")
+yt.SlicePlot(ds, "z", ("flash", "soliddens"), center = ds.domain_center).save("solid.png")

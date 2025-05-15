@@ -1,8 +1,39 @@
-FLASH/OSIRIS_transfer*
-simulations/raw_data/*/
-simulations/save_data/*/
+# Simulation data directories
+simulations/*
+
+# Large data files
+*.npy
+*.pkl
+*.h5
+*.bin
+*.dat
+*.raw
+
+
+# Results and output 
 results/
+output/
+
+# IDE settings
 .vscode/
+.idea/
+
+# Python interface and temporary files
 .python-fortran-interface/MS/*
 .python-fortran-interface/TIMINGS/*
+input_files/*/interp/*
+#input_files/magshockz-v3.1.2d/interp/*
+
+
+# Python cache files
 **/__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment and dependency files
+venv/
+env/
+.env

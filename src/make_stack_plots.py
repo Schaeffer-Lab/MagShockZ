@@ -41,7 +41,6 @@ def make_joy_plot(path_to_data, y_spacing=1, alpha=0.4,
     
     # Create colormap
     colors = plt.get_cmap(cmap)
-    from colored_line import colored_line
     # Plot each time slice with offset
     for t in range(len(data[3])):
         y_offset = t * y_spacing
@@ -87,5 +86,5 @@ def make_joy_plot(path_to_data, y_spacing=1, alpha=0.4,
     return fig, ax
 
 # Ensure the path to ion charge density files is correct
-path_to_data = Path('/home/dschneidinger/shock_reformation/raw_data/B_0.04_ufl_0.2_vi_0.00001_ve_0.0001.1d/MS/DENSITY/ions/charge')
-make_joy_plot(path_to_data,n_skip=10, time_labels=True,alpha=0.1,y_spacing=0.4,cmap='plasma')
+# path_to_data = Path('/home/dschneidinger/shock_reformation/raw_data/B_0.04_ufl_0.2_vi_0.00001_ve_0.0001.1d/MS/DENSITY/ions/charge')
+# make_joy_plot(path_to_data,n_skip=10, time_labels=True,alpha=0.1,y_spacing=0.4,cmap='plasma')

@@ -35,7 +35,10 @@ def _Ez(field, data):
         return Ez
 
 
-def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, ion_2:str = 'Si'):
+
+def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, ion_mass_thresholds: list = [27,35], rqm_thresholds: list = [4500,7100,8300]):
+        global silicon_rqm
+        
         """"
         "Load a FLASH simulation with the FLASH frontend.
         "This function is a wrapper around yt.load() that adds some
@@ -63,7 +66,6 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
         "Ar": 39.948,
         }
 
-        ion_1 = 'Al'
 
         ds = load(filename)
         ds.add_field(('flash','rqm'),
@@ -75,6 +77,136 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
         
         conv_factor = c/(4*np.pi)
         
+        def make_species_mask(field, data):
+                """
+                This field is used to mask the species in the FLASH simulation.
+                It is used to determine which species are present in the simulation.
+                """
+                bins = [-np.inf] + ion_mass_thresholds + [np.inf]
+                species_mask = np.digitize(1/data["flash","sumy"], bins)
+                
+                return species_mask
+
+        ds.add_field(("flash","species_mask"),
+                       function=make_species_mask,
+                       units="",
+                       sampling_type="cell",
+                       force_override=False) 
+        
+        def make_rqm_mask(field, data):
+                """
+                This field is used to mask the species in the FLASH simulation.
+                It is used to determine which species are present in the simulation.
+                """
+                rqm_real = 1836 / data["flash","ye"]
+                bins = [-np.inf] + rqm_thresholds + [np.inf]
+                rqm_mask = np.digitize(rqm_real, bins)
+                
+                return rqm_mask
+        
+        ds.add_field(("flash","rqm_mask"),
+                function=make_rqm_mask,
+                units="",
+                sampling_type="cell",
+                force_override=False)
+        
+        def make_silicon_density(field, data):
+                full_mask =  (data["flash","rqm_mask"] == 1) *(data["flash","species_mask"] == 2)
+
+                silicon_density = data['flash','edens'] * full_mask
+                rqm_real = 1836 / data['flash','ye']
+
+                # Calculate median rqm for silicon only where the mask is valid
+                silicon_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
+                if len(silicon_rqm) > 0:
+                        silicon_rqm_value = int(np.median(silicon_rqm))
+                        print(f"Silicon rqm: {silicon_rqm_value}")
+                return silicon_density
+        
+        ds.add_field(("flash",f"sidens"),
+                       function=make_silicon_density,
+                       units="1/code_length**3",
+                       sampling_type="cell",
+                       force_override=False)
+        
+        ion_1 = 'Al'
+
+        def make_channel_density(field, data):
+                full_mask =  (data["flash","rqm_mask"] == 1) *(data["flash","species_mask"] == 1)
+
+                channel_density = data['flash','edens'] * full_mask
+                rqm_real = 1836 / data['flash','ye']
+
+                # Calculate median rqm for silicon only where the mask is valid
+                channel_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
+                if len(channel_rqm) > 0:
+                        channel_rqm_value = int(np.median(channel_rqm))
+                        print(f"Channel rqm: {channel_rqm_value}")
+                return channel_density
+        
+        ds.add_field(("flash","channeldens"),
+                       function=make_channel_density,
+                       units="1/code_length**3",
+                       sampling_type="cell",
+                       force_override=False)
+        
+        def make_sheathe_density(field, data):
+                full_mask =  (data["flash","rqm_mask"] == 2) *(data["flash","species_mask"] == 1)
+
+                sheathe_density = data['flash','edens'] * full_mask
+                rqm_real = 1836 / data['flash','ye']
+
+                # Calculate median rqm for silicon only where the mask is valid
+                sheathe_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
+                if len(sheathe_rqm) > 0:
+                        sheathe_rqm_value = int(np.median(sheathe_rqm))
+                        print(f"Sheathe rqm: {sheathe_rqm_value}")
+                return sheathe_density
+        
+        ds.add_field(("flash","sheathedens"),
+                       function=make_sheathe_density,
+                       units="1/code_length**3",
+                       sampling_type="cell",
+                       force_override=False)
+        
+        def make_background_density(field, data):
+                full_mask =  (data["flash","rqm_mask"] == 3) *(data["flash","species_mask"] == 1)
+
+                background_density = data['flash','edens'] * full_mask
+                rqm_real = 1836 / data['flash','ye']
+
+                # Calculate median rqm for silicon only where the mask is valid
+                background_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
+                if len(background_rqm) > 0:
+                        background_rqm_value = int(np.median(background_rqm))
+                        print(f"Background rqm: {background_rqm_value}")
+                return background_density
+        
+        ds.add_field(("flash","backgrounddens"),
+                       function=make_background_density,
+                       units="1/code_length**3",
+                       sampling_type="cell",
+                       force_override=False)
+        
+        def make_solid_density(field, data):
+                full_mask =  (data["flash","species_mask"] == 3)
+
+                solid_density = data['flash','edens'] * full_mask
+                rqm_real = 1836 / data['flash','ye']
+
+                # Calculate median rqm for silicon only where the mask is valid
+                solid_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
+                if len(solid_rqm) > 0:
+                        solid_rqm_value = int(np.median(solid_rqm))
+                        print(f"Solid rqm: {solid_rqm_value}")
+                return solid_density
+
+        ds.add_field(("flash","soliddens"),
+                       function=make_solid_density,
+                       units="1/code_length**3",
+                       sampling_type="cell",
+                       force_override=False)
+
         ds.add_gradient_fields(('flash', 'magx'))
         ds.add_gradient_fields(('flash', 'magy'))
         ds.add_gradient_fields(('flash', 'magz'))
@@ -182,20 +314,6 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
                      units = "code_magnetic*code_length/code_time",
                      sampling_type="cell")
         
-        def make_vth_ele(field, data):
-                return np.sqrt(data['flash','tele']*units.kb_cgs/m_e)
-
-        def make_vth_ion_1(field, data):
-                return np.sqrt(data['flash','tion']*units.kb_cgs/(m_e*rqm))
-    
-        def make_vth_ion_2(field, data):
-                return np.sqrt(data['flash','tion']*units.kb_cgs/(m_e*rqm*(molar_weights[ion_2]/molar_weights[ion_1])))
-
-        ds.add_field(("flash", 'vthele'), function=make_vth_ele, units="code_velocity",sampling_type="cell",force_override=True)
-
-        ds.add_field(("flash", f'vth{str.lower(ion_1)}'), function=make_vth_ion_1, units="code_velocity",sampling_type="cell",force_override=True)
-
-        ds.add_field(("flash", f'vth{str.lower(ion_2)}'), function=make_vth_ion_2, units="code_velocity",sampling_type="cell",force_override=True)
 
         return ds
 
