@@ -36,9 +36,7 @@ def _Ez(field, data):
 
 
 
-def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, ion_mass_thresholds: list = [27,35], rqm_thresholds: list = [4500,7100,8300]):
-        global silicon_rqm
-        
+def load_for_osiris(filename:str, rqm_factor:float = None, B_background: float = None, ion_mass_thresholds: list = [28,35], rqm_thresholds: list = [4500,7100,8300]):        
         """"
         "Load a FLASH simulation with the FLASH frontend.
         "This function is a wrapper around yt.load() that adds some
@@ -68,8 +66,8 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
 
 
         ds = load(filename)
-        ds.add_field(('flash','rqm'),
-                       lambda field, data: rqm,
+        ds.add_field(('flash','rqm_factor'),
+                       lambda field, data: rqm_factor,
                        sampling_type="cell")
         c = units.speed_of_light_cgs
         e = units.electron_charge_cgs
@@ -225,7 +223,8 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
         ds.add_field(('flash', 'Jz'), function=make_Jz, units='code_magnetic/code_time', sampling_type='cell')
 
 
-
+        # NOTE: The contribution to the velocities due to currents, which are calculated from ampere's law, must be exempt from the velocity scaling used later
+        # that is done to preserve mach number. Therefore, we divide now by the square root of this rqm_factor, so that the current contribution remains the same
         def _v_ix(field, data):
                 return ((m_e*data['flash','Jx']/(data['flash','dens']*e)) + data['flash','velx'])
         def _v_iy(field, data):
@@ -234,11 +233,11 @@ def load_for_osiris(filename:str, rqm:float = None, B_background: float = None, 
                 return ((m_e*data['flash','Jz']/(data['flash','dens']*e)) + data['flash','velz'])
         
         def _v_ex(field, data):
-                return ((m_e*data['flash','Jx']/(data['flash','dens']*e) - data['flash','Jx']/(data['flash','edens']*e)) + data['flash','velx'])
+                return ((m_e*data['flash','Jx']/(data['flash','dens']*e) - data['flash','Jx']/(data['flash','edens']*e))/np.sqrt(rqm_factor) + data['flash','velx'])
         def _v_ey(field, data):
-                return ((m_e*data['flash','Jy']/(data['flash','dens']*e) - data['flash','Jy']/(data['flash','edens']*e)) + data['flash','vely'])
+                return ((m_e*data['flash','Jy']/(data['flash','dens']*e) - data['flash','Jy']/(data['flash','edens']*e))/np.sqrt(rqm_factor) + data['flash','vely'])
         def _v_ez(field, data):
-                return ((m_e*data['flash','Jz']/(data['flash','dens']*e) - data['flash','Jz']/(data['flash','edens']*e)) + data['flash','velz'])
+                return ((m_e*data['flash','Jz']/(data['flash','dens']*e) - data['flash','Jz']/(data['flash','edens']*e))/np.sqrt(rqm_factor) + data['flash','velz'])
         
         # Update the field definitions
         ds.add_field(('flash', 'v_ix'), function=_v_ix, units='code_velocity', sampling_type='cell')

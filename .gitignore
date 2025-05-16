@@ -19,10 +19,7 @@ output/
 .idea/
 
 # Python interface and temporary files
-.python-fortran-interface/MS/*
-.python-fortran-interface/TIMINGS/*
 input_files/*/interp/*
-#input_files/magshockz-v3.1.2d/interp/*
 
 
 # Python cache files

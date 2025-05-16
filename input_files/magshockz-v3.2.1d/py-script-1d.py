@@ -6,7 +6,7 @@ import pickle
 #-----------------------------------------------------------------------------------------
 
 # Define the start point for the ray in OSIRIS units
-start_point = [0, 240] # start point in OSIRIS units
+start_point = [0, 540] # start point in OSIRIS units
 theta = 1.5707963267948966 # angle that ray makes with the x axis [radians]
 
 # Parameters of FLASH simulation
@@ -17,14 +17,14 @@ box_bounds = {
     "ymax": 8406,
 }
 
-# Helper functions for position calculations
-def get_positions(state_x, dim=1):
+def set_fld_int( STATE ):
     """
-    Calculate particle positions based on simulation dimensionality.
+    Function to set the field data in the STATE dictionary based on the field component.
+    """
     
-    Parameters:
-    STATE (dict): Dictionary containing the state information, including field component and positional boundary data.
-    """
+    # Parameters:
+    # STATE (dict): Dictionary containing the state information, including field component and positional boundary data.
+
     # print("calling set_fld...")
     
     # Positional boundary data (makes a copy, but it's small)
@@ -344,7 +344,7 @@ def load_and_interpolate_density(STATE, filename):
 
     STATE["nx"] = np.array([4096])
     STATE["xmin"] = np.array([0.0])
-    STATE["xmax"] = np.array([7242]) # a little more than the final distance specified in input file
+    STATE["xmax"] = np.array([7344]) # a little more than the final distance specified in input file
 
     from scipy.interpolate import RegularGridInterpolator
     loaded_interpolator = RegularGridInterpolator((np.linspace(box_bounds["xmin"], box_bounds['xmax'], density_grid.shape[0]), 

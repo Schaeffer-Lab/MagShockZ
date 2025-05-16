@@ -51,7 +51,7 @@ class FLASH_OSIRIS:
         Reference density in cm^-3.
     B_background : float, optional
         Background magnetic field strength in Gauss. This field will be applied externally in OSIRIS. Default is 0.
-    rqm : int, optional
+    rqm_factor : int, optional
         Factor by which the real mass ratios will be divided. Default is 10.
     osiris_dims : int, optional
         Dimensions for OSIRIS simulation (1 or 2). Default is 2.
@@ -75,13 +75,14 @@ class FLASH_OSIRIS:
                 inputfile_name: str, 
                 reference_density: float,
                 B_background: float = 0, 
-                rqm: int = 10,
+                rqm_factor: int = 10,
                 osiris_dims: int = 2,
                 ppc: int = 80,
                 start_point: List[float] = [0, 240], 
                 theta: float = np.pi/2, 
                 xmax: float = 7100,
                 species_rqms: Dict[str, int] = None,
+                ion_mass_thresholds: list = [28,35],
                 dx_ndebye: float = 7.14,
                 tmax_gyroperiods: int = 10):
         """Initialize the FLASH-OSIRIS interface."""
@@ -96,7 +97,7 @@ class FLASH_OSIRIS:
         self.FLASH_data = Path(FLASH_data)
         self.inputfile_name = inputfile_name
         self.B0 = B_background
-        self.rqm = rqm
+        self.rqm_factor = rqm_factor
         self.n0 = reference_density
         self.osiris_dims = osiris_dims
         self.ppc = ppc
@@ -127,7 +128,7 @@ class FLASH_OSIRIS:
         
         # Load FLASH data
         logger.info(f"Loading FLASH data from {self.FLASH_data}")
-        self.ds = yt.load_for_osiris(self.FLASH_data, rqm=self.rqm, B_background=self.B0)
+        self.ds = yt.load_for_osiris(self.FLASH_data, rqm_factor=self.rqm_factor, B_background=self.B0, ion_mass_thresholds=ion_mass_thresholds)
         
         # Get covering grid
         level = 0
@@ -142,6 +143,7 @@ class FLASH_OSIRIS:
         
         # Log initialization parameters
         self._log_initialization()
+        self.calculate_numbers()
     
     def _log_initialization(self):
         """Log initialization parameters."""
@@ -151,9 +153,8 @@ class FLASH_OSIRIS:
         logger.info(f"Input file name: {self.inputfile_name}")
         logger.info(f"Reference density: {self.n0} cm^-3")
         logger.info(f"species_rqms: {self.species_rqms}")
-        logger.info(f"all rqms will be divided by {self.rqm}")
+        logger.info(f"all rqms will be divided by {self.rqm_factor}")
         logger.info(f"External background magnetic field: {self.B0} Gauss")
-        logger.info(f"OSIRIS mass ratio: {self.rqm}")
         logger.info(f"OSIRIS dimensions: {self.osiris_dims}")
         logger.info(f"Particles per cell: {self.ppc}")
         logger.info(f"Start point: {self.start_point} [c/wpe]")
@@ -206,8 +207,8 @@ class FLASH_OSIRIS:
         """Create dictionary of normalization factors for different fields."""
         # Base normalization factors
         B_norm = (self.omega_pe * self.m_e * self.c) / self.e
-        E_norm = B_norm * self.c / np.sqrt(self.rqm)
-        v_norm = self.c / np.sqrt(self.rqm)
+        E_norm = B_norm * self.c / np.sqrt(self.rqm_factor)
+        v_norm = self.c / np.sqrt(self.rqm_factor)
         vth_ele_norm = np.sqrt(self.m_e * self.c**2)
         
         self.normalizations = {
@@ -232,14 +233,14 @@ class FLASH_OSIRIS:
         # Add species-specific normalizations
         for species, rqms in self.species_rqms.items():
             self.normalizations[species + 'dens'] = self.n0
-            self.normalizations[f'vth{species}'] = vth_ele_norm * np.sqrt(rqms / self.rqm)
+            self.normalizations[f'vth{species}'] = vth_ele_norm * np.sqrt(rqms / self.rqm_factor)
     
     def _calculate_tmax(self):
         """Calculate gyrotime and simulation duration."""
         if self.B0 != 0:
-            self.gyrotime = self.rqm / (self.B0 / self.normalizations['Bx_int'])
+            self.gyrotime = (self.species_rqms['background']/ self.rqm_factor) / (self.B0 / self.normalizations['Bx_int'])
         else:
-            self.gyrotime = self.rqm / (self.all_data['flash', 'magx'][-1, -1, 0] / self.normalizations['magx'])
+            self.gyrotime = self.species_rqms['background']/ self.rqm_factor / (self.all_data['flash', 'magx'][-1, -1, 0] / self.normalizations['magx'])
         
         self.tmax = int(self.gyrotime * self.tmax_gyroperiods)
 
@@ -338,7 +339,7 @@ class FLASH_OSIRIS:
         # Special handling for density fields
         if field.endswith('dens'):
             # Remove small density values
-            lower_bound = 0.01
+            lower_bound = 0.0001
             field_data[field_data < lower_bound] = 0
             np.save(f"{interp_dir}/{field}.npy", field_data)
         else:
@@ -555,7 +556,7 @@ el_mag_fld
   ! You can also do this with external fields, as functions of time
   ext_fld = "static",
   type_ext_b(1:3) = "uniform", "uniform", "uniform",
-  ext_b0(1:3) = {np.format_float_scientific(self.B0, 4)}, 0, 0,
+  ext_b0(1:3) = {np.format_float_scientific(np.cos(self.theta) * self.B0 / self.normalizations['Bx_int'], 4)}, {np.format_float_scientific(-np.sin(self.theta) * self.B0 / self.normalizations['Bx_int'])}, 0,
   \u007d
 
 !----------boundary conditions for em-fields ----------
@@ -590,6 +591,13 @@ diag_emf
         vthele_end = thermal_bounds[1]
         
         return f'''
+!----------number of particle species----------
+particles
+\u007b
+  interpolation = "quadratic",
+  num_species = {len(self.species_rqms) + 1},
+\u007d
+
 !----------information for electrons----------
 species
 \u007b
@@ -655,7 +663,7 @@ diag_species
 species
 \u007b
  name = "{ion}",
- rqm = {self.species_rqms[ion] / self.rqm},
+ rqm = {self.species_rqms[ion] / self.rqm_factor},
  num_par_x = {self.ppc},
  init_type = "python",
 \u007d
@@ -728,14 +736,14 @@ box_bounds = \u007b
     "ymax": {int(self.y[-1].value)},
 \u007d
 
-# Helper functions for position calculations
-def get_positions(state_x, dim={self.osiris_dims}):
+def set_fld_int( STATE ):
     """
-    Calculate particle positions based on simulation dimensionality.
+    Function to set the field data in the STATE dictionary based on the field component.
+    """
     
-    Parameters:
-    STATE (dict): Dictionary containing the state information, including field component and positional boundary data.
-    """
+    # Parameters:
+    # STATE (dict): Dictionary containing the state information, including field component and positional boundary data.
+
     # print("calling set_fld...")
     
     # Positional boundary data (makes a copy, but it's small)
@@ -1012,12 +1020,71 @@ def set_density_{ion}( STATE ):
             
     def write_everything(self):
         # Main function to run the interface
-        self.calculate_numbers()
         self.save_slices()
         self.write_input_file()
         self.write_python_script()
 
         print(f"Input file {self.inputfile_name} and python script input.py have been generated in {self.output_dir}")
+
+    def show_lineout_in_plane(self, field):
+        import matplotlib.pyplot as plt
+        end_point = self._calculate_endpoint()
+        if field.endswith('dens'):
+            data = np.load(self.output_dir / f'interp/{field}.npy')
+
+        else:
+            import pickle
+            with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
+                f = pickle.load(p)
+                x1,x2 = np.meshgrid(self.y,self.x)
+                data = f((x1,x2))
+
+        plt.figure()
+
+        plt.imshow(data.T, origin='lower',
+                    extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]],vmax = 10) # TODO add some logic for vmax
+
+        plt.plot([self.start_point[0], end_point[0]], [self.start_point[1],end_point[1]],color='r')
+
+        plt.show()
+
+    def plot_1D_lineout(self, fields):
+        from scipy.interpolate import RegularGridInterpolator
+        import matplotlib.pyplot as plt
+        import pickle
+        end_point = self._calculate_endpoint()
+        x_osiris = np.linspace(self.start_point[0], end_point[0],1000)
+        y_osiris = np.linspace(self.start_point[1], end_point[1],1000)
+
+        results = {}
+
+        # Check if fields is a string (single field) or an iterable
+        if isinstance(fields, str):
+            fields_to_plot = [fields]  # Convert to a list with a single element
+        else:
+            fields_to_plot = fields  # Use as is
+
+        plt.figure()
+        for field in fields_to_plot:
+
+            if field.endswith('dens'):
+                data = np.load(self.output_dir / f'interp/{field}.npy')
+                f = RegularGridInterpolator(
+                    (self.y, self.x), data.T, 
+                    method='linear', bounds_error=True, fill_value=0)
+            else:
+                with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
+                    f = pickle.load(p)
+
+            plt.plot(np.linspace(0, self.xmax, 1000), f((y_osiris,x_osiris)).T, label=field)
+            results[field] = (f((y_osiris,x_osiris)).T)
+        plt.xlabel(r'x [$c/\omega_{pe}$]')
+
+        plt.grid(visible=True) 
+        plt.legend()
+        plt.show()
+        return results
+
 
 if __name__ == "__main__":
     # Example usage
@@ -1030,4 +1097,6 @@ if __name__ == "__main__":
         start_point=[0, 240],
         theta=np.pi / 2,
     )
-    interface.write_everything()
+    # interface.write_everything()
+    interface.show_lineout_in_plane('edens')
+    interface.plot_1D_lineout('edens')
