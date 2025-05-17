@@ -101,6 +101,7 @@ else
         cp "${PYTHONSCRIPT}" "${OUTPUTDIR}/${PYTHONSCRIPT}" || { echo "Failed to copy python script"; exit 1; }
         cp -r interp/ "${OUTPUTDIR}/interp/" || { echo "Failed to copy interp directory"; exit 1; }
         cp "${PATHTOINPUTFILE}" "${OUTPUTDIR}/input_file.txt" || { echo "Failed to copy input file"; exit 1; }
+        cp "instance.py ${OUTPUTDIR}" || { echo "Failed to copy instance of FLASH_OSIRIS object"; exit 1; }
     }
 
     copy_files

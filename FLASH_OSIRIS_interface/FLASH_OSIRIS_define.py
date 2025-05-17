@@ -69,6 +69,8 @@ class FLASH_OSIRIS:
         Spatial resolution in units of upstream electron debye lengths. Default is 7.14.
     tmax_gyroperiods : int, optional
         Number of upstream ion gyroperiods to simulate. Default is 10.
+    algorithm : str, optional
+        Algorithm to use for OSIRIS simulation. Default is "cpu".
     """
     def __init__(self, 
                 FLASH_data: str, 
@@ -84,7 +86,8 @@ class FLASH_OSIRIS:
                 species_rqms: Dict[str, int] = None,
                 ion_mass_thresholds: list = [28,35],
                 dx_ndebye: float = 7.14,
-                tmax_gyroperiods: int = 10):
+                tmax_gyroperiods: int = 10,
+                algorithm: str = "cpu"):
         """Initialize the FLASH-OSIRIS interface."""
         # Validate inputs
         if osiris_dims not in [1, 2]:
@@ -92,6 +95,15 @@ class FLASH_OSIRIS:
             
         if species_rqms is None:
             species_rqms = {"channel": 3810, "sheathe": 6802, "background": 7257, "si": 3899}
+
+        if algorithm not in ["cpu", "cuda", "tiles"]:
+            raise ValueError("algorithm must be either 'cpu', 'cuda', or 'tiles'")
+
+        if not isinstance(reference_density, (int, float)):
+            raise TypeError("reference_density must be a number")
+        
+        if not isinstance(B_background, (int, float)):
+            raise TypeError("B_background must be a number")
         
         # Store basic parameters
         self.FLASH_data = Path(FLASH_data)
@@ -109,6 +121,7 @@ class FLASH_OSIRIS:
         self.gyrotime = None
         self.dx_ndebye = dx_ndebye
         self.tmax_gyroperiods = tmax_gyroperiods
+        self.algorithm = algorithm
         
         # Physical constants (moved to module level)
         self.e = E_CHARGE
@@ -142,10 +155,10 @@ class FLASH_OSIRIS:
 
         
         # Log initialization parameters
-        self._log_initialization()
+        self._log_initialization_params()
         self.calculate_numbers()
     
-    def _log_initialization(self):
+    def _log_initialization_params(self):
         """Log initialization parameters."""
         logger.info("=" * 50)
         logger.info("INITIALIZING FLASH-OSIRIS INTERFACE")
@@ -163,6 +176,25 @@ class FLASH_OSIRIS:
         logger.info(f"Output directory: {self.output_dir}")
         logger.info("INITIALIZING FLASH-OSIRIS INTERFACE COMPLETE")
         logger.info("=" * 50)
+
+    def __str__(self):
+        """String representation of the FLASH-OSIRIS interface."""
+        output = "=" * 50 + "\n"
+        output += "FLASH-OSIRIS INTERFACE\n"
+        output += f"FLASH data: {self.FLASH_data}\n"
+        output += f"Input file name: {self.inputfile_name}\n"
+        output += f"Reference density: {self.n0} cm^-3\n"
+        output += f"species_rqms: {self.species_rqms}\n"
+        output += f"all rqms will be divided by {self.rqm_factor}\n"
+        output += f"External background magnetic field: {self.B0} Gauss\n"
+        output += f"OSIRIS dimensions: {self.osiris_dims}\n"
+        output += f"Particles per cell: {self.ppc}\n"
+        output += f"Start point: {self.start_point} [c/wpe]\n"
+        output += f"Angle: {self.theta} (only used in 1D)\n"
+        output += f"Xmax: {self.xmax} (only used in 1D)\n"
+        output += f"Output directory: {self.output_dir}\n"
+        output += "=" * 50
+        return output
 
 
     def calculate_numbers(self):
@@ -447,7 +479,7 @@ class FLASH_OSIRIS:
         # Header and simulation parameters
         content = self._generate_header()
         content += self._generate_simulation_params()
-        content += self._generate_grid_params()
+        content += self._generate_timespace_params()
         content += self._generate_field_params()
         
         # Species-specific sections
@@ -483,29 +515,71 @@ diag_current
 
     def _generate_simulation_params(self):
         """Generate simulation parameters section."""
-        return '''
+        if self.algorithm == 'cpu': 
+            return '''
 !----------global simulation parameters----------
 simulation 
-{
+\u007b
  parallel_io = "mpi",
-}
+\u007d
 
 !--------the node configuration for this simulation--------
 node_conf 
-{
+\u007b
  node_number = 16, ! edit this to the number of nodes you are using
  n_threads=2,
-}
-'''
+\u007d
 
-    def _generate_grid_params(self):
-        """Generate grid parameters section."""
-        return f'''
 !----------spatial grid----------
 grid
 \u007b
  nx_p = {int(self.xmax/self.dx)}, ! number of cells in x-direction
 \u007d
+
+'''
+        elif self.algorithm == 'cuda':
+            n_tiles_min = self.xmax / self.dx / 1024
+
+            print("Number of tiles in each direction ", np.ceil(np.sqrt(n_tiles_min)))
+
+            # Just keep typing in powers of two until you get n_tiles > n_tiles_min
+
+            i = 0
+            while True:
+                n_tiles_x = 2**i
+                if n_tiles_x > n_tiles_min:
+                    break
+                i += 1
+            return f'''
+!----------global simulation parameters----------
+simulation
+\u007b
+    parallel_io = "mpi",
+    algorithm = "cuda",
+\u007d
+
+node_conf
+\u007b
+    node_number = 2, ! edit this to the number of GPUs you are using
+    if_periodic(1:1) = .false.,
+    tile_number(1:1) = {n_tiles_x},
+\u007d
+
+!----------spatial grid----------
+grid
+\u007b
+ nx_p = {int(self.xmax/self.dx)}, ! number of cells in x-direction
+ !load_balance(1:1) = .true.,
+ !lb_type = "dynamic",
+ !n_dynamic = 200, ! estimate this to be once per crossing time
+ ! cell_weight = 1.0,
+ ! dump_global_load = 1,
+ !start_load_balance = 100,
+\u007d
+'''
+    def _generate_timespace_params(self):
+        """Generate grid parameters section."""
+        return f'''
 
 !----------time step and global data dump timestep number----------
 time_step
@@ -1017,12 +1091,27 @@ def set_density_{ion}( STATE ):
 
 #-----------------------------------------------------------------------------------------'                   
 ''' for ion in self.species_rqms.keys()))
+
+    def save_instance(self):
+        import pickle
+        # Ensure output directory exists
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True)
+        
+        try:
+            # Save the instance to a file
+            with open(self.output_dir / "instance.pkl", "wb") as f:
+                pickle.dump(self, f)
+            logger.info(f"Instance saved to {self.output_dir / 'instance.pkl'}")
+        except Exception as e:
+            logger.error(f"Failed to save instance: {e}")
             
     def write_everything(self):
         # Main function to run the interface
         self.save_slices()
         self.write_input_file()
         self.write_python_script()
+        self.save_instance()
 
         print(f"Input file {self.inputfile_name} and python script input.py have been generated in {self.output_dir}")
 
