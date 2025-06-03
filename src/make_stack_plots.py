@@ -1,14 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
+from pathlib import Path
 import vysxd_analysis
 import vysxd_define
-from matplotlib.collections import LineCollection
-from pathlib import Path
-from matplotlib.colors import Normalize
-
 
 def make_joy_plot(path_to_data, y_spacing=1, alpha=0.4, 
-                  cmap='viridis', gyrotime = 625, figsize=(4, 3), xlabel='x [c/wp]', ylabel='Field Value',
+                  cmap='viridis', gyrotime=625, figsize=(8, 5), dpi=100, xlabel=r'x $[c/\omega_p]$', ylabel=r'Field Value',
                   n_skip=1, time_labels=True, **kwargs):
     """
     Create a stacked spatial plot with colors changing over time (à la Joy Division album cover).
@@ -24,6 +23,8 @@ def make_joy_plot(path_to_data, y_spacing=1, alpha=0.4,
         Colormap name for color progression
     figsize : tuple
         Figure size (width, height)
+    dpi : int
+        Dots per inch for the figure
     xlabel : str
         Label for x-axis
     ylabel : str
@@ -34,57 +35,43 @@ def make_joy_plot(path_to_data, y_spacing=1, alpha=0.4,
         Additional keyword arguments passed to plot function
     """
     # Load data
-    # Ensure consistent path format
     data = vysxd_analysis.get_osiris_quantity_1d(path_to_data.as_posix() + '/', n_skip=n_skip)
     
-    fig, ax = plt.subplots(figsize=figsize)
+    # Create the figure with limited DPI
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     
     # Create colormap
     colors = plt.get_cmap(cmap)
-    # Plot each time slice with offset
     for t in range(len(data[3])):
         y_offset = t * y_spacing
-        # ax.plot(data[4], data[0][i] + y_offset, color=colors(i/len(data[3])), lw=1)
-        # Create a line collection
-        # Create points for the line segments
-        points = np.array([data[4], data[0][t]]).T.reshape(-1, 1, 2)
+        points = np.array([data[4], y_offset+data[0][t]]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-        # Create the line collection
-
         norm = Normalize(data[0][t].min(), data[0][t].max())
-        lc = LineCollection(segments, cmap='viridis', norm=norm)
+        lc = LineCollection(segments, cmap=cmap, norm=norm)
         lc.set_array(data[0][t])
-
-        # Create the plot
-        fig, ax = plt.subplots()
         ax.add_collection(lc)
 
         # Fill below the line
-        # ax.fill_between(data[4], 
-        #                y_offset * np.ones_like(data[0][i]), 
-        #                data[0][i] + y_offset,
-        #                color=colors((data[0][i]/data[0].max())),
-        #                alpha=alpha)
-        
-        # Add time labels if provided
-        if time_labels:
-            ax.text(data[4][-1], y_offset, f't = {data[3][t]/gyrotime:.1f}', 
+        ax.fill_between(data[4], 
+                       y_offset * np.ones_like(data[0][t]), 
+                       data[0][t] + y_offset,
+                       color=colors(t/len(data[3])),
+                       alpha=alpha)
+
+        if time_labels and t % 10 == 0:
+            ax.text(data[4][-1], y_offset, f'       t={data[3][t]/gyrotime:.1f}', 
                     verticalalignment='center')
     
     # Customize the plot
+    # plt.colorbar(lc, ax=ax, label=f'{ylabel}', location = 'left')
     ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    # ax.spines['top'].set_visible(False)
-    # ax.spines['right'].set_visible(False)
-
-    # norm = plt.Normalize(0, len(data))
-    # sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    # sm.set_array([])
-    # plt.colorbar(sm, ax=ax, label='Time')
+    ax.set_yticks([])
+    # ax.set_ylabel(ylabel)
+    ax.autoscale()
     
     return fig, ax
 
-# Ensure the path to ion charge density files is correct
+# # Example usage
 # path_to_data = Path('/home/dschneidinger/shock_reformation/raw_data/B_0.04_ufl_0.2_vi_0.00001_ve_0.0001.1d/MS/DENSITY/ions/charge')
-# make_joy_plot(path_to_data,n_skip=10, time_labels=True,alpha=0.1,y_spacing=0.4,cmap='plasma')
+# make_joy_plot(path_to_data, n_skip=2, time_labels=True, alpha=0.1, y_spacing=1, cmap='plasma', dpi=100)

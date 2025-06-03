@@ -57,23 +57,25 @@ def movie(path_to_data, frames=True, vlimits=None, n_jobs=cpu_count(), gyrotime 
 
 def phase_space_frame(args):
     frame, path_to_data, vlimits, gyrotime_scale, dpi, gyrotime = args
-    data_0 = osh5io.read_h5(f'{path_to_data[0]}-{frame:06d}.h5')
-    data_1 = osh5io.read_h5(f'{path_to_data[1]}-{frame:06d}.h5')
     fig, ax = plt.subplots(dpi=dpi)
     # Add this line to adjust subplot parameters
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
-    
-    if len(np.shape(data_0)) == 1:
-        osh5vis.osplot(data_0, ylim=[vlimits[0], vlimits[1]]) if vlimits else osh5vis.osplot(data_0)
-    else:
-        osh5vis.osplot(np.log(data_0), vmax=vlimits[1], vmin=vlimits[0], cmap = 'hot') if vlimits else osh5vis.osplot(data_0).set_ticks([])
-    
+   
+    # Define a list of colormaps
+    cmaps = ['hot', 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'coolwarm', 'jet']            # Use a different colormap for each index i
+    for i in range(len(path_to_data)):
+        if len(path_to_data) > 2:
+            colorbar= False        
+        else:
+            colorbar= True
+        data_0 = osh5io.read_h5(f'{path_to_data[i]}-{frame:06d}.h5')
+        if len(np.shape(data_0)) == 1:
+            osh5vis.osplot(data_0, ylim=[vlimits[0], vlimits[1]],colorbar=colorbar) if vlimits else osh5vis.osplot(data_0)
+        else:
+            osh5vis.osplot(np.log(data_0), vmax=vlimits[1], vmin=vlimits[0], cmap=cmaps[i],colorbar=colorbar) 
+        
+  
 
-    if len(np.shape(data_1)) == 1:
-        osh5vis.osplot(data_1, ylim=[vlimits[0], vlimits[1]]) if vlimits else osh5vis.osplot(data_1)
-    else:
-        osh5vis.osplot(np.log(data_1), vmax=vlimits[1], vmin=vlimits[0], cmap = 'viridis') if vlimits else osh5vis.osplot(data_1).set_ticks([])
-    
     if gyrotime_scale:
         plt.title(f"{round(data_0.run_attrs['TIME'][0]/gyrotime, 2)}" + r" $\omega_{ci}$")
     

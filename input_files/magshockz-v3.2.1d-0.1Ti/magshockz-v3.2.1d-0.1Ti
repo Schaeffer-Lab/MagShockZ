@@ -2,7 +2,7 @@
 ! To run this input deck as is, first put the input deck, OSIRIS executable, and the
 ! py-script-1d.py file all in the same directory.  Next, do `export PYTHONPATH=.` to set the Python
 ! path to the directory that contains the py-script-1d.py file (current directory). Finally,
-! execute `./osiris-1D.e magshockz-v3.2.1d` to run the simulation, which will use the
+! execute `./osiris-1D.e magshockz-v3.2.1d-0.1Ti` to run the simulation, which will use the
 ! py-script-1d.py and interp.npy files to set various field and particle data.
 !-----------------------------------------------------------------------------------------
 
@@ -146,8 +146,8 @@ profile
 spe_bound
 {
  type(1:2,1) = "thermal","thermal",
- uth_bnd(1:3,1,1) = 1.1565e-02, 1.1565e-02, 1.1565e-02, 
- uth_bnd(1:3,2,1) = 3.2182e-02, 3.2182e-02, 3.2182e-02, 
+ uth_bnd(1:3,1,1) = 1.1565e-03, 1.1565e-03, 1.1565e-03, 
+ uth_bnd(1:3,2,1) = 3.2182e-03, 3.2182e-03, 3.2182e-03, 
 }
 
 !----------diagnostic for electrons----------
@@ -200,8 +200,8 @@ profile
 spe_bound
 {
  type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 6.1177e-04, 6.1177e-04, 6.1177e-04, 
- uth_bnd(1:3,2,1) = 7.5128e-04, 7.5128e-04, 7.5128e-04, 
+ uth_bnd(1:3,1,1) = 6.1177e-05, 6.1177e-05, 6.1177e-05, 
+ uth_bnd(1:3,2,1) = 7.5128e-05, 7.5128e-05, 7.5128e-05, 
 }
 
 !----------diagnostic for channel ions----------
@@ -254,8 +254,8 @@ profile
 spe_bound
 {
  type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 4.5786e-04, 4.5786e-04, 4.5786e-04, 
- uth_bnd(1:3,2,1) = 5.6227e-04, 5.6227e-04, 5.6227e-04, 
+ uth_bnd(1:3,1,1) = 4.5786e-05, 4.5786e-05, 4.5786e-05, 
+ uth_bnd(1:3,2,1) = 5.6227e-05, 5.6227e-05, 5.6227e-05, 
 }
 
 !----------diagnostic for sheathe ions----------
@@ -308,8 +308,8 @@ profile
 spe_bound
 {
  type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 4.4327e-04, 4.4327e-04, 4.4327e-04, 
- uth_bnd(1:3,2,1) = 5.4436e-04, 5.4436e-04, 5.4436e-04, 
+ uth_bnd(1:3,1,1) = 4.4327e-05, 4.4327e-05, 4.4327e-05, 
+ uth_bnd(1:3,2,1) = 5.4436e-05, 5.4436e-05, 5.4436e-05, 
 }
 
 !----------diagnostic for background ions----------
@@ -362,8 +362,8 @@ profile
 spe_bound
 {
  type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 6.0474e-04, 6.0474e-04, 6.0474e-04, 
- uth_bnd(1:3,2,1) = 7.4266e-04, 7.4266e-04, 7.4266e-04, 
+ uth_bnd(1:3,1,1) = 6.0474e-05, 6.0474e-05, 6.0474e-05, 
+ uth_bnd(1:3,2,1) = 7.4266e-05, 7.4266e-05, 7.4266e-05, 
 }
 
 !----------diagnostic for si ions----------

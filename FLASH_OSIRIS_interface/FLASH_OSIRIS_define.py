@@ -71,6 +71,10 @@ class FLASH_OSIRIS:
         Number of upstream ion gyroperiods to simulate. Default is 10.
     algorithm : str, optional
         Algorithm to use for OSIRIS simulation. Default is "cpu".
+    normalizations_override : Dict[str, float], optional
+        Dictionary of normalization factors to multiply existing default factor by.
+        Note: this factor will be multiply the normalization. For example, if you set ['b2_ext': 10],
+        the external magnetic field in y will be 0.1 times its default value.
     """
     def __init__(self, 
                 FLASH_data: str, 
@@ -83,11 +87,13 @@ class FLASH_OSIRIS:
                 start_point: List[float] = [0, 240], 
                 theta: float = np.pi/2, 
                 xmax: float = 7100,
+                ymax: float = None,
                 species_rqms: Dict[str, int] = None,
                 ion_mass_thresholds: list = [28,35],
                 dx_ndebye: float = 7.14,
                 tmax_gyroperiods: int = 10,
-                algorithm: str = "cpu"):
+                algorithm: str = "cpu",
+                normalizations_override: Dict[str, float] = {}):
         """Initialize the FLASH-OSIRIS interface."""
         # Validate inputs
         if osiris_dims not in [1, 2]:
@@ -106,22 +112,41 @@ class FLASH_OSIRIS:
             raise TypeError("B_background must be a number")
         
         # Store basic parameters
+        self.osiris_dims = osiris_dims
         self.FLASH_data = Path(FLASH_data)
-        self.inputfile_name = inputfile_name
+        self.inputfile_name = inputfile_name + f".{self.osiris_dims}d"
         self.B0 = B_background
         self.rqm_factor = rqm_factor
         self.n0 = reference_density
-        self.osiris_dims = osiris_dims
         self.ppc = ppc
-        self.xmax = xmax  # TODO: Make this configurable based on data
-        self.start_point = start_point  # TODO: Make this configurable based on data
-        self.theta = theta  # TODO: Make this configurable based on data
+
+        if osiris_dims == 1:
+            if not isinstance(xmax, (int, float)):
+                raise TypeError("xmax must be a number for 1D simulations")
+            self.xmax = xmax  # TODO: Make this configurable based on data
+            if not isinstance(start_point, (list, tuple)) or len(start_point) != 2:
+                raise ValueError("start_point must be a list or tuple of two numbers for 1D simulations")
+            self.start_point = start_point  # TODO: Make this configurable based on data
+            if not isinstance(theta, (int, float)):
+                raise TypeError("theta must be a number for 1D simulations")
+            self.theta = theta  # TODO: Make this configurable based on data
+        elif osiris_dims == 2:
+            if not isinstance(xmax, (list, tuple)) or len(xmax) != 2:
+                raise ValueError("xmax must be a list of two numbers for 2D simulations")
+            if not isinstance(ymax, (list, tuple)) or len(ymax) != 2:
+                raise ValueError("ymax must be a list of two numbers for 2D simulations")
+            self.xmax = xmax
+            self.ymax = ymax
+        elif osiris_dims == 3:
+            raise NotImplementedError("3D simulations are not supported yet")
+        
         self.species_rqms = species_rqms
         self.normalizations = None
         self.gyrotime = None
         self.dx_ndebye = dx_ndebye
         self.tmax_gyroperiods = tmax_gyroperiods
         self.algorithm = algorithm
+        self.normalizations_override = normalizations_override
         
         # Physical constants (moved to module level)
         self.e = E_CHARGE
@@ -170,9 +195,13 @@ class FLASH_OSIRIS:
         logger.info(f"External background magnetic field: {self.B0} Gauss")
         logger.info(f"OSIRIS dimensions: {self.osiris_dims}")
         logger.info(f"Particles per cell: {self.ppc}")
-        logger.info(f"Start point: {self.start_point} [c/wpe]")
-        logger.info(f"Angle: {self.theta} (only used in 1D)")
-        logger.info(f"Xmax: {self.xmax} (only used in 1D)")
+        if self.osiris_dims == 1:
+            logger.info(f"Start point: {self.start_point} [c/wpe]")
+            logger.info(f"Angle: {self.theta} (only used in 1D)")
+            logger.info(f"Xmax: {self.xmax} (only used in 1D)")
+        elif self.osiris_dims == 2:
+            logger.info(f"Xmax: {self.xmax}")
+            logger.info(f"Ymax: {self.ymax}")
         logger.info(f"Output directory: {self.output_dir}")
         logger.info("INITIALIZING FLASH-OSIRIS INTERFACE COMPLETE")
         logger.info("=" * 50)
@@ -189,9 +218,13 @@ class FLASH_OSIRIS:
         output += f"External background magnetic field: {self.B0} Gauss\n"
         output += f"OSIRIS dimensions: {self.osiris_dims}\n"
         output += f"Particles per cell: {self.ppc}\n"
-        output += f"Start point: {self.start_point} [c/wpe]\n"
-        output += f"Angle: {self.theta} (only used in 1D)\n"
-        output += f"Xmax: {self.xmax} (only used in 1D)\n"
+        if self.osiris_dims == 1:
+            output += (f"Start point: {self.start_point} [c/wpe]\n")
+            output += (f"Angle: {self.theta} (only used in 1D)\n")
+            output += (f"Xmax: {self.xmax} (only used in 1D)\n")
+        elif self.osiris_dims == 2:
+            output += (f"Xmax: {self.xmax}\n")
+            output += (f"Ymax: {self.ymax}\n")
         output += f"Output directory: {self.output_dir}\n"
         output += "=" * 50
         return output
@@ -223,8 +256,7 @@ class FLASH_OSIRIS:
         
         # Calculate spatial and temporal resolution
         self.dx = self.debye_osiris * self.dx_ndebye
-        self.dt = self.dx * 0.98  # CFL condition
-        
+        self.dt = self.dx * 0.98 / np.sqrt(self.osiris_dims) # CFL condition
         # Get real mass ratio for reference
         rqm_real = 1836 / self.all_data['flash', 'ye'][-1, -1, 0]
         logger.info(f"{'*'*10} real mass ratio: {rqm_real} {'*'*10}")
@@ -311,6 +343,9 @@ class FLASH_OSIRIS:
         
         # Process each field
         for field, normalization in self.normalizations.items():
+            if field in self.normalizations_override.keys():
+                normalization = normalization * self.normalizations_override[field]
+                logger.info(f"{field} is normalized by additional factor of {np.format_float_scientific(self.normalizations_override[field],3)}")
             logger.info(f"Processing {field} with normalization {np.format_float_scientific(normalization, 3)}")
             
             # Special handling for thermal velocity fields
@@ -408,8 +443,12 @@ class FLASH_OSIRIS:
     
     def _calculate_endpoint(self):
         """Calculate the endpoint position based on simulation parameters."""
-        end_x = self.xmax * np.cos(self.theta) + self.start_point[0]
-        end_y = self.xmax * np.sin(self.theta) + self.start_point[1]
+        if self.osiris_dims == 1:
+            end_x = self.xmax * np.cos(self.theta) + self.start_point[0]
+            end_y = self.xmax * np.sin(self.theta) + self.start_point[1]
+        elif self.osiris_dims == 2:
+            end_x = self.xmax[-1]
+            end_y = self.ymax[-1]
         return [end_x, end_y]
     
     def _read_thermal_bounds(self, end_point):
@@ -428,12 +467,12 @@ class FLASH_OSIRIS:
         """
         import pickle
         
-        bounds = {
+
+        if self.osiris_dims == 1: 
+            bounds = {
             'electron': None,
             'ions': {}
-        }
-        
-        try:
+            }
             # Read electron thermal velocity bounds
             with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
                 vthele = pickle.load(f)
@@ -452,14 +491,52 @@ class FLASH_OSIRIS:
                         vthion((end_point[1], end_point[0]))
                     ]
                     logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")
-                    
-        except FileNotFoundError as e:
-            logger.error(f"Could not read thermal velocity files: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error reading thermal velocity data: {e}")
-            raise
-            
+        elif self.osiris_dims == 2:             
+            bounds = {
+                'electron': {},
+                'ions': {}
+            }
+            num_samples = 10  # Number of points to sample
+            x_samples = np.linspace(self.xmax[0], self.xmax[1], num_samples)
+            y_samples = np.linspace(self.ymax[0], self.ymax[1], num_samples)
+            with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
+                    vthele = pickle.load(f)
+                    x_lower_bound = np.mean([vthele((y, self.xmax[0])) for y in y_samples])
+                    x_upper_bound = np.mean([vthele((y, self.xmax[1])) for y in y_samples])
+
+                    y_lower_bound = np.mean([vthele((self.ymax[0], x)) for x in x_samples])
+                    y_upper_bound = np.mean([vthele((self.ymax[1], x)) for x in x_samples])
+
+                    bounds['electron']['x'] = [
+                        x_lower_bound,
+                        x_upper_bound
+                    ]
+                    bounds['electron']['y'] = [
+                        y_lower_bound,
+                        y_upper_bound
+                    ]
+                    logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
+                
+                # Read ion thermal velocity bounds for each species
+            for ion in self.species_rqms.keys():
+                bounds['ions'][ion] = {}
+                with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
+                    vthion = pickle.load(f)
+                    x_lower_bound = np.mean([vthion((y, self.xmax[0])) for y in y_samples])
+                    x_upper_bound = np.mean([vthion((y, self.xmax[1])) for y in y_samples])
+
+                    y_lower_bound = np.mean([vthion((self.ymax[0], x)) for x in x_samples])
+                    y_upper_bound = np.mean([vthion((self.ymax[1], x)) for x in x_samples])
+
+                    bounds['ions'][ion]['x'] = [
+                        x_lower_bound,
+                        x_upper_bound
+                    ]
+                    bounds['ions'][ion]['y'] = [
+                        y_lower_bound,
+                        y_upper_bound
+                    ]
+                    logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")        
         return bounds
     
     def _generate_input_file_content(self, thermal_bounds):
@@ -476,20 +553,35 @@ class FLASH_OSIRIS:
         str
             Complete OSIRIS input file content
         """
-        # Header and simulation parameters
-        content = self._generate_header()
-        content += self._generate_simulation_params()
-        content += self._generate_timespace_params()
-        content += self._generate_field_params()
-        
-        # Species-specific sections
-        content += self._generate_electrons_section(thermal_bounds['electron'])
-        
-        # Generate sections for each ion species
-        for ion, bounds in thermal_bounds['ions'].items():
-            content += self._generate_ion_section(ion, bounds)
-        
+        if self.osiris_dims == 1:
+            # Header and simulation parameters
+            content = self._generate_header()
+            content += self._generate_simulation_params1D()
+            content += self._generate_timespace_params()
+            content += self._generate_field_params()
+            
+            # Species-specific sections
+            content += self._generate_electrons_section1D(thermal_bounds['electron'])
+            
+            # Generate sections for each ion species
+            for ion, bounds in thermal_bounds['ions'].items():
+                content += self._generate_ion_section1D(ion, bounds)
+        elif self.osiris_dims == 2:
+            # Header and simulation parameters
+            content = self._generate_header()
+            content += self._generate_simulation_params2D()
+            content += self._generate_timespace_params()
+            content += self._generate_field_params()
+            
+            # Species-specific sections
+            content += self._generate_electrons_section2D(thermal_bounds['electron'])
+            
+            # Generate sections for each ion species
+            for ion, bounds in thermal_bounds['ions'].items():
+                content += self._generate_ion_section2D(ion, bounds)    
         # Footer
+        elif self.osiris_dims == 3:
+            raise NotImplementedError("3D OSIRIS input file generation is not implemented yet.")
         content += """
 !----------diagnostic for currents----------
 diag_current
@@ -513,10 +605,10 @@ diag_current
 !-----------------------------------------------------------------------------------------
 '''
 
-    def _generate_simulation_params(self):
+    def _generate_simulation_params1D(self):
         """Generate simulation parameters section."""
         if self.algorithm == 'cpu': 
-            return '''
+            return f'''
 !----------global simulation parameters----------
 simulation 
 \u007b
@@ -554,15 +646,16 @@ grid
 !----------global simulation parameters----------
 simulation
 \u007b
-    parallel_io = "mpi",
-    algorithm = "cuda",
+ parallel_io = "mpi",
+ algorithm = "cuda",
 \u007d
 
 node_conf
 \u007b
-    node_number = 2, ! edit this to the number of GPUs you are using
-    if_periodic(1:1) = .false.,
-    tile_number(1:1) = {n_tiles_x},
+ node_number = 2, ! edit this to the number of GPUs you are using
+ n_threads = 2,
+ if_periodic(1:1) = .false.,
+ tile_number(1:1) = {n_tiles_x},
 \u007d
 
 !----------spatial grid----------
@@ -577,62 +670,144 @@ grid
  !start_load_balance = 100,
 \u007d
 '''
+        
+    def _generate_simulation_params2D(self):
+        """Generate simulation parameters section."""
+        if self.algorithm == 'cpu': 
+            return f'''
+!----------global simulation parameters----------
+simulation 
+\u007b
+ parallel_io = "mpi",
+\u007d
+
+!--------the node configuration for this simulation--------
+node_conf 
+\u007b
+ node_number = 4,4, ! edit this to the number of nodes you are using
+ n_threads=2,
+\u007d
+
+!----------spatial grid----------
+grid
+\u007b
+ nx_p(1:2) = {int((self.xmax[1] - self.xmax[0])/self.dx)}, {int((self.ymax[1] - self.ymax[0])/self.dx)},! number of cells in x-direction
+\u007d
+
+'''
+        elif self.algorithm == 'cuda' or self.algorithm == 'tiles':
+            n_tiles_min = (self.xmax[1] - self.xmax[0]) * (self.ymax[1] - self.ymax[0]) / self.dx**2 / 1024
+
+            print("Number of tiles in each direction ", np.ceil(np.sqrt(n_tiles_min)))
+
+            # Just keep typing in powers of two until you get n_tiles > n_tiles_min
+
+            i = 0
+            j = 0
+            while True:
+                n_tiles_x = 2**i
+                n_tiles_y = 2**j
+                n_tiles = n_tiles_x * n_tiles_y
+                if n_tiles > n_tiles_min:
+                    break
+                i += 1
+                j += 1
+            return f'''
+!----------global simulation parameters----------
+simulation
+\u007b
+ parallel_io = "mpi",
+ algorithm = "{self.algorithm}",
+\u007d
+
+node_conf
+\u007b
+ node_number = 2, ! edit this to the number of GPUs you are using
+ if_periodic(1:2) = .false., .false.,
+ tile_number(1:2) = {n_tiles_x}, {n_tiles_y},
+\u007d
+
+!----------spatial grid----------
+grid
+\u007b
+ nx_p(1:2) = {int((self.xmax[1] - self.xmax[0])/self.dx)}, {int((self.ymax[1] - self.ymax[0])/self.dx)},! number of cells in x-direction
+ !load_balance(1:2) = .true., .true.,
+ !lb_type = "dynamic",
+ !n_dynamic = 200, ! estimate this to be once per crossing time
+ ! cell_weight = 1.0,
+ ! dump_global_load = 1,
+ !start_load_balance = 100,
+\u007d
+'''
     def _generate_timespace_params(self):
         """Generate grid parameters section."""
-        return f'''
-
+        result = f'''
 !----------time step and global data dump timestep number----------
 time_step
 \u007b
-  dt     =   {np.format_float_scientific(self.dt,4)},
-  ndump  =   {int(self.tmax / (400 * self.dt))},
+    dt     =   {np.format_float_scientific(self.dt,4)},
+    ndump  =   {int(self.tmax / (400 * self.dt))},
 \u007d
 
 !----------restart information----------
 restart
 \u007b
-  ndump_fac = -1,
-  ndump_time = 3500, !once/hour
-  if_restart = .false.,
-  if_remold = .true.,
+    ndump_fac = -1,
+    ndump_time = 3500, !once/hour
+    if_restart = .false.,
+    if_remold = .true.,
 \u007d
-
+'''
+        if self.osiris_dims == 1:
+            result += f'''
 !----------spatial limits of the simulations----------
 space
 \u007b
-  ! This is euclidean distance, not the span in y direction
-  ! Start point in 2D plane is specified in py-script-1d
-  xmin =  0, ! This should always be == 0
-  xmax =  {self.xmax},
+    ! This is euclidean distance, not the span in y direction
+    ! Start point in {self.osiris_dims}D plane is specified in py-script-{self.osiris_dims}d
+    xmin =  0, ! This should always be == 0
+    xmax =  {self.xmax},
 \u007d
-
+'''
+        elif self.osiris_dims == 2:
+            result += f'''
+!----------spatial limits of the simulations----------
+space
+\u007b
+    xmin(1:2) = {self.xmax[0]}, {self.ymax[0]},
+    xmax(1:2) = {self.xmax[1]}, {self.ymax[1]},
+\u007d
+'''
+        result += f'''
 !----------time limits ----------
 time
 \u007b
-  tmin = 0.0,
-  tmax  = {self.tmax},
+    tmin = 0.0,
+    tmax  = {self.tmax},
 \u007d
 '''
+        return result
     def _generate_field_params(self):
         """Generate field parameters section."""
-        return f'''
+        result = f'''
 !----------field solver set up----------
 el_mag_fld
 \u007b
   ! Set two of the field components with the Python script
-  ! Note, you need to set PYTHONPATH in the console to the folder containing py-script-1d.py
+  ! Note, you need to set PYTHONPATH in the console to the folder containing py-script-{self.osiris_dims}d.py
   type_init_b(1:3) = "python", "python", "python",
   type_init_e(1:3) = "python", "python", "python",
-  init_py_mod = "py-script-1d", ! Name of Python file
+  init_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
   init_py_func = "set_fld_int", ! Name of function in the Python file to call (same for all components)
   ! init_move_window = .false., ! May want to declare this for a moving-window simulation
-
+'''
+        if self.osiris_dims == 1:
+            result += f'''
   ! You can also do this with external fields, as functions of time
   ext_fld = "static",
   type_ext_b(1:3) = "uniform", "uniform", "uniform",
   ext_b0(1:3) = {np.format_float_scientific(np.cos(self.theta) * self.B0 / self.normalizations['Bx_int'], 4)}, {np.format_float_scientific(-np.sin(self.theta) * self.B0 / self.normalizations['Bx_int'])}, 0,
-  \u007d
-
+\u007d
 !----------boundary conditions for em-fields ----------
 emf_bound
 \u007b
@@ -658,8 +833,42 @@ diag_emf
   !n_tavg = 5,                         ! average 5 iterations for time averaged diagnostics 
 \u007d
 '''
+        elif self.osiris_dims == 2:
+            result += f'''
+  ! You can also do this with external fields, as functions of time
+  ext_fld = "static",
+  type_ext_b(1:3) = "uniform", "uniform", "uniform",
+  ext_b0(1:3) = {np.format_float_scientific(self.B0 / self.normalizations['Bx_int'], 4)}, 0, 0,
+\u007d
+!----------boundary conditions for em-fields ----------
+emf_bound
+\u007b
+  type(1:2,1) =   "open", "open",
+  type(1:2,2) =   "open", "open",
+\u007d
+
+!----------- electro-magnetic field diagnostics ---------
+diag_emf
+\u007b
+  reports = 
+    "b1, savg",
+    "b2, savg",
+    "b3, savg",
+    "e1, savg",
+    "e2, savg",
+    "e3, savg",
     
-    def _generate_electrons_section(self, thermal_bounds):
+  !ndump_fac = 1,                     ! do full grid diagnostics at every 20 timesteps
+  ndump_fac_ave = 1,                  ! do average/envelope grid diagnostics at every timestep
+  ! ndump_fac_lineout = 1,              ! do lineouts/slices at every timestep
+  ndump_fac_ene_int = 1,
+  n_ave(1:2) = 4, 4,                   ! average/envelope 8 cells (2x2x2)
+  !n_tavg = 5,                         ! average 5 iterations for time averaged diagnostics 
+\u007d
+'''
+        return result
+    
+    def _generate_electrons_section1D(self, thermal_bounds):
         """Generate the section for electrons."""
         vthele_start = thermal_bounds[0]
         vthele_end = thermal_bounds[1]
@@ -685,18 +894,18 @@ species
 udist
 \u007b
  use_spatial_uth = .true.,
- uth_py_mod = "py-script-1d", ! Name of Python file
+ uth_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
  uth_py_func = "set_uth_e", ! Name of function in the Python file to call
  
  ! use_spatial_ufl = .true.,
- ufl_py_mod = "py-script-1d", ! Name of Python file
+ ufl_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
  ufl_py_func = "set_ufl_e", ! Name of function in the Python file to call
 \u007d
 
 !----------density profile for electrons----------
 profile
 \u007b
- py_mod = "py-script-1d", ! Name of Python file
+ py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
  py_func = "set_density_e", ! Name of function in the Python file to call
 \u007d
 
@@ -726,8 +935,77 @@ diag_species
  phasespaces = "p1x1", "p2x1","p3x1",
 \u007d
 '''
+ 
+    def _generate_electrons_section2D(self, thermal_bounds):
+        """Generate the section for electrons in 2D"""
+        
+        return f'''
+!----------number of particle species----------
+particles
+\u007b
+  interpolation = "quadratic",
+  num_species = {len(self.species_rqms) + 1},
+\u007d
 
-    def _generate_ion_section(self, ion, thermal_bounds):
+!----------information for electrons----------
+species
+\u007b
+ name = "electrons",
+ rqm=-1.0,
+ num_par_x(1:2) = {int(np.sqrt(self.ppc))}, {int(np.sqrt(self.ppc))},
+ init_type = "python",
+\u007d
+
+!----------inital proper velocities - electrons-----------------
+udist
+\u007b
+ use_spatial_uth = .true.,
+ uth_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
+ uth_py_func = "set_uth_e", ! Name of function in the Python file to call
+ 
+ ! use_spatial_ufl = .true.,
+ ufl_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
+ ufl_py_func = "set_ufl_e", ! Name of function in the Python file to call
+\u007d
+
+!----------density profile for electrons----------
+profile
+\u007b
+ py_mod = "py-script-2d", ! Name of Python file
+ py_func = "set_density_e", ! Name of function in the Python file to call
+\u007d
+
+!----------boundary conditions for electrons----------
+spe_bound
+\u007b
+ type(1:2,1) = "thermal","thermal",
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,1) = {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, 
+ uth_bnd(1:3,2,1) = {np.format_float_scientific(thermal_bounds['x'][1],4)}, {np.format_float_scientific(thermal_bounds['x'][1],4)}, {np.format_float_scientific(thermal_bounds['x'][1],4)}, 
+ uth_bnd(1:3,1,2) = {np.format_float_scientific(thermal_bounds['y'][0],4)}, {np.format_float_scientific(thermal_bounds['y'][0],4)}, {np.format_float_scientific(thermal_bounds['y'][0],4)}, 
+ uth_bnd(1:3,2,2) = {np.format_float_scientific(thermal_bounds['y'][1],4)}, {np.format_float_scientific(thermal_bounds['y'][1],4)}, {np.format_float_scientific(thermal_bounds['y'][1],4)}, 
+\u007d
+
+!----------diagnostic for electrons----------
+diag_species
+\u007b
+ ndump_fac = 1,
+ ndump_fac_temp = 1,
+ ndump_fac_ene = 1,
+ reports = "charge",
+ rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = -0.1, -0.1, -0.02,
+ ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_xmin(1:2) = {self.xmax[0]}, {self.ymax[0]},
+ ps_xmax(1:2) = {self.xmax[1]}, {self.ymax[1]},
+ ps_np = 4096,
+ ps_nx(1:2) = 2048, 2048,
+ phasespaces = "p1x1", "p2x1","p3x1",
+\u007d
+'''
+
+    def _generate_ion_section1D(self, ion, thermal_bounds):
         """Generate the section for a specific ion species."""
         vthion_start = thermal_bounds[0]
         vthion_end = thermal_bounds[1]
@@ -787,8 +1065,70 @@ diag_species
  !if_ps_p_auto(1:3) = .true., .true., .true.,
  phasespaces = "p1x1", "p2x1","p3x1",
 \u007d'''
+    
+    def _generate_ion_section2D(self, ion, thermal_bounds):
+        """Generate the section for a specific ion species."""
+        
+        return f'''
+!----------information for {ion} ions----------
+species
+\u007b
+ name = "{ion}",
+ rqm = {self.species_rqms[ion] / self.rqm_factor},
+ num_par_x(1:2) = {int(np.sqrt(self.ppc))}, {int(np.sqrt(self.ppc))},
+ init_type = "python",
+\u007d
 
-    def write_python_script(self):
+!----------inital proper velocities - {ion} ions-----------------
+udist
+\u007b
+ use_spatial_uth = .true.,
+ uth_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
+ uth_py_func = "set_uth_{ion}", ! Name of function in the Python file to call
+ 
+ ! use_spatial_ufl = .true.,
+ ufl_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
+ ufl_py_func = "set_ufl_i", ! Name of function in the Python file to call
+\u007d
+
+!----------density profile for {ion} ions----------
+profile
+\u007b
+ py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
+ py_func = "set_density_{ion}", ! Name of function in the Python file to call
+\u007d
+
+!----------boundary conditions for {ion} ions----------
+spe_bound
+\u007b
+ type(1:2,1) = "thermal","thermal",
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,1) = {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, 
+ uth_bnd(1:3,2,1) = {np.format_float_scientific(thermal_bounds['x'][1],4)}, {np.format_float_scientific(thermal_bounds['x'][1],4)}, {np.format_float_scientific(thermal_bounds['x'][1],4)}, 
+ uth_bnd(1:3,1,2) = {np.format_float_scientific(thermal_bounds['y'][0],4)}, {np.format_float_scientific(thermal_bounds['y'][0],4)}, {np.format_float_scientific(thermal_bounds['y'][0],4)}, 
+ uth_bnd(1:3,2,2) = {np.format_float_scientific(thermal_bounds['y'][1],4)}, {np.format_float_scientific(thermal_bounds['y'][1],4)}, {np.format_float_scientific(thermal_bounds['y'][1],4)}, 
+\u007d
+
+!----------diagnostic for {ion} ions----------
+diag_species
+\u007b
+ ndump_fac = 1,
+ ndump_fac_temp = 1,
+ ndump_fac_ene = 1,
+ reports = "charge",
+ rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = -0.1, -0.1, -0.02,
+ ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_xmin(1:2) = {self.xmax[0]}, {self.ymax[0]},
+ ps_xmax(1:2) = {self.xmax[1]}, {self.ymax[1]},
+ ps_np = 4096,
+ ps_nx(1:2) = 2048, 2048,
+ phasespaces = "p1x1", "p2x1","p3x1",
+\u007d
+'''
+
+    def write_python_script1D(self):
         # Write the python script to generate the input file
         with open(f'{self.output_dir}/py-script-{self.osiris_dims}d.py', "w") as f:
             f.write(f'''import numpy as np
@@ -1091,26 +1431,334 @@ def set_density_{ion}( STATE ):
 
 #-----------------------------------------------------------------------------------------'                   
 ''' for ion in self.species_rqms.keys()))
+    def write_python_script2D(self):
+        # Write the python script to generate the input file
+        with open(f'{self.output_dir}/py-script-{self.osiris_dims}d.py', "w") as f:
+            f.write(f'''
+import numpy as np
+# Outside of the function definition, any included code only runs once at the
+# initialization. You could, e.g., load an ML model from a file here
+import numpy as np
+import pickle
+
+
+# Define bounds of box in osiris units, ensure that this is larger than the bounds specified in input file
+box_bounds = \u007b
+    "xmin": {self.x[0].value}, 
+    "xmax": {self.x[-1].value},
+    "ymin": {self.y[0].value},
+    "ymax": {self.y[-1].value},
+\u007d
+
+#-----------------------------------------------------------------------------------------
+# Functions callable by OSIRIS
+#-----------------------------------------------------------------------------------------
+def set_fld_int( STATE ):
+    """
+    Function to set the field data in the STATE dictionary based on the field component.
+    
+    Parameters:
+    STATE (dict): Dictionary containing the state information, including field component and positional boundary data.
+    """
+    # print("calling set_fld...")
+    
+    # Positional boundary data (makes a copy, but it's small)
+    x_bnd = STATE["x_bnd"]
+    # print(f"x_bnd = \u007b x_bnd \u007d")
+
+    # Shape of the data array
+    nx = STATE["data"].shape
+    # print(f"nx = \u007b nx \u007d")
+
+    # Create x arrays that indicate the position (remember indexing order is reversed)
+    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True )
+    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True )
+    X1, X2 = np.meshgrid( x1, x2, indexing='xy' )
+
+    # Determine the filename based on the field component
+    match STATE['fld']:
+        case "e1":
+            filename = "interp/Ex.pkl"
+        case "e2":
+            filename = "interp/Ey.pkl"
+        case "e3":
+            filename = "interp/Ez.pkl"
+        case "b1":
+            filename = "interp/Bx_int.pkl"
+        case "b2":
+            filename = "interp/By_int.pkl"
+        case "b3":
+            filename = "interp/Bz_int.pkl"
+
+    with open(filename, "rb") as f:
+        loaded_interpolator = pickle.load(f)
+
+    STATE["data"] = loaded_interpolator((X2, X1))
+
+
+#-----------------------------------------------------------------------------------------
+def set_fld_ext( STATE ):
+    # print("calling set_fld_ext...")
+    # Positional boundary data (makes a copy, but it's small)
+    x_bnd = STATE["x_bnd"]
+
+    # Time (in case fields are dynamic)
+
+    # Could make decisions based on field component
+    # match STATE['fld']:
+    #     case "e1":
+    #         filename = "interp/Ex.pkl"
+    #     case "e2":
+    #         filename = "interp/Ey.pkl"
+    #     case "e3":
+    #         filename = "interp/Ez.pkl"
+    #     case "b1":
+    #         filename = "interp/magx.pkl"
+    #     case "b2":
+    #         filename = "interp/magy.pkl"
+    #     case "b3":
+    #         filename = "interp/magz.pkl"
+
+    # Create x arrays that indicate the position (remember indexing order is reversed)
+    nx = STATE["data"].shape
+    x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True )
+    x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True )
+    X1, X2 = np.meshgrid( x1, x2, indexing='xy' ) # Matches Fortran array indexing
+
+    # # Perform some function to fill in the field values based on the coordinates
+    # with open(filename, "rb") as f:
+    #     loaded_interpolator = pickle.load(f)
+
+    # STATE["data"] = loaded_interpolator((X2, X1))
+
+
+
+#-----------------------------------------------------------------------------------------
+
+def set_uth_e( STATE ):
+    """
+    The `STATE` dictionary will be prepared with the following key:
+    "x" - A real array of size `(p_x_dim, npart)` containing the positions of the particles.
+
+    The desired momentum array can then be created and set based on the positions `"x"`.  This array should be passed to the `STATE` array with the following key:
+    "u" - A real array of size `(3, npart)` containing either the thermal or fluid momenta of the particles.  **This quantity should be set to the desired momentum data.**
+    """
+    # print("calling set_uth_e...")
+    if "vthele" not in STATE.keys():
+        with open('interp/vthele.pkl', "rb") as f:
+            STATE['vthele'] = pickle.load(f)
+
+    # Prepare velocity array
+    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+
+    chunk_size = 1024  # Define a chunk size
+    for start in range(0, len(STATE["u"][:,0]), chunk_size):
+        end = min(start + chunk_size, len(STATE["u"][:,0]))
+        STATE["u"][start:end, 0] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 1] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 2] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+
+    return
+
+#-----------------------------------------------------------------------------------------
+def set_ufl_e( STATE ):
+    # print("calling set_ufl_e...")
+    # Prepare velocity array
+    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+
+    chunk_size = 1024  # Define a chunk size
+
+        # Set ufl_x1
+    with open("interp/v_ex.pkl", "rb") as f:
+        loaded_interpolator = pickle.load(f)
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
+            STATE["u"][start:end,0] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+
+    # Set ufl_x2
+    with open("interp/v_ey.pkl", "rb") as f:
+        loaded_interpolator = pickle.load(f)
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
+            STATE["u"][start:end,1] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+
+        # Set ufl_x3
+    with open("interp/v_ez.pkl", "rb") as f:
+        loaded_interpolator = pickle.load(f)
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
+            STATE["u"][start:end,2] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+
+    return
+
+#-----------------------------------------------------------------------------------------
+def set_ufl_i( STATE ):
+    # print("calling set_ufl_i...")
+    # Prepare velocity array
+    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+
+    chunk_size = 1024  # Define a chunk size
+
+        # Set ufl_x1
+    with open("interp/v_ix.pkl", "rb") as f:
+        loaded_interpolator = pickle.load(f)
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
+            STATE["u"][start:end,0] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+
+    # Set ufl_x2
+    with open("interp/v_iy.pkl", "rb") as f:
+        loaded_interpolator = pickle.load(f)
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
+            STATE["u"][start:end,1] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+
+        # Set ufl_x3
+    with open("interp/v_iz.pkl", "rb") as f:
+        loaded_interpolator = pickle.load(f)
+        for start in range(0, len(STATE["u"][:,0]), chunk_size):
+            end = min(start + chunk_size, len(STATE["u"][:,0]))
+            STATE["u"][start:end,2] = loaded_interpolator((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+
+    return
+
+
+
+#-----------------------------------------------------------------------------------------
+def set_density_e( STATE ):
+    """
+    Set the electron density data in the STATE dictionary.
+    
+    Parameters:
+    STATE (dict): Dictionary containing the state information.
+    """
+    print("setting ELECTRON DENSITY...")
+
+    load_and_interpolate_density(STATE, "interp/edens.npy")
+
+#-----------------------------------------------------------------------------------------''' + '\n'.join(f'''
+def set_uth_{ion}( STATE ):
+    """ 
+    The `STATE` dictionary will be prepared with the following key:
+    "x" - A real array of size `(p_x_dim, npart)` containing the positions of the particles.
+
+    The desired momentum array can then be created and set based on the positions `"x"`.  This array should be passed to the `STATE` array with the following key:
+    "u" - A real array of size `(3, npart)` containing either the thermal or fluid momenta of the particles.  **This quantity should be set to the desired momentum data.**
+    """
+
+    if "vth{ion}" not in STATE.keys():
+        with open(f'interp/vth{ion}.pkl', "rb") as f:
+            STATE[f'vth{ion}'] = pickle.load(f)
+
+    # Prepare velocity array
+    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+
+    chunk_size = 1024  # Define a chunk size
+    for start in range(0, len(STATE["u"][:,0]), chunk_size):
+        end = min(start + chunk_size, len(STATE["u"][:,0]))
+        STATE["u"][start:end, 0] = STATE[f'vth{ion}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 1] = STATE[f'vth{ion}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+        STATE["u"][start:end, 2] = STATE[f'vth{ion}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
+    return
+#-----------------------------------------------------------------------------------------''' for ion in self.species_rqms.keys()) + f'''
+
+
+#-----------------------------------------------------------------------------------------
+
+def load_and_interpolate_density(STATE, filename):
+    """
+    Helper function to load interpolator from a file and set the density data in the STATE dictionary.
+    
+    Parameters:
+    STATE (dict): Dictionary containing the state information, including positional boundary data.
+    filename (str): Path to the file containing the interpolator.
+    """
+    # Free up a little bit of memory
+    # print(STATE.keys())
+    if "fld" in STATE.keys():
+        del STATE["fld"]
+    density_grid = np.load(filename)
+
+    STATE["nx"] = np.array(density_grid.shape)//2
+    STATE["xmin"] = np.array([{self.x[0].value}, {self.y[0].value}])
+    STATE["xmax"] = np.array([{self.x[-1].value},{self.y[-1].value}])
+    STATE['data'] = density_grid[::2,::2].T
+
+    return
+
+#-----------------------------------------------------------------------------------------
+def set_density_e( STATE ):
+    """
+    Set the electron density data in the STATE dictionary.
+    
+    Parameters:
+    STATE (dict): Dictionary containing the state information.
+    """
+    print("setting ELECTRON DENSITY...")
+
+    load_and_interpolate_density(STATE, "interp/edens.npy")
+
+#-----------------------------------------------------------------------------------------'''+'\n'.join(f'''
+
+def set_density_{ion}( STATE ):
+    """
+    Set the {ion} density data in the STATE dictionary.
+    
+    Parameters:
+    STATE (dict): Dictionary containing the state information.
+    """
+    print(f"setting {str.upper(ion)} DENSITY...")
+    load_and_interpolate_density(STATE, f"interp/{ion}dens.npy")
+
+#-----------------------------------------------------------------------------------------'                   
+''' for ion in self.species_rqms.keys()))
 
     def save_instance(self):
+        """
+        Save the instance to disk, excluding attributes that can't be pickled properly.
+        """
         import pickle
+        
         # Ensure output directory exists
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
         
         try:
+            # Store attributes that might cause pickling issues
+            ds = self.ds
+            all_data = self.all_data
+            
+            # Temporarily remove these attributes
+            self.ds = None
+            self.all_data = None
+            
             # Save the instance to a file
             with open(self.output_dir / "instance.pkl", "wb") as f:
                 pickle.dump(self, f)
+            
+            # Restore the attributes
+            self.ds = ds
+            self.all_data = all_data
+            
             logger.info(f"Instance saved to {self.output_dir / 'instance.pkl'}")
         except Exception as e:
-            logger.error(f"Failed to save instance: {e}")
+            # Ensure attributes are restored even if pickling fails
+            if 'ds' in locals():
+                self.ds = ds
+            if 'all_data' in locals():
+                self.all_data = all_data
             
+            logger.error(f"Failed to save instance: {e}")
     def write_everything(self):
         # Main function to run the interface
         self.save_slices()
         self.write_input_file()
-        self.write_python_script()
+        if self.osiris_dims == 1:
+            self.write_python_script1D()
+        elif self.osiris_dims == 2:
+            self.write_python_script2D()
+        else:
+            raise ValueError("osiris_dims must be 1 or 2")
         self.save_instance()
 
         print(f"Input file {self.inputfile_name} and python script input.py have been generated in {self.output_dir}")
@@ -1137,6 +1785,30 @@ def set_density_{ion}( STATE ):
 
         plt.show()
 
+    def show_box_in_plane(self, field):
+        import matplotlib.pyplot as plt
+        if field.endswith('dens'):
+            data = np.load(self.output_dir / f'interp/{field}.npy')
+
+        else:
+            import pickle
+            with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
+                f = pickle.load(p)
+                x1,x2 = np.meshgrid(self.y,self.x)
+                data = f((x1,x2))
+
+        plt.figure()
+
+        plt.imshow(data.T, origin='lower',
+                    extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]],vmax = 10) # TODO add some logic for vmax
+
+        plt.plot([self.xmax[0],self.xmax[-1]],[self.ymax[0],self.ymax[0]],color='r')
+        plt.plot([self.xmax[0], self.xmax[-1]], [self.ymax[-1],self.ymax[-1]],color='r')
+        plt.plot([self.xmax[0], self.xmax[0]], [self.ymax[0],self.ymax[-1]],color='r')
+        plt.plot([self.xmax[-1], self.xmax[-1]], [self.ymax[0],self.ymax[-1]],color='r')
+
+        plt.show()
+
     def plot_1D_lineout(self, fields):
         from scipy.interpolate import RegularGridInterpolator
         import matplotlib.pyplot as plt
@@ -1144,7 +1816,7 @@ def set_density_{ion}( STATE ):
         end_point = self._calculate_endpoint()
         x_osiris = np.linspace(self.start_point[0], end_point[0],1000)
         y_osiris = np.linspace(self.start_point[1], end_point[1],1000)
-
+            
         results = {}
 
         # Check if fields is a string (single field) or an iterable
@@ -1152,7 +1824,6 @@ def set_density_{ion}( STATE ):
             fields_to_plot = [fields]  # Convert to a list with a single element
         else:
             fields_to_plot = fields  # Use as is
-
         plt.figure()
         for field in fields_to_plot:
 
@@ -1173,19 +1844,72 @@ def set_density_{ion}( STATE ):
         plt.legend()
         plt.show()
         return results
+    
+    def plot_2D_lineouts(self, fields):
+        from scipy.interpolate import RegularGridInterpolator
+        import matplotlib.pyplot as plt
+        import pickle
+        
+        # Plot the boundaries
+        boundary_segments = [
+            ('Bottom_edge', self.xmax[0], self.xmax[-1], self.ymax[0], self.ymax[0]),
+            ('Top_edge', self.xmax[0], self.xmax[-1], self.ymax[-1], self.ymax[-1]),
+            ('Left_edge', self.xmax[0], self.xmax[0], self.ymax[0], self.ymax[-1]),
+            ('Right_edge', self.xmax[-1], self.xmax[-1], self.ymax[0], self.ymax[-1])
+        ]
+                 
+        results = {}
+
+
+        # Check if fields is a string (single field) or an iterable
+        if isinstance(fields, str):
+            fields_to_plot = [fields]  # Convert to a list with a single element
+        else:
+            fields_to_plot = fields  # Use as is
+        plt.figure()
+        for edge, xmin, xmax, ymin, ymax in boundary_segments:
+            results[edge] = {}
+            x_osiris = np.linspace(xmin, xmax,1000)
+            y_osiris = np.linspace(ymin, ymax,1000)
+            for field in fields_to_plot:
+
+                if field.endswith('dens'):
+                    data = np.load(self.output_dir / f'interp/{field}.npy')
+                    f = RegularGridInterpolator(
+                        (self.y, self.x), data.T, 
+                        method='linear', bounds_error=True, fill_value=0)
+                else:
+                    with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
+                        f = pickle.load(p)
+                if xmax == xmin:
+                    plt.plot(np.linspace(ymin, ymax, 1000), f((y_osiris,x_osiris)).T, 'r-', linewidth=2, label=field)
+                    plt.xlabel('Y [c/ωpe]')
+                elif ymax == ymin:
+                    plt.plot(np.linspace(xmin, xmax, 1000), f((y_osiris,x_osiris)).T, 'r-', linewidth=2, label=field)
+                    plt.xlabel('X [c/ωpe]')
+
+                results[edge][field] = f((y_osiris,x_osiris)).T
+            
+            plt.grid(visible=True) 
+            plt.legend()
+            plt.title(f'Fields on {edge}')
+            plt.show()
+        return results
 
 
 if __name__ == "__main__":
     # Example usage
     interface = FLASH_OSIRIS(
         FLASH_data="/home/dschneidinger/shared/data/VAC_DEREK3D_20um/MagShockZ_hdf5_chk_0006",
-        inputfile_name="magshockz-v3.2.1d",
-        osiris_dims=1,
+        inputfile_name="magshockz-v3.2",
+        osiris_dims=2,
         reference_density=5e18,
-        ppc=100,
-        start_point=[0, 240],
-        theta=np.pi / 2,
+        ppc=16,
+        xmax = [-1000,2500],
+        ymax = [300,6000],
+        dx_ndebye=200,
+        B_background=75000,
     )
-    # interface.write_everything()
-    interface.show_lineout_in_plane('edens')
-    interface.plot_1D_lineout('edens')
+    interface.write_everything()
+    interface.show_box_in_plane('edens')
+    interface.plot_2D_lineouts('edens')

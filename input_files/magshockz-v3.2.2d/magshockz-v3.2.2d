@@ -1,91 +1,82 @@
 !----------------- Input deck illustrating the Python-Fortran interface ------------------
 ! To run this input deck as is, first put the input deck, OSIRIS executable, and the
-! py-script-1d.py file all in the same directory.  Next, do `export PYTHONPATH=.` to set the Python
-! path to the directory that contains the py-script-1d.py file (current directory). Finally,
-! execute `./osiris-1D.e magshockz-v3.2.1d` to run the simulation, which will use the
-! py-script-1d.py and interp.npy files to set various field and particle data.
+! py-script-2d.py file all in the same directory.  Next, do `export PYTHONPATH=.` to set the Python
+! path to the directory that contains the py-script-2d.py file (current directory). Finally,
+! execute `./osiris-2D.e magshockz-v3.2.2d` to run the simulation, which will use the
+! py-script-2d.py and interp.npy files to set various field and particle data.
 !-----------------------------------------------------------------------------------------
 
 !----------global simulation parameters----------
-simulation
+simulation 
 {
  parallel_io = "mpi",
- algorithm = "cuda",
 }
 
-node_conf
+!--------the node configuration for this simulation--------
+node_conf 
 {
- node_number = 2, ! edit this to the number of GPUs you are using
- if_periodic(1:1) = .false.,
- tile_number(1:1) = 256,
+ node_number = 4,4, ! edit this to the number of nodes you are using
+ n_threads=2,
 }
 
 !----------spatial grid----------
 grid
 {
- nx_p = 153653, ! number of cells in x-direction
- !load_balance(1:1) = .true.,
- !lb_type = "dynamic",
- !n_dynamic = 200, ! estimate this to be once per crossing time
- ! cell_weight = 1.0,
- ! dump_global_load = 1,
- !start_load_balance = 100,
+ nx_p(1:2) = 2666, 4342,! number of cells in x-direction
 }
 
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-  dt     =   4.5921e-02,
-  ndump  =   37781,
+    dt     =   9.0956e-01,
+    ndump  =   1907,
 }
 
 !----------restart information----------
 restart
 {
-  ndump_fac = -1,
-  ndump_time = 3500, !once/hour
-  if_restart = .false.,
-  if_remold = .true.,
+    ndump_fac = -1,
+    ndump_time = 3500, !once/hour
+    if_restart = .false.,
+    if_remold = .true.,
 }
 
 !----------spatial limits of the simulations----------
 space
 {
-  ! This is euclidean distance, not the span in y direction
-  ! Start point in 2D plane is specified in py-script-1d
-  xmin =  0, ! This should always be == 0
-  xmax =  7200,
+    xmin(1:2) = -1000, 300,
+    xmax(1:2) = 2500, 6000,
 }
 
 !----------time limits ----------
 time
 {
-  tmin = 0.0,
-  tmax  = 693986,
+    tmin = 0.0,
+    tmax  = 693986,
 }
 
 !----------field solver set up----------
 el_mag_fld
 {
   ! Set two of the field components with the Python script
-  ! Note, you need to set PYTHONPATH in the console to the folder containing py-script-1d.py
+  ! Note, you need to set PYTHONPATH in the console to the folder containing py-script-2d.py
   type_init_b(1:3) = "python", "python", "python",
   type_init_e(1:3) = "python", "python", "python",
-  init_py_mod = "py-script-1d", ! Name of Python file
+  init_py_mod = "py-script-2d", ! Name of Python file
   init_py_func = "set_fld_int", ! Name of function in the Python file to call (same for all components)
   ! init_move_window = .false., ! May want to declare this for a moving-window simulation
 
   ! You can also do this with external fields, as functions of time
   ext_fld = "static",
   type_ext_b(1:3) = "uniform", "uniform", "uniform",
-  ext_b0(1:3) = 6.4031e-19, -1.0456976407270223e-02, 0,
-  }
-
+  ext_b0(1:3) = 1.0457e-02, 0, 0,
+}
 !----------boundary conditions for em-fields ----------
 emf_bound
 {
   type(1:2,1) =   "open", "open",
+  type(1:2,2) =   "open", "open",
 }
 
 !----------- electro-magnetic field diagnostics ---------
@@ -103,7 +94,7 @@ diag_emf
   ndump_fac_ave = 1,                  ! do average/envelope grid diagnostics at every timestep
   ! ndump_fac_lineout = 1,              ! do lineouts/slices at every timestep
   ndump_fac_ene_int = 1,
-  n_ave(1:1) = 4,                   ! average/envelope 8 cells (2x2x2)
+  n_ave(1:2) = 4, 4,                   ! average/envelope 8 cells (2x2x2)
   !n_tavg = 5,                         ! average 5 iterations for time averaged diagnostics 
 }
 
@@ -119,7 +110,7 @@ species
 {
  name = "electrons",
  rqm=-1.0,
- num_par_x = 100,
+ num_par_x(1:2) = 4, 4,
  init_type = "python",
 }
 
@@ -127,18 +118,18 @@ species
 udist
 {
  use_spatial_uth = .true.,
- uth_py_mod = "py-script-1d", ! Name of Python file
+ uth_py_mod = "py-script-2d", ! Name of Python file
  uth_py_func = "set_uth_e", ! Name of function in the Python file to call
  
  ! use_spatial_ufl = .true.,
- ufl_py_mod = "py-script-1d", ! Name of Python file
+ ufl_py_mod = "py-script-2d", ! Name of Python file
  ufl_py_func = "set_ufl_e", ! Name of function in the Python file to call
 }
 
 !----------density profile for electrons----------
 profile
 {
- py_mod = "py-script-1d", ! Name of Python file
+ py_mod = "py-script-2d", ! Name of Python file
  py_func = "set_density_e", ! Name of function in the Python file to call
 }
 
@@ -146,8 +137,11 @@ profile
 spe_bound
 {
  type(1:2,1) = "thermal","thermal",
- uth_bnd(1:3,1,1) = 1.1565e-02, 1.1565e-02, 1.1565e-02, 
- uth_bnd(1:3,2,1) = 3.2182e-02, 3.2182e-02, 3.2182e-02, 
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,1) = 1.2723e-02, 1.2723e-02, 1.2723e-02, 
+ uth_bnd(1:3,2,1) = 6.5417e-03, 6.5417e-03, 6.5417e-03, 
+ uth_bnd(1:3,1,2) = 1.0072e-02, 1.0072e-02, 1.0072e-02, 
+ uth_bnd(1:3,2,2) = 1.1734e-02, 1.1734e-02, 1.1734e-02, 
 }
 
 !----------diagnostic for electrons----------
@@ -161,10 +155,10 @@ diag_species
  ndump_fac_pha = 1,
  ps_pmin(1:3) = -0.1, -0.1, -0.02,
  ps_pmax(1:3) = 0.1,  0.1,  0.02,
- ps_xmin(1:1) = 0.0,
- ps_xmax(1:1) = 7200,
+ ps_xmin(1:2) = -1000, 300,
+ ps_xmax(1:2) = 2500, 6000,
  ps_np = 4096,
- ps_nx = 4096,
+ ps_nx(1:2) = 2048, 2048,
  phasespaces = "p1x1", "p2x1","p3x1",
 }
 
@@ -173,7 +167,7 @@ species
 {
  name = "channel",
  rqm = 381.0,
- num_par_x = 100,
+ num_par_x(1:2) = 4, 4,
  init_type = "python",
 }
 
@@ -181,27 +175,30 @@ species
 udist
 {
  use_spatial_uth = .true.,
- uth_py_mod = "py-script-1d", ! Name of Python file
+ uth_py_mod = "py-script-2d", ! Name of Python file
  uth_py_func = "set_uth_channel", ! Name of function in the Python file to call
  
  ! use_spatial_ufl = .true.,
- ufl_py_mod = "py-script-1d", ! Name of Python file
+ ufl_py_mod = "py-script-2d", ! Name of Python file
  ufl_py_func = "set_ufl_i", ! Name of function in the Python file to call
 }
 
 !----------density profile for channel ions----------
 profile
 {
- py_mod = "py-script-1d", ! Name of Python file
+ py_mod = "py-script-2d", ! Name of Python file
  py_func = "set_density_channel", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for channel ions----------
 spe_bound
 {
- type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 6.1177e-04, 6.1177e-04, 6.1177e-04, 
- uth_bnd(1:3,2,1) = 7.5128e-04, 7.5128e-04, 7.5128e-04, 
+ type(1:2,1) = "thermal","thermal",
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,1) = 1.5404e-03, 1.5404e-03, 1.5404e-03, 
+ uth_bnd(1:3,2,1) = 3.3703e-04, 3.3703e-04, 3.3703e-04, 
+ uth_bnd(1:3,1,2) = 8.1705e-04, 8.1705e-04, 8.1705e-04, 
+ uth_bnd(1:3,2,2) = 4.4627e-04, 4.4627e-04, 4.4627e-04, 
 }
 
 !----------diagnostic for channel ions----------
@@ -213,21 +210,21 @@ diag_species
  reports = "charge",
  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.05, -0.05, -0.02,
- ps_pmax(1:3) = 0.05,  0.05,  0.02,
- ps_xmin(1:1) = 0.0,
- ps_xmax(1:1) = 7200,
+ ps_pmin(1:3) = -0.1, -0.1, -0.02,
+ ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_xmin(1:2) = -1000, 300,
+ ps_xmax(1:2) = 2500, 6000,
  ps_np = 4096,
- ps_nx = 4096,
- !if_ps_p_auto(1:3) = .true., .true., .true.,
+ ps_nx(1:2) = 2048, 2048,
  phasespaces = "p1x1", "p2x1","p3x1",
 }
+
 !----------information for sheathe ions----------
 species
 {
  name = "sheathe",
  rqm = 680.2,
- num_par_x = 100,
+ num_par_x(1:2) = 4, 4,
  init_type = "python",
 }
 
@@ -235,27 +232,30 @@ species
 udist
 {
  use_spatial_uth = .true.,
- uth_py_mod = "py-script-1d", ! Name of Python file
+ uth_py_mod = "py-script-2d", ! Name of Python file
  uth_py_func = "set_uth_sheathe", ! Name of function in the Python file to call
  
  ! use_spatial_ufl = .true.,
- ufl_py_mod = "py-script-1d", ! Name of Python file
+ ufl_py_mod = "py-script-2d", ! Name of Python file
  ufl_py_func = "set_ufl_i", ! Name of function in the Python file to call
 }
 
 !----------density profile for sheathe ions----------
 profile
 {
- py_mod = "py-script-1d", ! Name of Python file
+ py_mod = "py-script-2d", ! Name of Python file
  py_func = "set_density_sheathe", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for sheathe ions----------
 spe_bound
 {
- type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 4.5786e-04, 4.5786e-04, 4.5786e-04, 
- uth_bnd(1:3,2,1) = 5.6227e-04, 5.6227e-04, 5.6227e-04, 
+ type(1:2,1) = "thermal","thermal",
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,1) = 1.1528e-03, 1.1528e-03, 1.1528e-03, 
+ uth_bnd(1:3,2,1) = 2.5224e-04, 2.5224e-04, 2.5224e-04, 
+ uth_bnd(1:3,1,2) = 6.1149e-04, 6.1149e-04, 6.1149e-04, 
+ uth_bnd(1:3,2,2) = 3.34e-04, 3.34e-04, 3.34e-04, 
 }
 
 !----------diagnostic for sheathe ions----------
@@ -267,21 +267,21 @@ diag_species
  reports = "charge",
  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.05, -0.05, -0.02,
- ps_pmax(1:3) = 0.05,  0.05,  0.02,
- ps_xmin(1:1) = 0.0,
- ps_xmax(1:1) = 7200,
+ ps_pmin(1:3) = -0.1, -0.1, -0.02,
+ ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_xmin(1:2) = -1000, 300,
+ ps_xmax(1:2) = 2500, 6000,
  ps_np = 4096,
- ps_nx = 4096,
- !if_ps_p_auto(1:3) = .true., .true., .true.,
+ ps_nx(1:2) = 2048, 2048,
  phasespaces = "p1x1", "p2x1","p3x1",
 }
+
 !----------information for background ions----------
 species
 {
  name = "background",
  rqm = 725.7,
- num_par_x = 100,
+ num_par_x(1:2) = 4, 4,
  init_type = "python",
 }
 
@@ -289,27 +289,30 @@ species
 udist
 {
  use_spatial_uth = .true.,
- uth_py_mod = "py-script-1d", ! Name of Python file
+ uth_py_mod = "py-script-2d", ! Name of Python file
  uth_py_func = "set_uth_background", ! Name of function in the Python file to call
  
  ! use_spatial_ufl = .true.,
- ufl_py_mod = "py-script-1d", ! Name of Python file
+ ufl_py_mod = "py-script-2d", ! Name of Python file
  ufl_py_func = "set_ufl_i", ! Name of function in the Python file to call
 }
 
 !----------density profile for background ions----------
 profile
 {
- py_mod = "py-script-1d", ! Name of Python file
+ py_mod = "py-script-2d", ! Name of Python file
  py_func = "set_density_background", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for background ions----------
 spe_bound
 {
- type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 4.4327e-04, 4.4327e-04, 4.4327e-04, 
- uth_bnd(1:3,2,1) = 5.4436e-04, 5.4436e-04, 5.4436e-04, 
+ type(1:2,1) = "thermal","thermal",
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,1) = 1.1161e-03, 1.1161e-03, 1.1161e-03, 
+ uth_bnd(1:3,2,1) = 2.4421e-04, 2.4421e-04, 2.4421e-04, 
+ uth_bnd(1:3,1,2) = 5.9201e-04, 5.9201e-04, 5.9201e-04, 
+ uth_bnd(1:3,2,2) = 3.2336e-04, 3.2336e-04, 3.2336e-04, 
 }
 
 !----------diagnostic for background ions----------
@@ -321,21 +324,21 @@ diag_species
  reports = "charge",
  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.05, -0.05, -0.02,
- ps_pmax(1:3) = 0.05,  0.05,  0.02,
- ps_xmin(1:1) = 0.0,
- ps_xmax(1:1) = 7200,
+ ps_pmin(1:3) = -0.1, -0.1, -0.02,
+ ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_xmin(1:2) = -1000, 300,
+ ps_xmax(1:2) = 2500, 6000,
  ps_np = 4096,
- ps_nx = 4096,
- !if_ps_p_auto(1:3) = .true., .true., .true.,
+ ps_nx(1:2) = 2048, 2048,
  phasespaces = "p1x1", "p2x1","p3x1",
 }
+
 !----------information for si ions----------
 species
 {
  name = "si",
  rqm = 389.9,
- num_par_x = 100,
+ num_par_x(1:2) = 4, 4,
  init_type = "python",
 }
 
@@ -343,27 +346,30 @@ species
 udist
 {
  use_spatial_uth = .true.,
- uth_py_mod = "py-script-1d", ! Name of Python file
+ uth_py_mod = "py-script-2d", ! Name of Python file
  uth_py_func = "set_uth_si", ! Name of function in the Python file to call
  
  ! use_spatial_ufl = .true.,
- ufl_py_mod = "py-script-1d", ! Name of Python file
+ ufl_py_mod = "py-script-2d", ! Name of Python file
  ufl_py_func = "set_ufl_i", ! Name of function in the Python file to call
 }
 
 !----------density profile for si ions----------
 profile
 {
- py_mod = "py-script-1d", ! Name of Python file
+ py_mod = "py-script-2d", ! Name of Python file
  py_func = "set_density_si", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for si ions----------
 spe_bound
 {
- type(1:2,1) =   "thermal","thermal",
- uth_bnd(1:3,1,1) = 6.0474e-04, 6.0474e-04, 6.0474e-04, 
- uth_bnd(1:3,2,1) = 7.4266e-04, 7.4266e-04, 7.4266e-04, 
+ type(1:2,1) = "thermal","thermal",
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,1) = 1.5227e-03, 1.5227e-03, 1.5227e-03, 
+ uth_bnd(1:3,2,1) = 3.3316e-04, 3.3316e-04, 3.3316e-04, 
+ uth_bnd(1:3,1,2) = 8.0767e-04, 8.0767e-04, 8.0767e-04, 
+ uth_bnd(1:3,2,2) = 4.4115e-04, 4.4115e-04, 4.4115e-04, 
 }
 
 !----------diagnostic for si ions----------
@@ -375,15 +381,15 @@ diag_species
  reports = "charge",
  rep_udist = "uth1", "uth2", "ufl1", "ufl2",
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.05, -0.05, -0.02,
- ps_pmax(1:3) = 0.05,  0.05,  0.02,
- ps_xmin(1:1) = 0.0,
- ps_xmax(1:1) = 7200,
+ ps_pmin(1:3) = -0.1, -0.1, -0.02,
+ ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_xmin(1:2) = -1000, 300,
+ ps_xmax(1:2) = 2500, 6000,
  ps_np = 4096,
- ps_nx = 4096,
- !if_ps_p_auto(1:3) = .true., .true., .true.,
+ ps_nx(1:2) = 2048, 2048,
  phasespaces = "p1x1", "p2x1","p3x1",
 }
+
 !----------diagnostic for currents----------
 diag_current
 {
