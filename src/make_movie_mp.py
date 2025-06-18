@@ -21,7 +21,7 @@ def generate_frame(args):
         osh5vis.osplot(data, vmax=vlimits[1], vmin=vlimits[0]) if vlimits else osh5vis.osplot(data)
     
     if gyrotime_scale:
-        plt.title(f"{data.run_attrs['NAME']} {round(data.run_attrs['TIME'][0]/gyrotime, 2)}" + r" $\omega_{ci}$")
+        plt.title(f"{data.run_attrs['NAME']} {np.round(data.run_attrs['TIME'][0]/gyrotime, 2)}" + r" $\omega_{ci}$")
     
     # Add this line to ensure tight layout
     fig.tight_layout()
@@ -60,6 +60,9 @@ def phase_space_frame(args):
     fig, ax = plt.subplots(dpi=dpi)
     # Add this line to adjust subplot parameters
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+    
+    # Initialize data_0
+    data_0 = None
    
     # Define a list of colormaps
     cmaps = ['hot', 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'coolwarm', 'jet']            # Use a different colormap for each index i
@@ -68,16 +71,21 @@ def phase_space_frame(args):
             colorbar= False        
         else:
             colorbar= True
-        data_0 = osh5io.read_h5(f'{path_to_data[i]}-{frame:06d}.h5')
-        if len(np.shape(data_0)) == 1:
-            osh5vis.osplot(data_0, ylim=[vlimits[0], vlimits[1]],colorbar=colorbar) if vlimits else osh5vis.osplot(data_0)
-        else:
-            osh5vis.osplot(np.log(data_0), vmax=vlimits[1], vmin=vlimits[0], cmap=cmaps[i],colorbar=colorbar) 
+        if i == 0:
+            piston = osh5io.read_h5(f'{path_to_data[i]}-{frame:06d}.h5')
+            osh5vis.osplot(piston, ylim=[vlimits[0], vlimits[1]], colorbar=colorbar) if vlimits else osh5vis.osplot(piston)
+            continue
+        elif i > 0:
+            if data_0:
+                data_0 += osh5io.read_h5(f'{path_to_data[i]}-{frame:06d}.h5')
+            else:
+                data_0 = osh5io.read_h5(f'{path_to_data[i]}-{frame:06d}.h5')
+        osh5vis.osplot(np.log(data_0), vmax=vlimits[1], vmin=vlimits[0], cmap=cmaps[i],colorbar=colorbar) 
         
   
 
     if gyrotime_scale:
-        plt.title(f"{round(data_0.run_attrs['TIME'][0]/gyrotime, 2)}" + r" $\omega_{ci}$")
+        plt.title(f"{np.round(data_0.run_attrs['TIME'][0]/gyrotime, 2)}" + r" $\omega_{ci}$")
     
     # Add this line to ensure tight layout
     fig.tight_layout()
