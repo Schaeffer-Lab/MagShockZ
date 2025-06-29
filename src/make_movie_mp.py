@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 
 def generate_frame(args):
+
     frame, path_to_data, vlimits, gyrotime_scale, dpi, gyrotime = args
     data = osh5io.read_h5(f'{path_to_data}-{frame:06d}.h5')
     fig, ax = plt.subplots(dpi=dpi)
@@ -56,7 +57,28 @@ def movie(path_to_data, frames=True, vlimits=None, n_jobs=cpu_count(), gyrotime 
     plt.close()
 
 def phase_space_frame(args):
+    import matplotlib.pylab as pl
+    from matplotlib.colors import ListedColormap
+    import matplotlib.patches as mpatches
+
+    # Create custom colormaps with alpha gradients
+    cmap1 = pl.cm.RdPu
+    my_cmap1 = ListedColormap(
+        np.column_stack([
+            cmap1(np.arange(cmap1.N))[:, :3],
+            np.linspace(0, 1, cmap1.N)
+        ])
+    )
+
+    cmap2 = pl.cm.Greens
+    my_cmap2 = ListedColormap(
+        np.column_stack([
+            cmap2(np.arange(cmap2.N))[:, :3],
+            np.linspace(0, 1, cmap2.N)
+        ])
+    )   
     frame, path_to_data, vlimits, gyrotime_scale, dpi, gyrotime = args
+    
     fig, ax = plt.subplots(dpi=dpi)
     # Add this line to adjust subplot parameters
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
@@ -65,7 +87,7 @@ def phase_space_frame(args):
     data_0 = None
    
     # Define a list of colormaps
-    cmaps = ['hot', 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'coolwarm', 'jet']            # Use a different colormap for each index i
+    cmaps = [my_cmap1,my_cmap2]            # Use a different colormap for each index i
     for i in range(len(path_to_data)):
         if len(path_to_data) > 2:
             colorbar= False        

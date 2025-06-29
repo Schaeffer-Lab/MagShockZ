@@ -169,7 +169,10 @@ class FLASH_OSIRIS:
         self.ds = yt.load_for_osiris(self.FLASH_data, rqm_factor=self.rqm_factor, B_background=self.B0, ion_mass_thresholds=ion_mass_thresholds)
         
         # Get covering grid
-        level = 0
+        if self.osiris_dims == 1:
+            level = 0
+        elif self.osiris_dims == 2:
+            level = 1
         self.dims = self.ds.domain_dimensions * self.ds.refine_by**level
         self.all_data = self.ds.covering_grid(
             level,
@@ -248,7 +251,7 @@ class FLASH_OSIRIS:
         
         # Calculate Debye length in OSIRIS units
         self.debye_osiris = np.sqrt(
-            self.all_data['flash', 'tele'][-1, -1, 0] * KB * ERGS_PER_EV / (self.m_e * self.c**2)
+            self.all_data['flash', 'tele'][-1, -1, 0] * KB * ERGS_PER_EV / (self.m_e * self.c**2) #TODO: there must be a better way to pick the background temperature
         )
         
         logger.info(f"Debye length: {self.debye_osiris.value} osiris units")

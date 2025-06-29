@@ -13,6 +13,14 @@ def remove_repeated_elements(my_list):
     return a
 
 def get_osiris_quantity_1d(quant_path, n_start = 0, n_end = -1, n_skip = 1):
+    """
+    Returns an array of the form [Q, dt, dx, t, X] where:
+    - Q is a 2D array of shape (n_t, n_x) containing the quantity data,
+    - dt is the time step between consecutive time points,
+    - dx is the spatial step size,
+    - t is a 1D array of shape (n_t,) containing the time points,
+    - X is a 1D array of shape (n_x,) containing the spatial coordinates
+    """
     quant_list = np.sort(np.array(os.listdir(quant_path)))
     quant_list = quant_list[np.logical_not(quant_list == '.DS_Store')]
     quant_list = remove_repeated_elements(quant_list)
