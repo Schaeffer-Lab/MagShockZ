@@ -1,5 +1,5 @@
 ### USAGE INSTRUCTIONS ###
-# FIRST, LINK THIS FILE TO ~/.config/yt/my_plugins.py (`ln -s /path/to/this/file ~/.config/yt/my_plugins.py`)
+# FIRST, LINK THIS FILE TO ~/.config/yt/my_plugins.py (`ln -s /absolute/path/to/this/file ~/.config/yt/my_plugins.py`)
 # THEN, ADD `yt.enable_plugins()` TO YOUR SCRIPT
 
 
@@ -36,7 +36,7 @@ def _Ez(field, data):
 
 
 
-def load_for_osiris(filename:str, rqm_factor:float = None, B_background: float = None, ion_mass_thresholds: list = [28,35], rqm_thresholds: list = [4500,7100,8300]):        
+def load_for_osiris(filename:str, rqm_factor:float, B_background: float = None, ion_mass_thresholds: list = [28,35], rqm_thresholds: list = [4500,7100,8300]):        
         """"
         "Load a FLASH simulation with the FLASH frontend.
         "This function is a wrapper around yt.load() that adds some
@@ -109,7 +109,7 @@ def load_for_osiris(filename:str, rqm_factor:float = None, B_background: float =
                 force_override=False)
         
         def make_silicon_density(field, data):
-                full_mask =  (data["flash","rqm_mask"] == 1) *(data["flash","species_mask"] == 2)
+                full_mask =  (data["flash","rqm_mask"] == 1) * (data["flash","species_mask"] == 2)
 
                 silicon_density = data['flash','edens'] * full_mask
                 rqm_real = 1836 / data['flash','ye']

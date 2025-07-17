@@ -48,10 +48,6 @@ Analysis scripts: scripts that are generally used for the analysis of OSIRIS sim
 
 [Find shock front](analysis_scripts/find_shock_front.py) WIP. In the future it will be used to locate where the shock discontinuity is in a given simulation.
 
-[Peek at sim1d](analysis_scripts/peek_at_sim1d.ipynb) is deprecated. Will be removed in the future, if not already.
-
-[]
-
 
 
 ## Contributing
@@ -61,5 +57,3 @@ Please contact me through GitHub (ID: dschneidinger) if you have any questions a
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
-
-

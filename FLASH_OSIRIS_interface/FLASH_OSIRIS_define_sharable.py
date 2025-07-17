@@ -26,15 +26,7 @@ logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Physical constants
-E_CHARGE = 4.80320425e-10  # [statC] = [cm^3/2⋅g^1/2⋅s^−1]
-ELECTRON_MASS = 9.1093837139e-28  # [g]
-SPEED_OF_LIGHT = 2.99792458e10  # [cm/s]
-KB = 8.617e-5  # eV/K
-ERGS_PER_EV = 1.602e-12  # erg/eV
-
 # Add the path to the yt plugin
-sys.path.append("../src")
 yt.enable_plugins()
 
 class FLASH_OSIRIS:
@@ -48,50 +40,44 @@ class FLASH_OSIRIS:
     inputfile_name : str
         Name of the OSIRIS input file to generate.
     reference_density : float
-        Reference density in cm^-3.
-    B_background : float, optional
-        Background magnetic field strength in Gauss. This field will be applied externally in OSIRIS. Default is 0.
+        Reference density in cm^-3. OSIRIS will set this to be a density of 1.
     rqm_factor : int, optional
-        Factor by which the real mass ratios will be divided. Default is 10.
+        Factor by which the real Z_i/m_i will be divided. Default is 10.
     osiris_dims : int, optional
         Dimensions for OSIRIS simulation (1 or 2). Default is 2.
-    ppc : int, optional
-        Particles per cell. Default is 80.
     start_point : List[float], optional
-        Starting point coordinates in OSIRIS units. Default is [0, 240].
+        Starting point coordinates in REAL units. Only used for 1D simulations.
     theta : float, optional
-        Angle that ray makes with the x axis in radians. Default is π/2.
+        Angle that ray makes with the x axis in radians. Default is π/2. Only used for 1D simulations.
     xmax : float, optional
-        Maximum x-coordinate in OSIRIS units. Default is 7100.
+        Maximum x-coordinate in REAL units. In 1D, this is the maximum distance from the start point.
+        In 2D, this is a list of two floats representing xmin and xmax.
+    ymax : float, optional
+        Maximum y-coordinate in REAL units. In 1D, this is the maximum distance from the start point.
+        In 2D, this is a list of two floats representing ymin and ymax.
     species_rqms : Dict[str, float], optional
         Dictionary mapping species names to their mass ratios.
-    dx_ndebye : float, optional
-        Spatial resolution in units of upstream electron debye lengths. Default is 7.14.
-    tmax_gyroperiods : int, optional
-        Number of upstream ion gyroperiods to simulate. Default is 10.
     algorithm : str, optional
         Algorithm to use for OSIRIS simulation. Default is "cpu".
+    resolution : int, optional
+        Level of refinement used for the FLASH data. Default is 1.
+        If write times are too long, change to zero. If data looks too coarse, change to 2.
     normalizations_override : Dict[str, float], optional
-        Dictionary of normalization factors to multiply existing default factor by.
-        Note: this factor will be multiply the normalization. For example, if you set ['b2_ext': 10],
-        the external magnetic field in y will be 0.1 times its default value.
+        Dictionary of normalization factors that will override defaults.
     """
     def __init__(self, 
                 FLASH_data: str, 
                 inputfile_name: str, 
                 reference_density: float,
-                B_background: float = 0, 
                 rqm_factor: int = 10,
                 osiris_dims: int = 2,
-                ppc: int = 80,
-                start_point: List[float] = [0, 240], 
+                start_point: List[float] = None, 
                 theta: float = np.pi/2, 
-                xmax: float = 7100,
+                xmax: float = None,
                 ymax: float = None,
                 species_rqms: Dict[str, int] = None,
-                ion_mass_thresholds: list = [28,35],
-                dx_ndebye: float = 7.14,
-                tmax_gyroperiods: int = 10,
+                ion_mass_thresholds: list = None,
+                resolution: int = 1,
                 algorithm: str = "cpu",
                 normalizations_override: Dict[str, float] = {}):
         """Initialize the FLASH-OSIRIS interface."""
@@ -99,26 +85,18 @@ class FLASH_OSIRIS:
         if osiris_dims not in [1, 2]:
             raise ValueError("osiris_dims must be either 1 or 2")
             
-        if species_rqms is None:
-            species_rqms = {"channel": 3810, "sheathe": 6802, "background": 7257, "si": 3899}
-
         if algorithm not in ["cpu", "cuda", "tiles"]:
             raise ValueError("algorithm must be either 'cpu', 'cuda', or 'tiles'")
 
         if not isinstance(reference_density, (int, float)):
             raise TypeError("reference_density must be a number")
         
-        if not isinstance(B_background, (int, float)):
-            raise TypeError("B_background must be a number")
-        
         # Store basic parameters
         self.osiris_dims = osiris_dims
         self.FLASH_data = Path(FLASH_data)
         self.inputfile_name = inputfile_name + f".{self.osiris_dims}d"
-        self.B0 = B_background
         self.rqm_factor = rqm_factor
         self.n0 = reference_density
-        self.ppc = ppc
 
         if osiris_dims == 1:
             if not isinstance(xmax, (int, float)):
@@ -142,23 +120,22 @@ class FLASH_OSIRIS:
         
         self.species_rqms = species_rqms
         self.normalizations = None
-        self.gyrotime = None
-        self.dx_ndebye = dx_ndebye
-        self.tmax_gyroperiods = tmax_gyroperiods
         self.algorithm = algorithm
         self.normalizations_override = normalizations_override
+ 
+
+        # Physical constants
+        self.e = 4.80320425e-10 # [stacC] = [cm^3/2⋅g^1/2⋅s^−1]
+        self.m_e = 9.1093837139e-28  # [g]
+        self.c = 2.99792458e10  # [cm/s]
         
-        # Physical constants (moved to module level)
-        self.e = E_CHARGE
-        self.m_e = ELECTRON_MASS
-        self.c = SPEED_OF_LIGHT
-        
+
         # Validate FLASH data file exists
         if not self.FLASH_data.exists():
             raise FileNotFoundError(f"FLASH data file not found: {self.FLASH_data}")
         
         # Set up project directories
-        self.proj_dir = Path("/home/dschneidinger/MagShockZ")
+        self.proj_dir = Path.cwd() # TODO: Make this configurable
         self.output_dir = self.proj_dir / "input_files" / self.inputfile_name
         
         # Calculate plasma frequency
@@ -166,23 +143,26 @@ class FLASH_OSIRIS:
         
         # Load FLASH data
         logger.info(f"Loading FLASH data from {self.FLASH_data}")
-        self.ds = yt.load_for_osiris(self.FLASH_data, rqm_factor=self.rqm_factor, B_background=self.B0, ion_mass_thresholds=ion_mass_thresholds) # would be much cleaner if this just used yt.load
+        self.ds = yt.load(self.FLASH_data)
         
+        self._derive_fields() # TODO: create necessary fields and ion species
+
         # Get covering grid
-        level = 2 # If write times are long, change this to 0. If data looks too coarse, change this to 2.
-        self.dims = self.ds.domain_dimensions * self.ds.refine_by**level
+        self.dims = self.ds.domain_dimensions * self.ds.refine_by**resolution
         self.all_data = self.ds.covering_grid(
-            level,
+            resolution,
             left_edge=self.ds.domain_left_edge,
             dims=self.dims,
-            num_ghost_zones=1,
+            num_ghost_zones=1, # Necessary when we take curl of magnetic field to get currents
         )
 
         
         # Log initialization parameters
         self._log_initialization_params()
-        self.calculate_numbers()
-    
+        self._calculate_numbers()
+    def _derive_fields(self):
+        return
+
     def _log_initialization_params(self):
         """Log initialization parameters."""
         logger.info("=" * 50)
@@ -192,9 +172,7 @@ class FLASH_OSIRIS:
         logger.info(f"Reference density: {self.n0} cm^-3")
         logger.info(f"species_rqms: {self.species_rqms}")
         logger.info(f"all rqms will be divided by {self.rqm_factor}")
-        logger.info(f"External background magnetic field: {self.B0} Gauss")
         logger.info(f"OSIRIS dimensions: {self.osiris_dims}")
-        logger.info(f"Particles per cell: {self.ppc}")
         if self.osiris_dims == 1:
             logger.info(f"Start point: {self.start_point} [c/wpe]")
             logger.info(f"Angle: {self.theta} (only used in 1D)")
@@ -215,9 +193,7 @@ class FLASH_OSIRIS:
         output += f"Reference density: {self.n0} cm^-3\n"
         output += f"species_rqms: {self.species_rqms}\n"
         output += f"all rqms will be divided by {self.rqm_factor}\n"
-        output += f"External background magnetic field: {self.B0} Gauss\n"
         output += f"OSIRIS dimensions: {self.osiris_dims}\n"
-        output += f"Particles per cell: {self.ppc}\n"
         if self.osiris_dims == 1:
             output += (f"Start point: {self.start_point} [c/wpe]\n")
             output += (f"Angle: {self.theta} (only used in 1D)\n")
@@ -230,7 +206,7 @@ class FLASH_OSIRIS:
         return output
 
 
-    def calculate_numbers(self):
+    def _calculate_numbers(self):
         """
         Calculate parameters needed for OSIRIS simulation.
         
@@ -245,21 +221,19 @@ class FLASH_OSIRIS:
         self.x = self.all_data['flash', 'x'][:, 0, 0] * self.omega_pe / self.c
         self.y = self.all_data['flash', 'y'][0, :, 0] * self.omega_pe / self.c
         self.z = self.all_data['flash', 'z'][0, 0, :] * self.omega_pe / self.c
+
+        self.xmax = self.xmax * self.omega_pe / self.c
+        if self.osiris_dims == 2:
+            self.ymax = self.ymax * self.omega_pe / self.c
         
+        if self.osiris_dims == 1:
+            self.start_point = [self.start_point[0] * self.omega_pe / self.c,
+                                self.start_point[1] * self.omega_pe / self.c]
+
         # Calculate Debye length in OSIRIS units
-        self.debye_osiris = np.sqrt(
-            self.all_data['flash', 'tele'][-1, -1, 0] * KB * ERGS_PER_EV / (self.m_e * self.c**2) #TODO: there must be a better way to pick the background temperature
-        )
-        
-        logger.info(f"Debye length: {self.debye_osiris.value} osiris units")
-        logger.info(f"Background temperature: {round(self.all_data['flash', 'tele'][-1, -1, 0].value * KB)} eV")
-        
-        # Calculate spatial and temporal resolution
-        self.dx = self.debye_osiris * self.dx_ndebye
-        self.dt = self.dx * 0.98 / np.sqrt(self.osiris_dims) # CFL condition
+
         # Get real mass ratio for reference
-        rqm_real = 1836 / self.all_data['flash', 'ye'][-1, -1, 0]
-        logger.info(f"{'*'*10} real mass ratio: {rqm_real} {'*'*10}")
+        rqm_real = 1836 / self.all_data['flash', 'ye']
         
         # Create normalizations dictionary
         self._create_normalizations()
@@ -271,8 +245,8 @@ class FLASH_OSIRIS:
         """Create dictionary of normalization factors for different fields."""
         # Base normalization factors
         B_norm = (self.omega_pe * self.m_e * self.c) / self.e
-        E_norm = B_norm * self.c / np.sqrt(self.rqm_factor)
-        v_norm = self.c / np.sqrt(self.rqm_factor)
+        E_norm = B_norm * self.c 
+        v_norm = self.c
         vth_ele_norm = np.sqrt(self.m_e * self.c**2)
         
         self.normalizations = {
@@ -299,77 +273,76 @@ class FLASH_OSIRIS:
             self.normalizations[species + 'dens'] = self.n0
             self.normalizations[f'vth{species}'] = vth_ele_norm * np.sqrt(rqms / self.rqm_factor)
     
-    def _calculate_tmax(self):
-        """Calculate gyrotime and simulation duration."""
-        if self.B0 != 0:
-            self.gyrotime = (self.species_rqms['background']/ self.rqm_factor) / (self.B0 / self.normalizations['Bx_int'])
-        else:
-            self.gyrotime = self.species_rqms['background']/ self.rqm_factor / (self.all_data['flash', 'magx'][-1, -1, 0] / self.normalizations['magx'])
-        
-        self.tmax = int(self.gyrotime * self.tmax_gyroperiods)
-
-    def save_slices(self, normal_axis="z"):
+    def _save_slices(self):
         """
         Process and save field data slices for OSIRIS.
         
-        Parameters
-        ----------
-        normal_axis : str, optional
-            Axis normal to the slice plane ('x', 'y', or 'z'). Default is 'z'. # TODO allow for other normal axes
+
             
         Note:
             - Density data is output as a numpy array because OSIRIS uses its own interpolator
             - Other fields are saved as pickle files with interpolators
             - Thermal velocities require special handling because we need to take sqrt of temperature
         """
-        import pickle
-        from scipy.interpolate import RegularGridInterpolator
-        
         # Create output directory
         interp_dir = self.output_dir / "interp"
         if not interp_dir.exists():
             interp_dir.mkdir(parents=True)
             
-        # Validate normal_axis
-        axis_map = {"x": 0, "y": 1, "z": 2}
-        if normal_axis not in axis_map.keys():
-            raise ValueError("normal_axis must be one of 'x', 'y', or 'z'")
-
-        normal = axis_map[normal_axis]
-        
-        # Get the middle index of the chosen axis
-        middle_index = self.dims[normal] // 2
-        chunk_size = 128  # Adjust based on memory constraints
-        
         # Process each field
         for field, normalization in self.normalizations.items():
-            if field in self.normalizations_override.keys():
-                normalization = normalization * self.normalizations_override[field]
-                logger.info(f"{field} is normalized by additional factor of {np.format_float_scientific(self.normalizations_override[field],3)}")
-            logger.info(f"Processing {field} with normalization {np.format_float_scientific(normalization, 3)}")
+            # TODO Unsure if I should treat normalizations_override as an additional factor or a replacement
+            if field in self.normalizations_override:
+                logger.info(f"{field} normalization of {normalization} is overriden to be {np.format_float_scientific(self.normalizations_override[field],3)}")
+                normalization = self.normalizations_override[field]
+            else:
+                logger.info(f"Processing {field} with normalization {np.format_float_scientific(normalization, 3)}")
             
             # Special handling for thermal velocity fields
             if field.startswith('vth'):
-                self._save_thermal_field(field, normalization, middle_index, chunk_size, interp_dir)
+                self._save_thermal_field(field, normalization, interp_dir)
                 continue
                 
             # Process regular fields
-            self._save_regular_field(field, normalization, middle_index, chunk_size, interp_dir)
+            self._save_regular_field(field, normalization, interp_dir)
     
-    def _save_thermal_field(self, field, normalization, middle_index, chunk_size, interp_dir):
+    def _save_thermal_field(self, field, normalization, middle_index, chunk_size, interp_dir, normal_axis="z"):
         """Save thermal velocity field data."""
-        import pickle
+        from pickle import dump
         from scipy.interpolate import RegularGridInterpolator
-        
+        """
+         Parameters
+        ----------
+        normal_axis : str, optional
+            Axis normal to the slice plane ('x', 'y', or 'z'). Default is 'z'.
+        """
+
         # Choose the appropriate temperature field
         if field == 'vthele':
             temp_field = 'tele'
         else:
             temp_field = 'tion'
         
-        # Initialize field data array
-        field_data = np.zeros(self.all_data['flash', temp_field][:, :, middle_index].shape)
+
+        axis_map = {"x": 0, "y": 1, "z": 2}
+        if normal_axis not in axis_map:
+            raise ValueError("normal_axis must be one of 'x', 'y', or 'z'")
+
+        normal = axis_map[normal_axis]
         
+        # Get the middle index of the chosen axis
+        chunk_size = 128  # Adjust based on memory constraints
+        middle_index = self.dims[normal] // 2
+
+
+        # Initialize field data array
+        if normal_axis == "x":
+            field_data = np.zeros(self.all_data['flash', temp_field][middle_index, :, :].shape)
+        elif normal_axis == "y":
+            field_data = np.zeros(self.all_data['flash', temp_field][:, middle_index, :].shape)
+        elif normal_axis == "z":
+            field_data = np.zeros(self.all_data['flash', temp_field][:, :, middle_index].shape)
+
         # Process data in chunks to save memory
         for i in range(0, self.all_data['flash', temp_field].shape[0], chunk_size):
             end = min(i + chunk_size, self.all_data['flash', temp_field].shape[0])
@@ -385,11 +358,11 @@ class FLASH_OSIRIS:
         )
         
         with open(f"{interp_dir}/{field}.pkl", "wb") as f:
-            pickle.dump(interp, f)
+            dump(interp, f)
     
     def _save_regular_field(self, field, normalization, middle_index, chunk_size, interp_dir):
         """Save regular field data."""
-        import pickle
+        from pickle import dump
         from scipy.interpolate import RegularGridInterpolator
         
         # Initialize field data array
@@ -417,7 +390,7 @@ class FLASH_OSIRIS:
             )
             
             with open(f"{interp_dir}/{field}.pkl", "wb") as f:
-                pickle.dump(interp, f)
+                dump(interp, f)
 
     def write_input_file(self):
         """
@@ -465,8 +438,8 @@ class FLASH_OSIRIS:
         dict
             Thermal velocity bounds for electrons and all ion species
         """
-        import pickle
-        
+
+        from pickle import load
 
         if self.osiris_dims == 1: 
             bounds = {
@@ -475,7 +448,7 @@ class FLASH_OSIRIS:
             }
             # Read electron thermal velocity bounds
             with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
-                vthele = pickle.load(f)
+                vthele = load(f)
                 bounds['electron'] = [
                     vthele((self.start_point[1], self.start_point[0])),
                     vthele((end_point[1], end_point[0]))
@@ -483,9 +456,9 @@ class FLASH_OSIRIS:
                 logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
             
             # Read ion thermal velocity bounds for each species
-            for ion in self.species_rqms.keys():
+            for ion in self.species_rqms:
                 with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
-                    vthion = pickle.load(f)
+                    vthion = load(f)
                     bounds['ions'][ion] = [
                         vthion((self.start_point[1], self.start_point[0])),
                         vthion((end_point[1], end_point[0]))
@@ -496,11 +469,12 @@ class FLASH_OSIRIS:
                 'electron': {},
                 'ions': {}
             }
+
             num_samples = 10  # Number of points to sample
             x_samples = np.linspace(self.xmax[0], self.xmax[1], num_samples)
             y_samples = np.linspace(self.ymax[0], self.ymax[1], num_samples)
             with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
-                    vthele = pickle.load(f)
+                    vthele = load(f)
                     x_lower_bound = np.mean([vthele((y, self.xmax[0])) for y in y_samples])
                     x_upper_bound = np.mean([vthele((y, self.xmax[1])) for y in y_samples])
 
@@ -521,7 +495,7 @@ class FLASH_OSIRIS:
             for ion in self.species_rqms.keys():
                 bounds['ions'][ion] = {}
                 with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
-                    vthion = pickle.load(f)
+                    vthion = load(f)
                     x_lower_bound = np.mean([vthion((y, self.xmax[0])) for y in y_samples])
                     x_upper_bound = np.mean([vthion((y, self.xmax[1])) for y in y_samples])
 
@@ -583,19 +557,16 @@ class FLASH_OSIRIS:
         elif self.osiris_dims == 3:
             raise NotImplementedError("3D OSIRIS input file generation is not implemented yet.")
         content += """
-!----------diagnostic for currents----------
-diag_current
-{
-}
-
 !---------- end of osiris input file -------------"""
         
         return content
     
     def _generate_header(self):
         """Generate the header section of the input file."""
-        return f'''!----------------- Input deck illustrating the Python-Fortran interface ------------------
-! To run this input deck as is, first put the input deck, OSIRIS executable, and the
+        return f'''!----------------- Input deck for FLASH-OSIRIS interface using python ------------------
+
+! Before this simulation is able to run, you will need to edit certain values in the file that are marked <edit>.
+! To run this input deck as is, put the input deck, OSIRIS executable, and the
 ! py-script-{self.osiris_dims}d.py file all in the same directory.  Next, do `export PYTHONPATH=.` to set the Python
 ! path to the directory that contains the py-script-{self.osiris_dims}d.py file (current directory). Finally,
 ! execute `./osiris-{self.osiris_dims}D.e {self.inputfile_name}` to run the simulation, which will use the
@@ -610,62 +581,41 @@ diag_current
 !----------global simulation parameters----------
 simulation 
 \u007b
- parallel_io = "mpi",
 \u007d
 
 !--------the node configuration for this simulation--------
 node_conf 
 \u007b
- node_number = 16, ! edit this to the number of nodes you are using
- n_threads=2,
+ node_number = <edit>, ! number of nodes you are using
+ n_threads= <edit>, ! number of threads per node
 \u007d
 
 !----------spatial grid----------
 grid
 \u007b
- nx_p = {int(self.xmax/self.dx)}, ! number of cells in x-direction
+ nx_p = <edit>, ! number of cells in x-direction
 \u007d
 
 '''
-        elif self.algorithm == 'cuda':
-            n_tiles_min = self.xmax / self.dx / 1024
-
-            print("Number of tiles in each direction ", np.ceil(np.sqrt(n_tiles_min)))
-
-            # Just keep typing in powers of two until you get n_tiles > n_tiles_min
-
-            i = 0
-            while True:
-                n_tiles_x = 2**i
-                if n_tiles_x > n_tiles_min:
-                    break
-                i += 1
+        elif self.algorithm == 'cuda' or self.algorithm == 'tiles':
             return f'''
 !----------global simulation parameters----------
 simulation
 \u007b
- parallel_io = "mpi",
- algorithm = "cuda",
+ algorithm = "{self.algorithm}",
 \u007d
 
 node_conf
 \u007b
- node_number = 2, ! edit this to the number of GPUs you are using
- n_threads = 2,
- if_periodic(1:1) = .false.,
- tile_number(1:1) = {n_tiles_x},
+ node_number = <edit>, ! number of GPUs
+ n_threads = <edit>, ! number of threads per GPU
+ tile_number = <edit>, ! n_tiles_x should be greater than n_cells_x / 1024 and be a power of two. Refer to osiris cuda documentation
 \u007d
 
 !----------spatial grid----------
 grid
 \u007b
- nx_p = {int(self.xmax/self.dx)}, ! number of cells in x-direction
- !load_balance(1:1) = .true.,
- !lb_type = "dynamic",
- !n_dynamic = 200, ! estimate this to be once per crossing time
- ! cell_weight = 1.0,
- ! dump_global_load = 1,
- !start_load_balance = 100,
+ nx_p = <edit>, ! number of cells in x-direction
 \u007d
 '''
         
@@ -676,65 +626,40 @@ grid
 !----------global simulation parameters----------
 simulation 
 \u007b
- parallel_io = "mpi",
 \u007d
 
 !--------the node configuration for this simulation--------
 node_conf 
 \u007b
- node_number = 4,4, ! edit this to the number of nodes you are using
- n_threads=2,
+ node_number = <edit>,<edit>, ! edit this to the number of nodes you are using. total number of nodes is node_number_x * node_number_y
+ n_threads=<edit>,
 \u007d
 
 !----------spatial grid----------
 grid
 \u007b
- nx_p(1:2) = {int((self.xmax[1] - self.xmax[0])/self.dx)}, {int((self.ymax[1] - self.ymax[0])/self.dx)},! number of cells in x-direction
+ nx_p(1:2) = <edit>, <edit>, ! number of cells in x-direction
 \u007d
 
 '''
         elif self.algorithm == 'cuda' or self.algorithm == 'tiles':
-            n_tiles_min = (self.xmax[1] - self.xmax[0]) * (self.ymax[1] - self.ymax[0]) / self.dx**2 / 1024
-
-            print("Number of tiles in each direction ", np.ceil(np.sqrt(n_tiles_min)))
-
-            # Just keep typing in powers of two until you get n_tiles > n_tiles_min
-
-            i = 0
-            j = 0
-            while True:
-                n_tiles_x = 2**i
-                n_tiles_y = 2**j
-                n_tiles = n_tiles_x * n_tiles_y
-                if n_tiles > n_tiles_min:
-                    break
-                i += 1
-                j += 1
             return f'''
 !----------global simulation parameters----------
 simulation
 \u007b
- parallel_io = "mpi",
  algorithm = "{self.algorithm}",
 \u007d
 
 node_conf
 \u007b
- node_number = 2, ! edit this to the number of GPUs you are using
- if_periodic(1:2) = .false., .false.,
- tile_number(1:2) = {n_tiles_x}, {n_tiles_y},
+ node_number = <edit>, ! number of GPUs you are using
+ tile_number(1:2) = <edit>, <edit>, ! n_tiles_x * n_tiles_y should be greater than n_cells_x * n_cells_y / 1024 and be a power of two. Refer to osiris cuda documentation
 \u007d
 
 !----------spatial grid----------
 grid
 \u007b
- nx_p(1:2) = {int((self.xmax[1] - self.xmax[0])/self.dx)}, {int((self.ymax[1] - self.ymax[0])/self.dx)},! number of cells in x-direction
- !load_balance(1:2) = .true., .true.,
- !lb_type = "dynamic",
- !n_dynamic = 200, ! estimate this to be once per crossing time
- ! cell_weight = 1.0,
- ! dump_global_load = 1,
- !start_load_balance = 100,
+ nx_p(1:2) = <edit>, <edit>, ! number of cells in x-direction
 \u007d
 '''
     def _generate_timespace_params(self):
@@ -743,17 +668,13 @@ grid
 !----------time step and global data dump timestep number----------
 time_step
 \u007b
-    dt     =   {np.format_float_scientific(self.dt,4)},
-    ndump  =   {int(self.tmax / (400 * self.dt))},
+ dt     = <edit>, ! time step in wpe^-1
+ ndump  = <edit>, ! number of time steps between data dumps,
 \u007d
 
 !----------restart information----------
 restart
 \u007b
-    ndump_fac = -1,
-    ndump_time = 3500, !once/hour
-    if_restart = .false.,
-    if_remold = .true.,
 \u007d
 '''
         if self.osiris_dims == 1:
@@ -761,10 +682,10 @@ restart
 !----------spatial limits of the simulations----------
 space
 \u007b
-    ! This is euclidean distance, not the span in y direction
-    ! Start point in {self.osiris_dims}D plane is specified in py-script-{self.osiris_dims}d
-    xmin =  0, ! This should always be == 0
-    xmax =  {self.xmax},
+ ! This is euclidean distance, not the span in any one direction
+ ! Start point in {self.osiris_dims}D plane is specified in py-script-{self.osiris_dims}d
+ xmin = 0, ! This should always be == 0
+ xmax = {self.xmax},
 \u007d
 '''
         elif self.osiris_dims == 2:
@@ -772,16 +693,16 @@ space
 !----------spatial limits of the simulations----------
 space
 \u007b
-    xmin(1:2) = {self.xmax[0]}, {self.ymax[0]},
-    xmax(1:2) = {self.xmax[1]}, {self.ymax[1]},
+ xmin(1:2) = {self.xmax[0]}, {self.ymax[0]},
+ xmax(1:2) = {self.xmax[1]}, {self.ymax[1]},
 \u007d
 '''
         result += f'''
 !----------time limits ----------
 time
 \u007b
-    tmin = 0.0,
-    tmax  = {self.tmax},
+ tmin = 0.0,
+ tmax = <edit>,
 \u007d
 '''
         return result
@@ -797,71 +718,42 @@ el_mag_fld
   type_init_e(1:3) = "python", "python", "python",
   init_py_mod = "py-script-{self.osiris_dims}d", ! Name of Python file
   init_py_func = "set_fld_int", ! Name of function in the Python file to call (same for all components)
-  ! init_move_window = .false., ! May want to declare this for a moving-window simulation
 '''
         if self.osiris_dims == 1:
             result += f'''
-  ! You can also do this with external fields, as functions of time
-  ext_fld = "static",
-  type_ext_b(1:3) = "uniform", "uniform", "uniform",
-  ext_b0(1:3) = {np.format_float_scientific(np.cos(self.theta) * self.B0 / self.normalizations['Bx_int'], 4)}, {np.format_float_scientific(-np.sin(self.theta) * self.B0 / self.normalizations['Bx_int'])}, 0,
+ ! You can also do this with external fields, as functions of time
 \u007d
 !----------boundary conditions for em-fields ----------
 emf_bound
 \u007b
-  type(1:2,1) =   "open", "open",
+ type(1:2,1) = <edit>, <edit>, ! field boundary conditions 
 \u007d
 
 !----------- electro-magnetic field diagnostics ---------
 diag_emf
 \u007b
   reports = 
-    "b1, savg",
-    "b2, savg",
-    "b3, savg",
-    "e1, savg",
-    "e2, savg",
-    "e3, savg",
-    
-  !ndump_fac = 1,                     ! do full grid diagnostics at every 20 timesteps
-  ndump_fac_ave = 1,                  ! do average/envelope grid diagnostics at every timestep
-  ! ndump_fac_lineout = 1,              ! do lineouts/slices at every timestep
-  ndump_fac_ene_int = 1,
-  n_ave(1:1) = 4,                   ! average/envelope 8 cells (2x2x2)
-  !n_tavg = 5,                         ! average 5 iterations for time averaged diagnostics 
+    "b1", "b2", "b3",
+    "e1", "e2", "e3",
 \u007d
 '''
         elif self.osiris_dims == 2:
             result += f'''
-  ! You can also do this with external fields, as functions of time
-  ext_fld = "static",
-  type_ext_b(1:3) = "uniform", "uniform", "uniform",
-  ext_b0(1:3) = {np.format_float_scientific(self.B0 / self.normalizations['Bx_int'], 4)}, 0, 0,
+ ! You can also do this with external fields, as functions of time
 \u007d
 !----------boundary conditions for em-fields ----------
 emf_bound
 \u007b
-  type(1:2,1) =   "open", "open",
-  type(1:2,2) =   "open", "open",
+ type(1:2,1) =   <edit>, <edit>, ! edit the field boundary conditions
+ type(1:2,2) =   <edit>, <edit>,
 \u007d
 
 !----------- electro-magnetic field diagnostics ---------
 diag_emf
 \u007b
-  reports = 
-    "b1, savg",
-    "b2, savg",
-    "b3, savg",
-    "e1, savg",
-    "e2, savg",
-    "e3, savg",
-    
-  !ndump_fac = 1,                     ! do full grid diagnostics at every 20 timesteps
-  ndump_fac_ave = 1,                  ! do average/envelope grid diagnostics at every timestep
-  ! ndump_fac_lineout = 1,              ! do lineouts/slices at every timestep
-  ndump_fac_ene_int = 1,
-  n_ave(1:2) = 4, 4,                   ! average/envelope 8 cells (2x2x2)
-  !n_tavg = 5,                         ! average 5 iterations for time averaged diagnostics 
+ reports = 
+   "b1", "b2", "b3",
+   "e1", "e2", "e3",
 \u007d
 '''
         return result
@@ -875,7 +767,7 @@ diag_emf
 !----------number of particle species----------
 particles
 \u007b
-  interpolation = "quadratic",
+  interpolation = "quadratic", ! edit interpolation method as needed
   num_species = {len(self.species_rqms) + 1},
 \u007d
 
@@ -883,8 +775,8 @@ particles
 species
 \u007b
  name = "electrons",
- rqm=-1.0,
- num_par_x = {self.ppc},
+ rqm = -1.0,
+ num_par_x = <edit>, ! number of particles per cell 
  init_type = "python",
 \u007d
 
@@ -910,7 +802,7 @@ profile
 !----------boundary conditions for electrons----------
 spe_bound
 \u007b
- type(1:2,1) = "thermal","thermal",
+ type(1:2,1) = "thermal","thermal", ! Default is thermal boundary conditions. Feel free to change
  uth_bnd(1:3,1,1) = {np.format_float_scientific(vthele_start,4)}, {np.format_float_scientific(vthele_start,4)}, {np.format_float_scientific(vthele_start,4)}, 
  uth_bnd(1:3,2,1) = {np.format_float_scientific(vthele_end,4)}, {np.format_float_scientific(vthele_end,4)}, {np.format_float_scientific(vthele_end,4)}, 
 \u007d
@@ -919,17 +811,15 @@ spe_bound
 diag_species
 \u007b
  ndump_fac = 1,
- ndump_fac_temp = 1,
- ndump_fac_ene = 1,
- reports = "charge",
- rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+ reports = "charge", <edit>, ! edit the reports as needed
+ rep_udist = <edit>,
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.1, -0.1, -0.02,
- ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_pmin(1:3) = <edit>, <edit>, <edit>,
+ ps_pmax(1:3) = <edit>, <edit>, <edit>,
  ps_xmin(1:1) = 0.0,
  ps_xmax(1:1) = {self.xmax},
- ps_np = 4096,
- ps_nx = 4096,
+ ps_np = <edit>,
+ ps_nx = <edit>,
  phasespaces = "p1x1", "p2x1","p3x1",
 \u007d
 '''
@@ -950,7 +840,7 @@ species
 \u007b
  name = "electrons",
  rqm=-1.0,
- num_par_x(1:2) = {int(np.sqrt(self.ppc))}, {int(np.sqrt(self.ppc))},
+ num_par_x(1:2) = <edit>, <edit>, ! number of particles per cell in x and y directions
  init_type = "python",
 \u007d
 
@@ -976,6 +866,7 @@ profile
 !----------boundary conditions for electrons----------
 spe_bound
 \u007b
+ ! Default is thermal boundary conditions, but change as needed
  type(1:2,1) = "thermal","thermal",
  type(1:2,2) = "thermal","thermal",
  uth_bnd(1:3,1,1) = {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, 
@@ -988,18 +879,16 @@ spe_bound
 diag_species
 \u007b
  ndump_fac = 1,
- ndump_fac_temp = 1,
- ndump_fac_ene = 1,
- reports = "charge",
- rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+ reports = <edit>,
+ rep_udist = <edit>, 
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.1, -0.1, -0.02,
- ps_pmax(1:3) = 0.1,  0.1,  0.02,
- ps_xmin(1:2) = {self.xmax[0]}, {self.ymax[0]},
+ ps_pmin(1:3) = <edit>, <edit>, <edit>,
+ ps_pmax(1:3) = <edit>, <edit>, <edit>,
+ ps_xmin(1:2) = {self.xmax[0]}, {self.ymax[0]}, ! phase space covers the entire domain. change as needed
  ps_xmax(1:2) = {self.xmax[1]}, {self.ymax[1]},
- ps_np = 4096,
- ps_nx(1:2) = 2048, 2048,
- phasespaces = "p1x1", "p2x1","p3x1",
+ ps_np = <edit>,
+ ps_nx(1:2) = <edit>, <edit>,
+ phasespaces = <edit>,
 \u007d
 '''
 
@@ -1014,7 +903,7 @@ species
 \u007b
  name = "{ion}",
  rqm = {self.species_rqms[ion] / self.rqm_factor},
- num_par_x = {self.ppc},
+ num_par_x = <edit>,
  init_type = "python",
 \u007d
 
@@ -1049,19 +938,16 @@ spe_bound
 diag_species
 \u007b
  ndump_fac = 1,
- ndump_fac_temp = 1,
- ndump_fac_ene = 1,
- reports = "charge",
- rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+ reports = <edit>,
+ rep_udist = <edit>, 
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.05, -0.05, -0.02,
- ps_pmax(1:3) = 0.05,  0.05,  0.02,
+ ps_pmin(1:3) = <edit>, <edit>, <edit>, 
+ ps_pmax(1:3) = <edit>, <edit>, <edit>, 
  ps_xmin(1:1) = 0.0,
  ps_xmax(1:1) = {self.xmax},
- ps_np = 4096,
- ps_nx = 4096,
- !if_ps_p_auto(1:3) = .true., .true., .true.,
- phasespaces = "p1x1", "p2x1","p3x1",
+ ps_np = <edit>,
+ ps_nx = <edit>,
+ phasespaces = <edit>,
 \u007d'''
     
     def _generate_ion_section2D(self, ion, thermal_bounds):
@@ -1099,6 +985,7 @@ profile
 !----------boundary conditions for {ion} ions----------
 spe_bound
 \u007b
+ ! Default is thermal boundary conditions, but change as needed
  type(1:2,1) = "thermal","thermal",
  type(1:2,2) = "thermal","thermal",
  uth_bnd(1:3,1,1) = {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, {np.format_float_scientific(thermal_bounds['x'][0],4)}, 
@@ -1111,18 +998,16 @@ spe_bound
 diag_species
 \u007b
  ndump_fac = 1,
- ndump_fac_temp = 1,
- ndump_fac_ene = 1,
- reports = "charge",
- rep_udist = "uth1", "uth2", "ufl1", "ufl2",
+ reports = <edit>,
+ rep_udist = <edit>, 
  ndump_fac_pha = 1,
- ps_pmin(1:3) = -0.1, -0.1, -0.02,
- ps_pmax(1:3) = 0.1,  0.1,  0.02,
+ ps_pmin(1:3) = <edit>, <edit>, <edit>, 
+ ps_pmax(1:3) = <edit>, <edit>, <edit>,
  ps_xmin(1:2) = {self.xmax[0]}, {self.ymax[0]},
  ps_xmax(1:2) = {self.xmax[1]}, {self.ymax[1]},
- ps_np = 4096,
- ps_nx(1:2) = 2048, 2048,
- phasespaces = "p1x1", "p2x1","p3x1",
+ ps_np = <edit>,
+ ps_nx(1:2) = <edit>, <edit>,
+ phasespaces = <edit>,
 \u007d
 '''
 
@@ -1434,9 +1319,6 @@ def set_density_{ion}( STATE ):
         with open(f'{self.output_dir}/py-script-{self.osiris_dims}d.py', "w") as f:
             f.write(f'''
 import numpy as np
-# Outside of the function definition, any included code only runs once at the
-# initialization. You could, e.g., load an ML model from a file here
-import numpy as np
 import pickle
 
 
@@ -1680,7 +1562,7 @@ def load_and_interpolate_density(STATE, filename):
     STATE["nx"] = np.array(density_grid.shape)//2
     STATE["xmin"] = np.array([{self.x[0].value}, {self.y[0].value}])
     STATE["xmax"] = np.array([{self.x[-1].value},{self.y[-1].value}])
-    STATE['data'] = density_grid[::2,::2].T
+    STATE['data'] = density_grid[::2,::2].T # For memory constraints, we only use every second point in the grid
 
     return
 
@@ -1749,7 +1631,7 @@ def set_density_{ion}( STATE ):
             logger.error(f"Failed to save instance: {e}")
     def write_everything(self):
         # Main function to run the interface
-        self.save_slices()
+        self._save_slices()
         self.write_input_file()
         if self.osiris_dims == 1:
             self.write_python_script1D()
@@ -1768,7 +1650,7 @@ def set_density_{ion}( STATE ):
             data = np.load(self.output_dir / f'interp/{field}.npy')
 
         else:
-            import pickle
+            import pickle 
             with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
                 f = pickle.load(p)
                 x1,x2 = np.meshgrid(self.y,self.x)
@@ -1902,11 +1784,8 @@ if __name__ == "__main__":
         inputfile_name="magshockz-v3.2",
         osiris_dims=2,
         reference_density=5e18,
-        ppc=16,
         xmax = [-1000,2500],
         ymax = [300,6000],
-        dx_ndebye=200,
-        B_background=75000,
     )
     interface.write_everything()
     interface.show_box_in_plane('edens')
