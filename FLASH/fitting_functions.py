@@ -1,87 +1,198 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import yt
+import yt.units as u
+import pwlf
 
-def fit_to_region(start_pt: list, end_pt:list, field: str, ds, degree: int, precision: int, normalization:float, osiris, left_value = None, right_value = None):
 
-    def get_distance_axis(start_pt, end_pt, ds):
+class Ray:
+    """
+    Class to handle the lineouts and fitting from FLASH to OSIRIS.
+    """
+    def __init__(self, ds, start_pt, end_pt, reference_density = 5e18):
+        omega_pe = np.sqrt(4 * np.pi * u.elementary_charge**2 * reference_density / u.electron_mass) # rad/s, assuming electron density of 1e18 cm^-3
+        self.rqm_factor = 10 # TODO: this is hard coded as fuck, fix this shit later
+
+        B_norm = (omega_pe * u.electron_mass * u.speed_of_light) /u.elementary_charge 
+        E_norm = B_norm * u.speed_of_light
+        v_norm = u.speed_of_light / np.sqrt(self.rqm_factor)
+        vth_ele_norm = np.sqrt(u.electron_mass * u.speed_of_light**2)
+        vth_ion_norm = np.sqrt(u.electron_mass * u.speed_of_light**2) * np.sqrt(3800 / self.rqm_factor) # This is using a very rough calculation for the rqm of silicon and Aluminum. Will need to change if you are using more complicated species
+
+        self.ds = ds
+        self.start_pt = start_pt
+        self.end_pt = end_pt
+        self.length = self._get_distance_axis()
+        self.osiris_length = self.length / (u.speed_of_light / omega_pe)  # Normalize to OSIRIS units
+        self.osiris_length = self.osiris_length - self.osiris_length[0]  # Center the x values to start at 0
+        self.math_funcs = {}
+
+
+        self.normalizations = {
+            # Density normalizations
+            'edens': reference_density, 'sidens': reference_density, 'aldens': reference_density,
+            
+            # Magnetic field normalizations
+            'magx': B_norm, 'magy': B_norm, 'magz': B_norm,
+            
+            # Electric field normalizations
+            'Ex': E_norm, 'Ey': E_norm, 'Ez': E_norm,
+            
+            # Velocity normalizations
+            'v_ix': v_norm, 'v_iy': v_norm, 'v_iz': v_norm,
+            'v_ex': v_norm, 'v_ey': v_norm, 'v_ez': v_norm,
+            
+            # Thermal velocity for electrons
+            'tele': vth_ele_norm,
+            # Thermal velocity for ions
+            'tion': vth_ion_norm,
+        }
+
+
+    def _get_distance_axis(self):
         '''
         Helper function to get a distance axis for the ray on which you are taking a lineout
         '''
-        euclidean_length_of_ray = np.sqrt((end_pt[0]-start_pt[0])**2 + (end_pt[1]-start_pt[1])**2 + (end_pt[2]-start_pt[2])**2)
-        dist_from_origin = np.sqrt(start_pt[0]**2 + start_pt[1]**2 + start_pt[2]**2)
-        return np.array(ds.ray(start_pt, end_pt)['t']*euclidean_length_of_ray+dist_from_origin)
-    
+        euclidean_length_of_ray = np.sqrt((self.end_pt[0]-self.start_pt[0])**2 + (self.end_pt[1]-self.start_pt[1])**2 + (self.end_pt[2]-self.start_pt[2])**2)
+        dist_from_origin = np.sqrt(self.start_pt[0]**2 + self.start_pt[1]**2 + self.start_pt[2]**2)
+        return np.array(self.ds.ray(self.start_pt, self.end_pt)['t']* euclidean_length_of_ray+dist_from_origin)
 
-    target_wall = 0.01 # This is hard coded based on the exact simulation I am working with, delete this line before using
-    x = get_distance_axis(start_pt, end_pt, ds)-target_wall
-
-    # normalize distances to simulation units
-    x = x/osiris['length']
-    
-    # in order to make polynomials that aren't absolute garbage, we need to normalize the x values. This will make x span from 0 to 1 in the region of interest
-    x_norm = (x - x[0])/(x[-1]-x[0])
-
-    def get_field_values(start_pt, end_pt, field, ds, normalization):
+    def _get_field_values(self, field: str):
         '''
         Helper function to get the field values for the ray on which you are taking a lineout
+
+        Takes the square root of temperature fields to convert them to thermal velocities.
         '''
-        ray = ds.ray(start_pt, end_pt)
+        ray = self.ds.ray(self.start_pt, self.end_pt)
+        # For some god forsaken reason, yt does not return the values in the order of the ray, so we have to sort them
         ray_sort = np.argsort(ray["t"])
-        values = np.array(ray[('flash',field)][ray_sort])/normalization
+        if field == "tele" or field == "tion":
+            # vthe = sqrt(T/mc^2)
+            # vthi = sqrt(T/mc^2) * 1 / sqrt(rqm)
+            # thermal velocities to temperatures are the only nonlinear fields, so they need their own treatment where we take sqrt
+            values = (np.sqrt(ray[(field)][ray_sort]) / self.normalizations[field]).value
+        else:
+            values = (ray[(field)][ray_sort] / self.normalizations[field]).value
         return values
-    
-    vals = get_field_values(start_pt, end_pt, field, ds, normalization)
 
-    coefficients = np.polyfit(x_norm, vals, degree)
+    def show_ray(self, field: str):
+        slc = yt.SlicePlot(self.ds, "z", ("flash", field))
+        slc.annotate_line(self.start_pt, self.end_pt, color="red")
+        slc.show()
 
-    # Create a polynomial function from the coefficients
-    polynomial_function = np.poly1d(coefficients)
+    def show_lineout(self, field: str, log: bool=False):
+        line = yt.LinePlot(ds=self.ds, fields=("flash", field), start_point=self.start_pt, end_point=self.end_pt, npoints=10000)
+        line.set_log(("flash", field), log=log)
+        line.show()
 
-    # Calculate y values for the plotting range using the polynomial function
-    x_norm_smooth = np.linspace(x_norm[0], x_norm[-1], 3000)
-    y_fit = polynomial_function(x_norm_smooth)
 
-    # Plot the original data points
-    plt.scatter(x_norm*(x[-1]-x[0])+x[0], vals, label='Data Points')
+    def fit(self, field, degree=3, left_value=None, right_value=None, fit_func = "polynomial", plot=False):
+        """
+        Fit a polynomial to the lineout data.
+        """
+        vals = self._get_field_values(field)
+        # x_norm_smooth = np.linspace(self.osiris_length[0], self.osiris_length[-1], 3000)
+        if fit_func == "polynomial":
+            coefficients = np.polyfit(self.osiris_length, vals, degree)
+            function = np.poly1d(coefficients)
+            y_fit = function(self.osiris_length)
+        elif fit_func == "exponential":
+            coefficients = np.polyfit(np.log(self.osiris_length), vals, 1) # TODO fix AI slop
+            # y = np.exp(coefficients[0]) * np.exp(self.osiris_length + coefficients[1])  # Exponential fit
+            function = lambda x: np.exp(coefficients[0]) * np.exp(x + coefficients[1])
+            y_fit = function(self.osiris_length)
 
-    # Plot the polynomial fit
-    plt.plot(x_norm_smooth*(x[-1]-x[0])+x[0], y_fit, color='red', label=f'{degree} Degree Polynomial Fit')
+        elif fit_func == "piecewise":
+            # Note that for this, the meaning of degree is different. It is the number of segments, not the degree of the polynomial.
+            pwlf_model = pwlf.PiecewiseLinFit(self.osiris_length, vals)
 
-    plt.xlabel('dist [osiris_units]')
-    plt.ylabel(f'{field} [osiris_units]')
-    # pretty_plot()
+            res = pwlf_model.fit(degree)
+            # breaks = pwlf_model.fit(degree)
+            y_fit = pwlf_model.predict(self.osiris_length)
+            
 
-    plt.legend()
+        else:
+            raise ValueError("Unsupported fit function. Use 'polynomial' or 'exponential'.")
 
-    plt.show()
+        if plot == True:
+            # Plot the original data points
+            plt.scatter(self.osiris_length, vals, label='Data Points')
 
-    # OSIRIS FORMATTING
-    result = '\"'
-    # In this case, the function can be defined in all space
-    if left_value is None and right_value is None:
-        # result = f"if(x1 < {round(x[0],precision)}, {left_value}, if("
-        for i in range(len(coefficients)):
-            result = f"{result}({np.format_float_positional(coefficients[i], precision=precision, sign=False)})*((x1 - {round(x[0],precision)})/{round(x[-1]-x[0],precision)})^("+str(degree-i) + ") +"
-        print(f"{result.strip(' +')}\",")
+            # Plot the polynomial fit
+            plt.plot(self.osiris_length, y_fit, color='red', label=f'{degree} Degree {fit_func} Fit')
 
-    # In this case, the function is only defined in the region of interest
-    if left_value is not None and right_value is not None:
-        result = f"{result}if(x1 < {round(x[0],precision)}, {left_value}, if(x1 < {round(x[-1],precision)}, "
-        for i in range(len(coefficients)):
-            result = f"{result} ({np.format_float_positional(coefficients[i], precision=precision, sign=False)})*((x1 - {round(x[0],precision)})/{round(x[-1]-x[0],precision)})^("+str(degree-i) + ") +"
-        print(result.strip(' +')+f", {right_value}))\",")
-    # In this case, the function starts at the left side of the box and goes to the right boundary
-    if left_value is None and right_value is not None:
-        result = f"{result}if(x1 < {round(x[-1],precision)}, "
-        for i in range(len(coefficients)):
-            result = f"{result} ({np.format_float_positional(coefficients[i], precision=precision, sign=False)})*((x1 - {round(x[0],precision)})/{round(x[-1]-x[0],precision)})^("+str(degree-i) + ") +"
-        print(result.strip(' +')+f", {right_value})\",")
+            plt.xlabel('dist [osiris_units]')
+            plt.ylabel(f'{field} [osiris_units]')
 
-    # DESMOS FORMATTING
 
-    print("\n" + '-'*10 + "Desmos formatting to check your work" + '-'*10 + "\n")
-    result = ''
-    for i in range(len(coefficients)):
-        result = f"{result} ({np.format_float_positional(coefficients[i],precision)})*((x - {round(x[0],precision)})/{round(x[-1]-x[0],precision)})^"+str(degree-i) + " +"
-    print(result.strip(' +'))
-    
+
+        # OSIRIS FORMATTING
+        precision = 5
+        result = '\"'
+        x = self.osiris_length
+        # In this case, the function can be defined in all space
+        if fit_func == "polynomial":
+            if left_value is None and right_value is None:
+                for i in range(len(coefficients)):
+                    result = f"{result}({np.format_float_scientific(coefficients[i], sign=False)})*(x2)^("+str(degree-i) + ") +"
+                result = f"{result.strip(' +')}\","
+
+            # In this case, the function is only defined in the region of interest
+            if left_value is not None and right_value is not None:
+                result = f"{result}if(x2 < {round(x[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
+                for i in range(len(coefficients)):
+                    result = f"{result} ({np.format_float_scientific(coefficients[i], precision=precision, sign=False)})*(x2^("+str(degree-i) + ") +"
+                result = result.strip(' +')+f", {right_value}))\","
+            # In this case, the function starts at the left side of the box and goes to the right boundary
+            if left_value is None and right_value is not None:
+                result = f"{result}if(x2 < {round(x[-1],precision)}, "
+                for i in range(len(coefficients)):
+                    result = f"{result} ({np.format_float_scientific(coefficients[i], precision=precision, sign=False)})*(x2^("+str(degree-i) + ") +"
+                result = result.strip(' +')+f", {right_value})\","
+        if fit_func == "exponential":
+            if left_value is None and right_value is None:
+                result = f"{result}({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})\","
+
+            # In this case, the function is only defined in the region of interest
+            if left_value is not None and right_value is not None:
+                result = f"{result}if(x2 < {round(x[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
+                result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})\","
+
+            # In this case, the function starts at the left side of the box and goes to the right boundary
+            if left_value is None and right_value is not None:
+                result = f"{result}if(x2 < {round(x[-1],precision)}, "
+                result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})\","
+
+        if fit_func == "piecewise":
+            extra_parentheses = 0
+            if left_value is not None:
+                result += f"if(x2 < {round(pwlf_model.fit_breaks[0], precision)}, {left_value}, "
+                extra_parentheses += 1
+
+            for i in range(len(pwlf_model.fit_breaks)-1):
+                result += f"if(x2 < {round(pwlf_model.fit_breaks[i+1],precision)}, "
+                result += f"x2*{np.format_float_scientific(pwlf_model.slopes[i], precision)} + {np.format_float_scientific(pwlf_model.intercepts[i], precision)}, "
+
+            result += str(pwlf_model.intercepts[-1] + pwlf_model.slopes[-1] * (x[-1] - pwlf_model.fit_breaks[-1])) + ")"*(len(pwlf_model.fit_breaks) - 1 + extra_parentheses) + ",\""
+
+        # Save that ish for later so we can write an easy breezy beautiful input file
+        self.math_funcs[field] = result
+        return result
+
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()
+    # Example usage:
+    yt.enable_plugins()
+    data_path = "/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005"
+    ds = yt.load_for_osiris(data_path)
+    start_point = (0, 0.01, 0)
+    end_point = (0, 0.3, 0)
+    lineout = Ray(ds, start_point, end_point)
+    # lineout.show_ray("magx")
+    # lineout.show_lineout("magx")
+
+    fit_result = lineout.fit("sidens", degree=8, fit_func="piecewise", plot=True)
+    print(fit_result)

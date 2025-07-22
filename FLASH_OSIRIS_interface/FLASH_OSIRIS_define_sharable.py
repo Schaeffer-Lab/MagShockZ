@@ -276,9 +276,7 @@ class FLASH_OSIRIS:
     def _save_slices(self):
         """
         Process and save field data slices for OSIRIS.
-        
 
-            
         Note:
             - Density data is output as a numpy array because OSIRIS uses its own interpolator
             - Other fields are saved as pickle files with interpolators

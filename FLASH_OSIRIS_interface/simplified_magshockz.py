@@ -4,17 +4,268 @@ from pathlib import Path
 import yt
 import numpy as np
 import matplotlib.pyplot as plt
+from fitting_functions import Ray 
 
-## Path to FLASH data. This data was chosen because it's generally a simple setup.
-## We want to characterize the fundamental behavior of a pison expanding out into a magnetized background. 
-data_path = Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005")
 
-# Use the plugin I built for yt to load in FLASH data and split up ion species.
-yt.enable_plugins()
+def write_input_file(lineout: Ray):
+    return f'''
+!----------global simulation parameters----------
+simulation
+\u007b
+ algorithm = "cuda",
+\u007d
 
-ds = yt.load_for_osiris(data_path, rqm_factor = 10, ion_mass_thresholds = [28,35], rqm_thresholds= [4500,7100])
 
-slc = yt.SlicePlot(ds, 'z', 'channeldens')
-slc.save("simplified_magshockz_figs/fig.png")
+!--------the node configuration for this simulation--------
+node_conf 
+\u007b
+ node_number = <edit>, <edit> ! number of GPUs you are using
+ n_threads = <edit>, ! number of threads per GPU
+ tile_number = <edit>, <edit> ! n_tiles_tot should be greater than n_cells_tot / 1024 and be a power of two. Refer to osiris cuda documentation
+ if_periodic(1:2) = .true., .false.,
+\u007d
 
-print("'ello")
+
+!----------spatial grid----------
+grid
+\u007b
+ nx_p = <edit>, <edit>, ! number of cells 
+\u007d
+
+
+!----------time step and global data dump timestep number----------
+time_step
+\u007b
+ dt     = <edit>, ! time step in wpe^-1
+ ndump  = <edit>, ! number of time steps between data dumps,
+\u007d
+
+
+!----------restart information----------
+restart
+\u007b
+  ndump_fac = -1,
+  ndump_time = 3590, !once/hour
+  if_restart = .false.,
+  if_remold = .true.,
+\u007d
+
+
+!----------spatial limits ----------
+space
+\u007b
+ xmin(1:2) = <edit>, {round(lineout.osiris_length[0], 4)},
+ xmax(1:2) = <edit>, {round(lineout.osiris_length[-1], 4)},
+\u007d
+
+
+!----------time limits ----------
+time
+\u007b
+ tmin = 0.0,
+ tmax = <edit>, ! Just to make your life easier, your upstream gyrotime for an rqm of {1836 * 27 / 13 / lineout.rqm_factor} is {1836 * 27 / 13 / lineout.rqm_factor / (70_000 / lineout.normalizations['magx'])}
+\u007d
+
+!----------field solver set up----------
+el_mag_fld
+\u007b
+  type_init_b(1:3) = "math func", "math func", "math func",
+  init_b_mfunc(1) = "{lineout.math_funcs['magx']}",
+  init_b_mfunc(2) = "{lineout.math_funcs['magy']}",
+  init_b_mfunc(3) = "{lineout.math_funcs['magz']}",
+  type_init_e(1:3) = "math func", "math func", "math func",
+  init_e_mfunc(1) = "{lineout.math_funcs['Ex']}",
+  init_e_mfunc(2) = "{lineout.math_funcs['Ey']}",
+  init_e_mfunc(3) = "{lineout.math_funcs['Ez']}",
+\u007d
+
+!----------boundary conditions for em-fields ----------
+emf_bound
+\u007b
+ type(1:2,2) =  <edit>, <edit>, ! boundaries for x2
+\u007d
+
+!----------- electro-magnetic field diagnostics ---------
+diag_emf
+\u007b
+ ndump_fac = 1,
+ reports = 
+   "b1", "b2", "b3",
+   "e1", "e2", "e3",
+\u007d
+
+!----------number of particle species----------
+particles
+\u007b
+  interpolation = "quadratic",
+  num_species = 3,
+\u007d
+
+!----------information for electrons----------
+species
+\u007b
+ name = "electrons",
+ rqm=-1.0,
+ num_par_x(1:2) = <edit>, <edit>, ! number of particles per cell in x and y directions
+ init_type = "constq",
+\u007d
+
+!----------inital proper velocities - electrons-----------------
+udist
+\u007b
+  use_spatial_uth = .true.,
+  use_spatial_ufl = .true.,
+  spatial_uth(1) = "{lineout.math_funcs['tele']}",
+  spatial_uth(2) = "{lineout.math_funcs['tele']}",
+  spatial_uth(3) = "{lineout.math_funcs['tele']}",
+
+  spatial_ufl(1) = "{lineout.math_funcs['v_ex']}",
+  spatial_ufl(2) = "{lineout.math_funcs['v_ey']}",
+  spatial_ufl(3) = "{lineout.math_funcs['v_ez']}",
+\u007d
+
+!----------density profile for electrons----------
+profile
+\u007b
+  profile_type(1:2) = "math func", "uniform",
+  math_func_expr = "{lineout.math_funcs['edens']}",
+\u007d
+
+!----------boundary conditions for electrons----------
+spe_bound
+\u007b
+ type(1:2,2) = "reflecting","open",
+\u007d
+
+\u007b
+ ndump_fac = 1,
+ reports = <edit>,
+ rep_udist = <edit>, 
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = <edit>, <edit>, <edit>,
+ ps_pmax(1:3) = <edit>, <edit>, <edit>,
+ ps_xmin(1:2) = <edit>, {lineout.osiris_length[0]}, ! phase space covers the entire domain. change as needed
+ ps_xmax(1:2) = <edit>, {lineout.osiris_length[-1]},
+ ps_np = <edit>,
+ ps_nx(1:2) = <edit>, <edit>,
+ phasespaces = p1x1, p1x2, p2x1, p2x2,
+\u007d
+   
+!----------information for Aluminum ions----------
+species
+\u007b
+ name = "aluminum",
+ rqm = {1836 * 27 / 13 / lineout.rqm_factor},
+ num_par_x(1:2) = <edit>, <edit>, ! number of particles per cell in x and y directions
+ init_type = "constq",
+\u007d
+
+!----------inital proper velocities Aluminum ions-----------------
+udist
+\u007b
+  use_spatial_uth = .true.,
+  use_spatial_ufl = .true.,
+  spatial_uth(1) = "{lineout.math_funcs['tion']}",
+  spatial_uth(2) = "{lineout.math_funcs['tion']}",
+  spatial_uth(3) = "{lineout.math_funcs['tion']}",
+
+  spatial_ufl(1) = "{lineout.math_funcs['v_ix']}",
+  spatial_ufl(2) = "{lineout.math_funcs['v_iy']}",
+  spatial_ufl(3) = "{lineout.math_funcs['v_iz']}",
+
+profile
+\u007b
+    profile_type(1:2) = "math func", "uniform",
+    math_func_expr = "{lineout.math_funcs['aldens']}",
+\u007d
+
+!----------boundary conditions for Alumium ions----------
+spe_bound
+\u007b
+ type(1:2,2) = "reflecting", "open",
+\u007d
+
+!----------diagnostic for Aluminum ions----------
+diag_species
+\u007b
+ ndump_fac = 1,
+ reports = <edit>,
+ rep_udist = <edit>, 
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = <edit>, <edit>, <edit>, 
+ ps_pmax(1:3) = <edit>, <edit>, <edit>,
+ ps_xmin(1:2) = <edit>, {lineout.osiris_length[0]},
+ ps_xmax(1:2) = <edit>, {lineout.osiris_length[-1]},
+ ps_np = <edit>,
+ ps_nx(1:2) = <edit>, <edit>,
+ phasespaces = p1x1, p1x2, p2x1, p2x2,
+\u007d
+
+!----------information for Silicon ions----------
+species
+\u007b
+ name = "silicon",
+ rqm = {1836 * 28 / 14 / lineout.rqm_factor},
+ num_par_x(1:2) = <edit>, <edit>, ! number of particles per cell in x and y directions
+ init_type = "constq",
+\u007d
+
+!----------inital proper velocities Silicon ions-----------------
+udist
+\u007b
+  use_spatial_uth = .true.,
+  use_spatial_ufl = .true.,
+  spatial_uth(1) = "{lineout.math_funcs['tion']}",
+  spatial_uth(2) = "{lineout.math_funcs['tion']}",
+  spatial_uth(3) = "{lineout.math_funcs['tion']}",
+
+  spatial_ufl(1) = "{lineout.math_funcs['v_ix']}",
+  spatial_ufl(2) = "{lineout.math_funcs['v_iy']}",
+  spatial_ufl(3) = "{lineout.math_funcs['v_iz']}",
+\u007d
+
+!----------density profile for Silicon ions----------
+profile
+\u007b
+    profile_type(1:2) = "math func", "uniform",
+    math_func_expr = "{lineout.math_funcs['sidens']}",
+\u007d
+
+!----------boundary conditions for Silicon ions----------
+spe_bound
+\u007b
+ type(1:2,2) = "reflecting","open",
+\u007d
+
+!----------diagnostic for Silicon ions----------
+diag_species
+\u007b
+ ndump_fac = 1,
+ reports = <edit>,
+ rep_udist = <edit>, 
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = <edit>, <edit>, <edit>, 
+ ps_pmax(1:3) = <edit>, <edit>, <edit>,
+ ps_xmin(1:2) = <edit>, {lineout.osiris_length[0]},
+ ps_xmax(1:2) = <edit>, {lineout.osiris_length[-1]},
+ ps_np = <edit>,
+ ps_nx(1:2) = <edit>, <edit>,
+ phasespaces = p1x1, p1x2, p2x1, p2x2,
+\u007d
+'''
+
+def main(start_point, end_point, inputfile_name):
+    """
+    Main function to run the analysis.
+    """
+
+    ## Path to FLASH data. This data was chosen because it's generally a simple setup.
+    ## We want to characterize the fundamental behavior of a pison expanding out into a magnetized background. 
+    data_path = Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005")
+
+    # Use the plugin I built for yt to load in FLASH data and split up ion species.
+    yt.enable_plugins()
+
+    ds = yt.load_for_osiris(data_path, rqm_factor = 10)
+    # Create a Ray object for the lineout
+    lineout = Ray(ds, start_point, end_point)

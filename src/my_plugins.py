@@ -36,14 +36,14 @@ def _Ez(field, data):
 
 
 
-def load_for_osiris(filename:str, rqm_factor:float, B_background: float = None, ion_mass_thresholds: list = [28,35], rqm_thresholds: list = [4500,7100,8300]):        
+def load_for_osiris(filename:str, rqm_factor:float = 1):        
         """"
         "Load a FLASH simulation with the FLASH frontend.
         "This function is a wrapper around yt.load() that adds some
         "additional functionality for FLASH simulations.
         """
 
-        molar_weights = {
+        MOLAR_WEIGHTS = {
         "H": 1.0078,
         "He": 4.0026,
         "Li": 6.94,
@@ -66,15 +66,15 @@ def load_for_osiris(filename:str, rqm_factor:float, B_background: float = None, 
 
 
         ds = load(filename)
-        ds.add_field(('flash','rqm_factor'),
-                       lambda field, data: rqm_factor,
-                       sampling_type="cell")
+
         c = units.speed_of_light_cgs
         e = units.electron_charge_cgs
         m_e = units.mass_electron_cgs
         
-        conv_factor = c/(4*np.pi)
-        
+        CONV_FACTOR = c/(4*np.pi)
+
+        ion_mass_thresholds = [25.5]
+
         def make_species_mask(field, data):
                 """
                 This field is used to mask the species in the FLASH simulation.
@@ -86,136 +86,45 @@ def load_for_osiris(filename:str, rqm_factor:float, B_background: float = None, 
                 return species_mask
 
         ds.add_field(("flash","species_mask"),
-                       function=make_species_mask,
-                       units="",
-                       sampling_type="cell",
-                       force_override=False) 
-        
-        def make_rqm_mask(field, data):
-                """
-                This field is used to mask the species in the FLASH simulation.
-                It is used to determine which species are present in the simulation.
-                """
-                rqm_real = 1836 / data["flash","ye"]
-                bins = [-np.inf] + rqm_thresholds + [np.inf]
-                rqm_mask = np.digitize(rqm_real, bins)
-                
-                return rqm_mask
-        
-        ds.add_field(("flash","rqm_mask"),
-                function=make_rqm_mask,
+                function=make_species_mask,
                 units="",
                 sampling_type="cell",
-                force_override=False)
-        
+                force_override=False) 
+      
         def make_silicon_density(field, data):
-                full_mask =  (data["flash","rqm_mask"] == 1) * (data["flash","species_mask"] == 2)
-
-                silicon_density = data['flash','edens'] * full_mask
-                rqm_real = 1836 / data['flash','ye']
-
-                # Calculate median rqm for silicon only where the mask is valid
-                silicon_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
-                if len(silicon_rqm) > 0:
-                        silicon_rqm_value = int(np.median(silicon_rqm))
-                        print(f"Silicon rqm: {silicon_rqm_value}")
+                silicon_density = data['flash','edens'] * (data["flash","species_mask"] == 1)
                 return silicon_density
         
         ds.add_field(("flash",f"sidens"),
-                       function=make_silicon_density,
-                       units="1/code_length**3",
-                       sampling_type="cell",
-                       force_override=False)
+                function=make_silicon_density,
+                units="1/code_length**3",
+                sampling_type="cell",
+                force_override=False)
         
-        ion_1 = 'Al'
 
-        def make_channel_density(field, data):
-                full_mask =  (data["flash","rqm_mask"] == 1) *(data["flash","species_mask"] == 1)
-
-                channel_density = data['flash','edens'] * full_mask
-                rqm_real = 1836 / data['flash','ye']
-
-                # Calculate median rqm for silicon only where the mask is valid
-                channel_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
-                if len(channel_rqm) > 0:
-                        channel_rqm_value = int(np.median(channel_rqm))
-                        print(f"Channel rqm: {channel_rqm_value}")
+        def make_aluminum_density(field, data):
+                channel_density = data['flash','edens'] * (data["flash","species_mask"] == 2)
                 return channel_density
         
-        ds.add_field(("flash","channeldens"),
-                       function=make_channel_density,
-                       units="1/code_length**3",
-                       sampling_type="cell",
-                       force_override=False)
-        
-        def make_sheathe_density(field, data):
-                full_mask =  (data["flash","rqm_mask"] == 2) *(data["flash","species_mask"] == 1)
+        ds.add_field(("flash","aldens"),
+                function=make_aluminum_density,
+                units="1/code_length**3",
+                sampling_type="cell",
+                force_override=False)
 
-                sheathe_density = data['flash','edens'] * full_mask
-                rqm_real = 1836 / data['flash','ye']
-
-                # Calculate median rqm for silicon only where the mask is valid
-                sheathe_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
-                if len(sheathe_rqm) > 0:
-                        sheathe_rqm_value = int(np.median(sheathe_rqm))
-                        print(f"Sheathe rqm: {sheathe_rqm_value}")
-                return sheathe_density
-        
-        ds.add_field(("flash","sheathedens"),
-                       function=make_sheathe_density,
-                       units="1/code_length**3",
-                       sampling_type="cell",
-                       force_override=False)
-        
-        def make_background_density(field, data):
-                full_mask =  (data["flash","rqm_mask"] == 3) *(data["flash","species_mask"] == 1)
-
-                background_density = data['flash','edens'] * full_mask
-                rqm_real = 1836 / data['flash','ye']
-
-                # Calculate median rqm for silicon only where the mask is valid
-                background_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
-                if len(background_rqm) > 0:
-                        background_rqm_value = int(np.median(background_rqm))
-                        print(f"Background rqm: {background_rqm_value}")
-                return background_density
-        
-        ds.add_field(("flash","backgrounddens"),
-                       function=make_background_density,
-                       units="1/code_length**3",
-                       sampling_type="cell",
-                       force_override=False)
-        
-        def make_solid_density(field, data):
-                full_mask =  (data["flash","species_mask"] == 3)
-
-                solid_density = data['flash','edens'] * full_mask
-                rqm_real = 1836 / data['flash','ye']
-
-                # Calculate median rqm for silicon only where the mask is valid
-                solid_rqm = np.ma.masked_array(rqm_real, mask=~full_mask).compressed()
-                if len(solid_rqm) > 0:
-                        solid_rqm_value = int(np.median(solid_rqm))
-                        print(f"Solid rqm: {solid_rqm_value}")
-                return solid_density
-
-        ds.add_field(("flash","soliddens"),
-                       function=make_solid_density,
-                       units="1/code_length**3",
-                       sampling_type="cell",
-                       force_override=False)
-
+        # We need the gradients in order to calculate ampere's law
         ds.add_gradient_fields(('flash', 'magx'))
         ds.add_gradient_fields(('flash', 'magy'))
         ds.add_gradient_fields(('flash', 'magz'))
 
 
+
         def make_Jx(field, data):
-            return conv_factor * (data["flash","magz_gradient_y"] - data["flash","magy_gradient_z"])
+            return CONV_FACTOR * (data["flash","magz_gradient_y"] - data["flash","magy_gradient_z"])
         def make_Jy(field, data):
-            return conv_factor * (data["flash","magx_gradient_z"] - data["flash","magz_gradient_x"])
+            return CONV_FACTOR * (data["flash","magx_gradient_z"] - data["flash","magz_gradient_x"])
         def make_Jz(field, data):
-            return conv_factor * (data["flash","magy_gradient_x"] - data["flash","magx_gradient_y"])
+            return CONV_FACTOR * (data["flash","magy_gradient_x"] - data["flash","magx_gradient_y"])
         
 
         ds.add_field(('flash', 'Jx'), function=make_Jx, units='code_magnetic/code_time', sampling_type='cell')
@@ -247,72 +156,6 @@ def load_for_osiris(filename:str, rqm_factor:float, B_background: float = None, 
         ds.add_field(('flash', 'v_ey'), function=_v_ey, units='code_velocity', sampling_type='cell')
         ds.add_field(('flash', 'v_ez'), function=_v_ez, units='code_velocity', sampling_type='cell')
 
-        # Add the background magnetic field
-        # THIS ASSUMES THAT THE BACKGROUND MAGNETIC FIELD IS IN X
-        if B_background is None:
-            B_background = 0.0
-
-        ds.add_field(("flash","Bx_ext"), 
-                       lambda field, data: B_background * units.gauss * data["index", "ones"],
-                       units = "Gauss",
-                       sampling_type="cell")
-        
-        ds.add_field(("flash","By_ext"),
-                       lambda field, data: data["index", "zeros"] * units.gauss,
-                       units = "Gauss",
-                       sampling_type="cell")
-        
-        ds.add_field(("flash","Bz_ext"),
-                       lambda field, data: data["index", "zeros"] * units.gauss,
-                       units = "Gauss",
-                       sampling_type="cell")
-
-        # Internal magnetic fields
-        ds.add_field(("flash","Bx_int"),
-                       lambda field, data: data["flash", "magx"] - B_background * units.gauss * data["index", "ones"],
-                       units = "Gauss",
-                       sampling_type="cell")
-        
-        ds.add_field(("flash","By_int"),
-                       lambda field, data: data["flash", "magy"],
-                       units = "Gauss",
-                       sampling_type="cell")
-        
-        ds.add_field(("flash","Bz_int"),
-                        lambda field, data: data["flash", "magz"],
-                        units = "Gauss",
-                        sampling_type="cell")
-        # Internal electric fields
-        ds.add_field(("flash","Ex_int"),
-                     lambda field, data: -(data['flash', 'vely'] * data["flash", "Bz_int"] - data["flash", "velz"] * data["flash", "By_int"]),
-                     units = "code_magnetic*code_length/code_time",
-                     sampling_type="cell")
-        
-        ds.add_field(("flash","Ey_int"),
-                     lambda field, data: -(data['flash', 'velz'] * data["flash", "Bx_int"] - data["flash", "velx"] * data["flash", "Bz_int"]),
-                     units = "code_magnetic*code_length/code_time",
-                     sampling_type="cell")
-        
-        ds.add_field(("flash","Ez_int"),
-                     lambda field, data: -(data['flash', 'velx'] * data["flash", "By_int"] - data["flash", "vely"] * data["flash", "Bx_int"]),
-                     units = "code_magnetic*code_length/code_time",
-                     sampling_type="cell")
-
-        # External electric fields
-        ds.add_field(("flash","Ex_ext"),
-                     lambda field, data: -(data['flash', 'vely'] * data["flash", "Bz_ext"] - data["flash", "velz"] * data["flash", "By_ext"]),
-                     units = "code_magnetic*code_length/code_time",
-                     sampling_type="cell")
-        ds.add_field(("flash","Ey_ext"),
-                     lambda field, data: -(data['flash', 'velz'] * data["flash", "Bx_ext"] - data["flash", "velx"] * data["flash", "Bz_ext"]),
-                     units = "code_magnetic*code_length/code_time",
-                     sampling_type="cell")
-        
-        ds.add_field(("flash","Ez_ext"),
-                     lambda field, data: -(data['flash', 'velx'] * data["flash", "By_ext"] - data["flash", "vely"] * data["flash", "Bx_ext"]),
-                     units = "code_magnetic*code_length/code_time",
-                     sampling_type="cell")
-        
-
+       
         return ds
 
