@@ -76,7 +76,7 @@ el_mag_fld
   type_init_e(1:3) = "math func", "math func", "math func",
   init_e_mfunc(1) = "{lineout.math_funcs['Ex']}",
   init_e_mfunc(2) = "{lineout.math_funcs['Ey']}",
-  init_e_mfunc(3) = "{lineout.math_funcs['Ez']}",
+  init_e_mfunc(3) = "{lineout.math_funcs['Ez']}", ! This is the most important component, can probably ignore others
 \u007d
 
 !----------boundary conditions for em-fields ----------
@@ -269,3 +269,33 @@ def main(start_point, end_point, inputfile_name):
     ds = yt.load_for_osiris(data_path, rqm_factor = 10)
     # Create a Ray object for the lineout
     lineout = Ray(ds, start_point, end_point)
+
+    lineout.fit("magx", degree=6, fit_func="piecewise", plot=False)
+    lineout.fit('magy', degree=10, fit_func="piecewise", plot=False)
+    lineout.fit('magz', degree=10, fit_func="piecewise", plot=False)
+
+    lineout.fit('Ex', degree=5, fit_func="piecewise", plot=False)
+    lineout.fit('Ey', degree=8, fit_func="piecewise", plot=False)
+    lineout.fit('Ez', degree=10, fit_func="piecewise", plot=False)
+
+    lineout.fit("sidens", degree=8, fit_func="piecewise", plot=False)
+    lineout.fit("aldens", degree=8, fit_func="piecewise", plot=False)
+    lineout.fit("edens", degree=8, fit_func="piecewise", plot=False)
+
+    lineout.fit('v_ex', degree=5, fit_func="piecewise", plot=False)
+    lineout.fit('v_ix', degree=15, fit_func="piecewise", plot=False)
+
+    lineout.fit('v_iy', degree=15, fit_func="piecewise", plot=False)
+    lineout.fit('v_ey', degree=15, fit_func="piecewise", plot=False)
+
+    lineout.fit('v_iz', degree=8, fit_func="piecewise", plot=False)
+    lineout.fit('v_ez', degree=8, fit_func="piecewise", plot=False)
+
+    lineout.fit('tele', degree=5, fit_func="piecewise", plot=False)
+    lineout.fit('tion', degree=5, fit_func="piecewise", plot=False)
+
+    # Write the input file for OSIRIS
+    input_file_content = write_input_file(lineout)
+    with open(inputfile_name, 'w') as f:
+        f.write(input_file_content)
+

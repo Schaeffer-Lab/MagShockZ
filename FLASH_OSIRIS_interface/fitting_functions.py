@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import yt
-import yt.units as u
 import pwlf
 
 
@@ -10,21 +9,21 @@ class Ray:
     Class to handle the lineouts and fitting from FLASH to OSIRIS.
     """
     def __init__(self, ds, start_pt, end_pt, reference_density = 5e18):
-        omega_pe = np.sqrt(4 * np.pi * u.elementary_charge**2 * reference_density / u.electron_mass) # rad/s, assuming electron density of 1e18 cm^-3
+        omega_pe = np.sqrt(4 * np.pi * yt.units.elementary_charge_cgs**2 * reference_density / yt.units.electron_mass_cgs) # rad/s, assuming electron density of 1e18 cm^-3
         self.rqm_factor = 10 # TODO: this is hard coded as fuck, fix this shit later
 
-        B_norm = (omega_pe * u.electron_mass * u.speed_of_light) /u.elementary_charge 
-        E_norm = B_norm * u.speed_of_light
-        v_norm = u.speed_of_light / np.sqrt(self.rqm_factor)
-        vth_ele_norm = np.sqrt(u.electron_mass * u.speed_of_light**2)
-        vth_ion_norm = np.sqrt(u.electron_mass * u.speed_of_light**2) * np.sqrt(3800 / self.rqm_factor) # This is using a very rough calculation for the rqm of silicon and Aluminum. Will need to change if you are using more complicated species
+        B_norm = (omega_pe * yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs) / yt.units.elementary_charge_cgs
+        E_norm = B_norm * yt.units.speed_of_light_cgs
+        v_norm = yt.units.speed_of_light_cgs / np.sqrt(self.rqm_factor)
+        vth_ele_norm = np.sqrt(yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs**2 / yt.units.boltzmann_constant_cgs)
+        vth_ion_norm = np.sqrt(yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs**2 / yt.units.boltzmann_constant_cgs) * np.sqrt(3800 / self.rqm_factor) # This is using a very rough calculation for the rqm of silicon and Aluminum. Will need to change if you are using more complicated species
 
         self.ds = ds
         self.start_pt = start_pt
         self.end_pt = end_pt
         self.length = self._get_distance_axis()
-        self.osiris_length = self.length / (u.speed_of_light / omega_pe)  # Normalize to OSIRIS units
-        self.osiris_length = self.osiris_length - self.osiris_length[0]  # Center the x values to start at 0
+        self.osiris_length = self.length / (yt.units.speed_of_light_cgs / omega_pe)  # Normalize to OSIRIS units
+        self.osiris_length = (self.osiris_length - self.osiris_length[0]).value  # Center the x values to start at 0
         self.math_funcs = {}
 
 
