@@ -8,9 +8,9 @@ class Ray:
     """
     Class to handle the lineouts and fitting from FLASH to OSIRIS.
     """
-    def __init__(self, ds, start_pt, end_pt, reference_density = 5e18):
+    def __init__(self, ds, start_pt, end_pt, reference_density = 5e18, rqm_factor = 50):
         omega_pe = np.sqrt(4 * np.pi * yt.units.elementary_charge_cgs**2 * reference_density / yt.units.electron_mass_cgs) # rad/s, assuming electron density of 1e18 cm^-3
-        self.rqm_factor = 10 # TODO: this is hard coded as fuck, fix this shit later
+        self.rqm_factor = rqm_factor
 
         B_norm = (omega_pe * yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs) / yt.units.elementary_charge_cgs
         E_norm = B_norm * yt.units.speed_of_light_cgs
@@ -127,40 +127,40 @@ class Ray:
 
         # OSIRIS FORMATTING
         precision = 5
-        result = '\"'
+        result = ''
         x = self.osiris_length
         # In this case, the function can be defined in all space
         if fit_func == "polynomial":
             if left_value is None and right_value is None:
                 for i in range(len(coefficients)):
                     result = f"{result}({np.format_float_scientific(coefficients[i], sign=False)})*(x2)^("+str(degree-i) + ") +"
-                result = f"{result.strip(' +')}\","
+                result = f"{result.strip(' +')}"
 
             # In this case, the function is only defined in the region of interest
             if left_value is not None and right_value is not None:
                 result = f"{result}if(x2 < {round(x[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
                 for i in range(len(coefficients)):
                     result = f"{result} ({np.format_float_scientific(coefficients[i], precision=precision, sign=False)})*(x2^("+str(degree-i) + ") +"
-                result = result.strip(' +')+f", {right_value}))\","
+                result = result.strip(' +')+f", {right_value}))"
             # In this case, the function starts at the left side of the box and goes to the right boundary
             if left_value is None and right_value is not None:
                 result = f"{result}if(x2 < {round(x[-1],precision)}, "
                 for i in range(len(coefficients)):
                     result = f"{result} ({np.format_float_scientific(coefficients[i], precision=precision, sign=False)})*(x2^("+str(degree-i) + ") +"
-                result = result.strip(' +')+f", {right_value})\","
+                result = result.strip(' +')+f", {right_value})"
         if fit_func == "exponential":
             if left_value is None and right_value is None:
-                result = f"{result}({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})\","
+                result = f"{result}({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})"
 
             # In this case, the function is only defined in the region of interest
             if left_value is not None and right_value is not None:
                 result = f"{result}if(x2 < {round(x[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
-                result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})\","
+                result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})"
 
             # In this case, the function starts at the left side of the box and goes to the right boundary
             if left_value is None and right_value is not None:
                 result = f"{result}if(x2 < {round(x[-1],precision)}, "
-                result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})\","
+                result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})"
 
         if fit_func == "piecewise":
             extra_parentheses = 0
@@ -169,10 +169,10 @@ class Ray:
                 extra_parentheses += 1
 
             for i in range(len(pwlf_model.fit_breaks)-1):
-                result += f"if(x2 < {round(pwlf_model.fit_breaks[i+1],precision)}, "
-                result += f"x2*{np.format_float_scientific(pwlf_model.slopes[i], precision)} + {np.format_float_scientific(pwlf_model.intercepts[i], precision)}, "
+                result += f"if(x2 < {np.format_float_scientific(pwlf_model.fit_breaks[i+1],precision)}, "
+                result += f"x2*({np.format_float_scientific(pwlf_model.slopes[i], precision)}) + ({np.format_float_scientific(pwlf_model.intercepts[i], precision)}), "
 
-            result += str(pwlf_model.intercepts[-1] + pwlf_model.slopes[-1] * (x[-1] - pwlf_model.fit_breaks[-1])) + ")"*(len(pwlf_model.fit_breaks) - 1 + extra_parentheses) + ",\""
+            result += str(pwlf_model.intercepts[-1] + pwlf_model.slopes[-1] * (x[-1] - pwlf_model.fit_breaks[-1])) + ")"*(len(pwlf_model.fit_breaks) - 1 + extra_parentheses) 
 
         # Save that ish for later so we can write an easy breezy beautiful input file
         self.math_funcs[field] = result
