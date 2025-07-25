@@ -16,17 +16,18 @@ def get_template_config(template_type, lineout, **kwargs):
             'xmax': [-64, 64], # try to get 6 ion inertial lengths in x direction. sqrt(380) ~ 20
             "nx_p": [int(128*8000/lineout.osiris_length[-1]), 8000], # Get about the same resolution in x and y
             "num_par_x": [3, 3],
-            "ndump": "512",
-            "dt": "0.118",
+            "ndump": None,
+            "dt": None,
             "tmax": "40000",
             "node_number": [1, 2],
             "n_threads": 1,
             "tile_number": [32, 64],
-            "boundary_x2": ["reflecting", "open"],
+            "emf_boundary_x2": ["open", "open"],
+            "part_boundary_x2": ["thermal", "thermal"],
             "reports": '"charge"',
-            "rep_udist": '',
-            "ps_pmin": [-0.2, -0.2, -0.2],
-            "ps_pmax": [0.2, 0.2, 0.2],
+            "rep_udist": '', # I believe that this is broken for the gpu version as well
+            "ps_pmin": [-0.15, -0.15, -0.15],
+            "ps_pmax": [0.15, 0.15, 0.15],
             "ps_np": [128, 1024, 128],
             "ps_nx": [256, 1024],
             "emf_reports": '"e1", "e2", "e3", "b1", "b2", "b3"',
@@ -43,6 +44,8 @@ def get_template_config(template_type, lineout, **kwargs):
     config["rqm_al"] = int(1836 * 27 / 13 / lineout.rqm_factor)
     config["rqm_si"] = int(1836 * 28 / 14 / lineout.rqm_factor)
     config["tmax"] = config["upstream_gyrotime"] * 10 # want to run for 10 upstream gyroperiods
+    config["dt"] = lineout.osiris_length[-1] / config["nx_p"][1] / np.sqrt(2.0) # CFL condition. Factor of sqrt(2) to account for 2D simulation
+    config["ndump"] = int(config["tmax"] / config['dt'] / 256) # set it up in such a way that we get 256 dumps total
 
     # # num_tiles must be a power of two and greater than n_cells_tot / 1024
     # n_cells_tot = config["nx_p"][0] * config["nx_p"][1]
@@ -100,10 +103,11 @@ time_step
 !----------restart information----------
 restart
 \u007b
-  ndump_fac = -1,
-  ndump_time = 3590, !once/hour
-  if_restart = .false.,
-  if_remold = .true.,
+! It seems like restart is broken on the GPU version
+!  ndump_fac = -1,
+!  ndump_time = 3590, !once/hour
+!  if_restart = .false.,
+!  if_remold = .true.,
 \u007d
 
 
@@ -138,7 +142,7 @@ el_mag_fld
 !----------boundary conditions for em-fields ----------
 emf_bound
 \u007b
- type(1:2,2) =  "{config["boundary_x2"][0]}", "{config["boundary_x2"][1]}", ! boundaries for x2
+ type(1:2,2) =  "{config["emf_boundary_x2"][0]}", "{config["emf_boundary_x2"][1]}", ! boundaries for x2
 \u007d
 
 !----------- electro-magnetic field diagnostics ---------
@@ -189,7 +193,9 @@ profile
 !----------boundary conditions for electrons----------
 spe_bound
 \u007b
- type(1:2,2) = "reflecting","open",
+ type(1:2,2) = "{config["part_boundary_x2"][0]}","{config["part_boundary_x2"][1]}",
+ uth_bnd(1:3,1,2) = {lineout._get_field_values('tele')[0]},{lineout._get_field_values('tele')[0]},{lineout._get_field_values('tele')[0]},
+ uth_bnd(1:3,2,2) = {lineout._get_field_values('tele')[1]},{lineout._get_field_values('tele')[1]},{lineout._get_field_values('tele')[1]},
 \u007d
 
 !----------diagnostic for electrons----------
@@ -239,7 +245,9 @@ profile
 !----------boundary conditions for Alumium ions----------
 spe_bound
 \u007b
- type(1:2,2) = "reflecting", "open",
+ type(1:2,2) = "thermal", "thermal",
+ uth_bnd(1:3,1,2) = {lineout._get_field_values('tion')[0]},{lineout._get_field_values('tion')[0]},{lineout._get_field_values('tion')[0]},
+ uth_bnd(1:3,2,2) = {lineout._get_field_values('tion')[1]},{lineout._get_field_values('tion')[1]},{lineout._get_field_values('tion')[1]},
 \u007d
 
 !----------diagnostic for Aluminum ions----------
@@ -289,7 +297,9 @@ profile
 !----------boundary conditions for Silicon ions----------
 spe_bound
 \u007b
- type(1:2,2) = "reflecting","open",
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,2) = {lineout._get_field_values('tion')[0]},{lineout._get_field_values('tion')[0]},{lineout._get_field_values('tion')[0]},
+ uth_bnd(1:3,2,2) = {lineout._get_field_values('tion')[1]},{lineout._get_field_values('tion')[1]},{lineout._get_field_values('tion')[1]},
 \u007d
 
 !----------diagnostic for Silicon ions----------

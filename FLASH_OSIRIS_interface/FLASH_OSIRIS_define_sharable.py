@@ -113,8 +113,8 @@ class FLASH_OSIRIS:
                 raise ValueError("xmax must be a list of two numbers for 2D simulations")
             if not isinstance(ymax, (list, tuple)) or len(ymax) != 2:
                 raise ValueError("ymax must be a list of two numbers for 2D simulations")
-            self.xmax = xmax
-            self.ymax = ymax
+            self.xmax = np.array(xmax)
+            self.ymax = np.array(ymax)
         elif osiris_dims == 3:
             raise NotImplementedError("3D simulations are not supported yet")
         
@@ -143,7 +143,7 @@ class FLASH_OSIRIS:
         
         # Load FLASH data
         logger.info(f"Loading FLASH data from {self.FLASH_data}")
-        self.ds = yt.load(self.FLASH_data)
+        self.ds = yt.load_for_osiris(self.FLASH_data)
         
         self._derive_fields() # TODO: create necessary fields and ion species
 
@@ -238,8 +238,7 @@ class FLASH_OSIRIS:
         # Create normalizations dictionary
         self._create_normalizations()
         
-        # Calculate gyrotime and simulation duration
-        self._calculate_tmax()
+
     
     def _create_normalizations(self):
         """Create dictionary of normalization factors for different fields."""
@@ -254,7 +253,6 @@ class FLASH_OSIRIS:
             'edens': self.n0,
             
             # Magnetic field normalizations
-            'Bx_int': B_norm, 'By_int': B_norm, 'Bz_int': B_norm,
             'magx': B_norm, 'magy': B_norm, 'magz': B_norm,
             
             # Electric field normalizations
@@ -283,9 +281,9 @@ class FLASH_OSIRIS:
             - Thermal velocities require special handling because we need to take sqrt of temperature
         """
         # Create output directory
-        interp_dir = self.output_dir / "interp"
-        if not interp_dir.exists():
-            interp_dir.mkdir(parents=True)
+        self.interp_dir = self.output_dir / "interp"
+        if not self.interp_dir.exists():
+            self.interp_dir.mkdir(parents=True)
             
         # Process each field
         for field, normalization in self.normalizations.items():
@@ -298,13 +296,13 @@ class FLASH_OSIRIS:
             
             # Special handling for thermal velocity fields
             if field.startswith('vth'):
-                self._save_thermal_field(field, normalization, interp_dir)
+                self._save_thermal_field(field, normalization)
                 continue
                 
             # Process regular fields
-            self._save_regular_field(field, normalization, interp_dir)
+            self._save_regular_field(field, normalization)
     
-    def _save_thermal_field(self, field, normalization, middle_index, chunk_size, interp_dir, normal_axis="z"):
+    def _save_thermal_field(self, field, normalization, normal_axis="z"):
         """Save thermal velocity field data."""
         from pickle import dump
         from scipy.interpolate import RegularGridInterpolator
@@ -332,7 +330,6 @@ class FLASH_OSIRIS:
         chunk_size = 128  # Adjust based on memory constraints
         middle_index = self.dims[normal] // 2
 
-
         # Initialize field data array
         if normal_axis == "x":
             field_data = np.zeros(self.all_data['flash', temp_field][middle_index, :, :].shape)
@@ -355,17 +352,34 @@ class FLASH_OSIRIS:
             method='linear', bounds_error=True, fill_value=0
         )
         
-        with open(f"{interp_dir}/{field}.pkl", "wb") as f:
+        with open(f"{self.interp_dir}/{field}.pkl", "wb") as f:
             dump(interp, f)
     
-    def _save_regular_field(self, field, normalization, middle_index, chunk_size, interp_dir):
+    def _save_regular_field(self, field, normalization, normal_axis = 'z'):
         """Save regular field data."""
         from pickle import dump
         from scipy.interpolate import RegularGridInterpolator
+
+        axis_map = {"x": 0, "y": 1, "z": 2}
+        if normal_axis not in axis_map:
+            raise ValueError("normal_axis must be one of 'x', 'y', or 'z'")
+
+        normal = axis_map[normal_axis]
         
+        # Get the middle index of the chosen axis
+        chunk_size = 128  # Adjust based on memory constraints
+        middle_index = self.dims[normal] // 2
+
+       
         # Initialize field data array
-        field_data = np.zeros(self.all_data['flash', field][:, :, middle_index].shape)
-        
+        if normal_axis == "x":
+            field_data = np.zeros(self.all_data['flash', field][middle_index, :, :].shape)
+        elif normal_axis == "y":
+            field_data = np.zeros(self.all_data['flash', field][:, middle_index, :].shape)
+        elif normal_axis == "z":
+            field_data = np.zeros(self.all_data['flash', field][:, :, middle_index].shape)
+
+
         # Process data in chunks to save memory
         for i in range(0, self.all_data['flash', field].shape[0], chunk_size):
             end = min(i + chunk_size, self.all_data['flash', field].shape[0])
@@ -379,7 +393,7 @@ class FLASH_OSIRIS:
             # Remove small density values
             lower_bound = 0.0001
             field_data[field_data < lower_bound] = 0
-            np.save(f"{interp_dir}/{field}.npy", field_data)
+            np.save(f"{self.interp_dir}/{field}.npy", field_data)
         else:
             # Create and save interpolator for other fields
             interp = RegularGridInterpolator(
@@ -387,7 +401,7 @@ class FLASH_OSIRIS:
                 method='linear', bounds_error=True, fill_value=0
             )
             
-            with open(f"{interp_dir}/{field}.pkl", "wb") as f:
+            with open(f"{self.interp_dir}/{field}.pkl", "wb") as f:
                 dump(interp, f)
 
     def write_input_file(self):
@@ -1778,12 +1792,13 @@ def set_density_{ion}( STATE ):
 if __name__ == "__main__":
     # Example usage
     interface = FLASH_OSIRIS(
-        FLASH_data="/home/dschneidinger/shared/data/VAC_DEREK3D_20um/MagShockZ_hdf5_chk_0006",
-        inputfile_name="magshockz-v3.2",
+        FLASH_data="/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_11-2024/MagShockZ_hdf5_chk_0006",
+        inputfile_name="magshockz-TEST",
         osiris_dims=2,
         reference_density=5e18,
         xmax = [-1000,2500],
         ymax = [300,6000],
+        species_rqms= {'aluminum': 6000, 'silicon' : 3800, 'steel': 18000}
     )
     interface.write_everything()
     interface.show_box_in_plane('edens')
