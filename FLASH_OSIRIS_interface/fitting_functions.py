@@ -9,8 +9,14 @@ class Ray:
     Class to handle the lineouts and fitting from FLASH to OSIRIS.
     """
     def __init__(self, ds, start_pt, end_pt, reference_density = 5e18, rqm_factor = 50):
+        if isinstance(ds, str):
+            yt.enable_plugins()
+            self.ds = yt.load_for_osiris(ds, rqm_factor=rqm_factor)
+        elif isinstance(ds, yt.frontends.flash.data_structures.FLASHDataset):
+            self.ds = ds
+        self.rqm_factor = rqm_factor 
+
         omega_pe = np.sqrt(4 * np.pi * yt.units.elementary_charge_cgs**2 * reference_density / yt.units.electron_mass_cgs) # rad/s, assuming electron density of 1e18 cm^-3
-        self.rqm_factor = rqm_factor
 
         B_norm = (omega_pe * yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs) / yt.units.elementary_charge_cgs
         E_norm = B_norm * yt.units.speed_of_light_cgs
@@ -18,7 +24,8 @@ class Ray:
         vth_ele_norm = np.sqrt(yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs**2 / yt.units.boltzmann_constant_cgs)
         vth_ion_norm = np.sqrt(yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs**2 / yt.units.boltzmann_constant_cgs) * np.sqrt(3800 / self.rqm_factor) # This is using a very rough calculation for the rqm of silicon and Aluminum. Will need to change if you are using more complicated species
 
-        self.ds = ds
+
+
         self.start_pt = start_pt
         self.end_pt = end_pt
         self.length = self._get_distance_axis()
@@ -50,7 +57,7 @@ class Ray:
 
     def _get_distance_axis(self):
         '''
-        Helper function to get a distance axis for the ray on which you are taking a lineout
+        Helper function to get a distance axis for the ray on which you are taking a lineout in real units
         '''
         euclidean_length_of_ray = np.sqrt((self.end_pt[0]-self.start_pt[0])**2 + (self.end_pt[1]-self.start_pt[1])**2 + (self.end_pt[2]-self.start_pt[2])**2)
         dist_from_origin = np.sqrt(self.start_pt[0]**2 + self.start_pt[1]**2 + self.start_pt[2]**2)
@@ -59,27 +66,31 @@ class Ray:
     def _get_field_values(self, field: str):
         '''
         Helper function to get the field values for the ray on which you are taking a lineout
+        This handles the normalization as well
 
         Takes the square root of temperature fields to convert them to thermal velocities.
         '''
         ray = self.ds.ray(self.start_pt, self.end_pt)
         # For some god forsaken reason, yt does not return the values in the order of the ray, so we have to sort them
         ray_sort = np.argsort(ray["t"])
+
+        # thermal velocities to temperatures are the only nonlinear fields, so they need their own treatment where we take sqrt
         if field == "tele" or field == "tion":
             # vthe = sqrt(T/mc^2)
             # vthi = sqrt(T/mc^2) * 1 / sqrt(rqm)
-            # thermal velocities to temperatures are the only nonlinear fields, so they need their own treatment where we take sqrt
             values = (np.sqrt(ray[(field)][ray_sort]) / self.normalizations[field]).value
         else:
             values = (ray[(field)][ray_sort] / self.normalizations[field]).value
         return values
 
     def show_ray(self, field: str):
+        """ Show the ray in a slice plot with some specified field."""
         slc = yt.SlicePlot(self.ds, "z", ("flash", field))
         slc.annotate_line(self.start_pt, self.end_pt, color="red")
         slc.show()
 
     def show_lineout(self, field: str, log: bool=False):
+        """ Show the lineout of some field along ray"""
         line = yt.LinePlot(ds=self.ds, fields=("flash", field), start_point=self.start_pt, end_point=self.end_pt, npoints=10000)
         line.set_log(("flash", field), log=log)
         line.show()
@@ -89,29 +100,27 @@ class Ray:
         """
         Fit a polynomial to the lineout data.
         """
+
         vals = self._get_field_values(field)
-        # x_norm_smooth = np.linspace(self.osiris_length[0], self.osiris_length[-1], 3000)
         if fit_func == "polynomial":
             coefficients = np.polyfit(self.osiris_length, vals, degree)
             function = np.poly1d(coefficients)
             y_fit = function(self.osiris_length)
+
+        # Right now, exponential fitting is not working correctly
         elif fit_func == "exponential":
             coefficients = np.polyfit(np.log(self.osiris_length), vals, 1) # TODO fix AI slop
-            # y = np.exp(coefficients[0]) * np.exp(self.osiris_length + coefficients[1])  # Exponential fit
             function = lambda x: np.exp(coefficients[0]) * np.exp(x + coefficients[1])
             y_fit = function(self.osiris_length)
 
         elif fit_func == "piecewise":
-            # Note that for this, the meaning of degree is different. It is the number of segments, not the degree of the polynomial.
+            # Note that for piecewise, the meaning of degree is different. It is the number of segments, not the degree of the polynomial.
             pwlf_model = pwlf.PiecewiseLinFit(self.osiris_length, vals)
-
             res = pwlf_model.fit(degree)
-            # breaks = pwlf_model.fit(degree)
             y_fit = pwlf_model.predict(self.osiris_length)
             
-
         else:
-            raise ValueError("Unsupported fit function. Use 'polynomial' or 'exponential'.")
+            raise ValueError("Unsupported fit function. Use 'polynomial', 'exponential', or 'piecewise'.")
 
         if plot == True:
             # Plot the original data points
@@ -128,9 +137,9 @@ class Ray:
         # OSIRIS FORMATTING
         precision = 5
         result = ''
-        x = self.osiris_length
-        # In this case, the function can be defined in all space
+
         if fit_func == "polynomial":
+            # In this case, the function can be defined in all space
             if left_value is None and right_value is None:
                 for i in range(len(coefficients)):
                     result = f"{result}({np.format_float_scientific(coefficients[i], sign=False)})*(x2)^("+str(degree-i) + ") +"
@@ -138,13 +147,13 @@ class Ray:
 
             # In this case, the function is only defined in the region of interest
             if left_value is not None and right_value is not None:
-                result = f"{result}if(x2 < {round(x[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
+                result = f"{result}if(x2 < {round(self.osiris_length[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
                 for i in range(len(coefficients)):
                     result = f"{result} ({np.format_float_scientific(coefficients[i], precision=precision, sign=False)})*(x2^("+str(degree-i) + ") +"
                 result = result.strip(' +')+f", {right_value}))"
             # In this case, the function starts at the left side of the box and goes to the right boundary
             if left_value is None and right_value is not None:
-                result = f"{result}if(x2 < {round(x[-1],precision)}, "
+                result = f"{result}if(x2 < {round(self.osiris_length[-1],precision)}, "
                 for i in range(len(coefficients)):
                     result = f"{result} ({np.format_float_scientific(coefficients[i], precision=precision, sign=False)})*(x2^("+str(degree-i) + ") +"
                 result = result.strip(' +')+f", {right_value})"
@@ -154,12 +163,12 @@ class Ray:
 
             # In this case, the function is only defined in the region of interest
             if left_value is not None and right_value is not None:
-                result = f"{result}if(x2 < {round(x[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
+                result = f"{result}if(x2 < {round(self.osiris_length[0],precision)}, {left_value}, if(x2 < {round(self.osiris_length[-1], precision)}, "
                 result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})"
 
             # In this case, the function starts at the left side of the box and goes to the right boundary
             if left_value is None and right_value is not None:
-                result = f"{result}if(x2 < {round(x[-1],precision)}, "
+                result = f"{result}if(x2 < {round(self.osiris_length[-1],precision)}, "
                 result = f"{result} ({np.format_float_scientific(coefficients[0], precision=precision, sign=False)})*exp(x2 + {np.format_float_scientific(coefficients[1], precision=precision, sign=False)})"
 
         if fit_func == "piecewise":
@@ -172,17 +181,13 @@ class Ray:
                 result += f"if(x2 < {np.format_float_scientific(pwlf_model.fit_breaks[i+1],precision)}, "
                 result += f"x2*({np.format_float_scientific(pwlf_model.slopes[i], precision)}) + ({np.format_float_scientific(pwlf_model.intercepts[i], precision)}), "
 
-            result += str(pwlf_model.intercepts[-1] + pwlf_model.slopes[-1] * (x[-1] - pwlf_model.fit_breaks[-1])) + ")"*(len(pwlf_model.fit_breaks) - 1 + extra_parentheses) 
+            result += str(pwlf_model.intercepts[-1] + pwlf_model.slopes[-1] * (self.osiris_length[-1] - pwlf_model.fit_breaks[-1])) + ")"*(len(pwlf_model.fit_breaks) - 1 + extra_parentheses) 
 
         # Save that ish for later so we can write an easy breezy beautiful input file
         self.math_funcs[field] = result
         return result
 
 def main():
-    pass
-
-if __name__ == "__main__":
-    main()
     # Example usage:
     yt.enable_plugins()
     data_path = "/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005"
@@ -195,3 +200,11 @@ if __name__ == "__main__":
 
     fit_result = lineout.fit("sidens", degree=8, fit_func="piecewise", plot=True)
     print(fit_result)
+
+if __name__ == "__main__":
+    import sys.argparse as argparse
+    parser = argparse.ArgumentParser(
+                        prog='fitting_functions.py',
+                        description='',
+                        epilog='Text at the bottom of help')
+    main()

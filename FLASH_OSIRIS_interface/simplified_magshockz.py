@@ -5,8 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from fitting_functions import Ray 
 
-
-def get_template_config(template_type, lineout, **kwargs):
+def get_template_config(lineout: Ray, template_type: str, **kwargs):
     """
     Get configuration dictionary for different template types
     """
@@ -40,9 +39,15 @@ def get_template_config(template_type, lineout, **kwargs):
     config.update(kwargs)
     
     # Add physics-based calculations
-    config["upstream_gyrotime"] = int(1836 * 27 / 13 / lineout.rqm_factor / (70_000 / lineout.normalizations['magx']))
-    config["rqm_al"] = int(1836 * 27 / 13 / lineout.rqm_factor)
-    config["rqm_si"] = int(1836 * 28 / 14 / lineout.rqm_factor)
+    mass_proton = 1836
+    aluminum_mass_number = 27
+    silicon_mass_number = 28
+    al_charge_state = 13
+    si_charge_state = 14
+    B0 = 70_000  # Gauss, fully ionized aluminum ions
+    config["upstream_gyrotime"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor / (B0 / lineout.normalizations['magx'])) # 70k Gauss field, fully ionized alumium ions
+    config["rqm_al"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor)
+    config["rqm_si"] = int(mass_proton * silicon_mass_number / si_charge_state / lineout.rqm_factor)
     config["tmax"] = config["upstream_gyrotime"] * 10 # want to run for 10 upstream gyroperiods
     config["dt"] = lineout.osiris_length[-1] / config["nx_p"][1] / np.sqrt(2.0) # CFL condition. Factor of sqrt(2) to account for 2D simulation
     config["ndump"] = int(config["tmax"] / config['dt'] / 256) # set it up in such a way that we get 256 dumps total
@@ -55,7 +60,7 @@ def get_template_config(template_type, lineout, **kwargs):
     return config
 
 
-def write_input_file(lineout: Ray, template_type="basic", **kwargs):
+def write_input_file(lineout: Ray, template_type: str, **kwargs):
     """
     Write OSIRIS input file with different template configurations
     
@@ -65,8 +70,8 @@ def write_input_file(lineout: Ray, template_type="basic", **kwargs):
     - **kwargs: Override any default values
     """
     # Default configuration
-    config = get_template_config(template_type, lineout, **kwargs)
-    
+    config = get_template_config(lineout = lineout, template_type=template_type, **kwargs)
+
     return f'''
 !----------global simulation parameters----------
 simulation
@@ -318,21 +323,20 @@ diag_species
 \u007d
 '''
 
-def main(start_point, end_point, inputfile_name):
+def main(FLASH_data, start_point, end_point, inputfile_name, rqm_factor, template_type, **kwargs):
     """
-    Main function to run the analysis.
+    Parameters:
+    - FLASH_data: Path to the FLASH data directory
+    - start_point: Start point of the lineout (x, y, z)
+    - end_point: End point of the lineout (x, y, z)
+    - inputfile_name: Name of the output input file for OSIRIS
+    - rqm_factor: RQM factor to normalize by
+    - template_type: Type of template configuration to use
+    - **kwargs: Additional keyword arguments for configuration
     """
-
-    ## Path to FLASH data. This data was chosen because it's generally a simple setup.
-    ## We want to characterize the fundamental behavior of a pison expanding out into a magnetized background. 
-    data_path = Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005")
-
-    # Use the plugin I built for yt to load in FLASH data and split up ion species.
-    yt.enable_plugins()
-
-    ds = yt.load_for_osiris(data_path, rqm_factor = 50)
+    
     # Create a Ray object for the lineout
-    lineout = Ray(ds, start_point, end_point)
+    lineout = Ray(FLASH_data, start_point, end_point, rqm_factor=rqm_factor)
 
     lineout.fit("magx", degree=6, fit_func="piecewise", plot=False)
     lineout.fit('magy', degree=10, fit_func="piecewise", plot=False)
@@ -359,9 +363,22 @@ def main(start_point, end_point, inputfile_name):
     lineout.fit('tion', degree=5, fit_func="piecewise", plot=False)
 
     # Write the input file for OSIRIS
-    input_file_content = write_input_file(lineout)
+    input_file_content = write_input_file(lineout = lineout, template_type=template_type, **kwargs)
     with open(inputfile_name, 'w') as f:
         f.write(input_file_content)
 
+
 if __name__ == "__main__":
-    main(start_point = (0,0.05,0),end_point = (0,0.37,0), inputfile_name="testing_writeout.txt")
+  import argparse
+  parser = argparse.ArgumentParser(description="Run simplified MagShockZ analysis and generate OSIRIS input file.")
+  parser.add_argument('-d', '--data_path', type=str, default="/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005", help="Path to the FLASH data directory")
+  parser.add_argument('-s', '--start_point', type=float, nargs=3, default=(0, 0.05, 0), help="Start point of the lineout (x, y, z)")
+  parser.add_argument('-e', '--end_point', type=float, nargs=3, default=(0, 0.37, 0), help="End point of the lineout (x, y, z)")
+  parser.add_argument('-i', '--inputfile_name', type=str, default="testing_writeout.txt", help="Name of the output input file for OSIRIS")
+  parser.add_argument('-t', '--template_type', type=str, default="basic", help="Type of template configuration to use")
+  parser.add_argument('-m', '--rqm_factor', type=float, default=100, help="RQM factor to normalize by")
+  args = parser.parse_args()
+  print(args)
+
+  print(f"Running MagShockZ analysis with data path: {args.data_path},\n start point: {args.start_point},\n end point: {args.end_point},\n input file name: {args.inputfile_name},\n rqm factor: {args.rqm_factor},\n template type: {args.template_type}\n")
+  main(FLASH_data = args.data_path, start_point = args.start_point, end_point = args.end_point, inputfile_name = args.inputfile_name, rqm_factor=args.rqm_factor, template_type=args.template_type)
