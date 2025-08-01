@@ -12,12 +12,12 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     # Base configurations for different simulation types
     templates = {
         "basic": {  # Fallback with reasonable defaults
-            'xmax': [-64, 64], # try to get 6 ion inertial lengths in x direction. sqrt(380) ~ 20
-            "nx_p": [int(128*8000/lineout.osiris_length[-1]), 8000], # Get about the same resolution in x and y
+            'xmax': [int(-4*np.sqrt(380/lineout.rqm_factor)), int(4*np.sqrt(380/lineout.rqm_factor))], # try to get 8 ion inertial lengths in x direction. sqrt(380) ~ 20
+            "nx_p": None, # Get about the same resolution in x and y
             "num_par_x": [3, 3],
             "ndump": None,
             "dt": None,
-            "tmax": "40000",
+            "tmax": None,
             "node_number": [1, 2],
             "n_threads": 1,
             "tile_number": [32, 64],
@@ -45,12 +45,15 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     al_charge_state = 13
     si_charge_state = 14
     B0 = 70_000  # Gauss, fully ionized aluminum ions
+
+    n_cells_per_x = 15 
     config["upstream_gyrotime"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor / (B0 / lineout.normalizations['magx'])) # 70k Gauss field, fully ionized alumium ions
     config["rqm_al"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor)
     config["rqm_si"] = int(mass_proton * silicon_mass_number / si_charge_state / lineout.rqm_factor)
-    config["tmax"] = config["upstream_gyrotime"] * 10 # want to run for 10 upstream gyroperiods
+    config["tmax"] = config["upstream_gyrotime"] * 15 # want to run for 10 upstream gyroperiods
+    config["nx_p"] = [int((config["xmax"][1] - config["xmax"][0]) * n_cells_per_x), int((lineout.osiris_length[-1] - lineout.osiris_length[0]) * n_cells_per_x)] # Get about the same resolution in x and y
     config["dt"] = lineout.osiris_length[-1] / config["nx_p"][1] / np.sqrt(2.0) # CFL condition. Factor of sqrt(2) to account for 2D simulation
-    config["ndump"] = int(config["tmax"] / config['dt'] / 256) # set it up in such a way that we get 256 dumps total
+    config["ndump"] = int(config["tmax"] / config['dt'] / 256) # 256 dumps total
 
     # # num_tiles must be a power of two and greater than n_cells_tot / 1024
     # n_cells_tot = config["nx_p"][0] * config["nx_p"][1]
@@ -338,29 +341,29 @@ def main(FLASH_data, start_point, end_point, inputfile_name, rqm_factor, templat
     # Create a Ray object for the lineout
     lineout = Ray(FLASH_data, start_point, end_point, rqm_factor=rqm_factor)
 
-    lineout.fit("magx", degree=6, fit_func="piecewise", plot=False)
+    lineout.fit("magx", degree=10, fit_func="piecewise", plot=False)
     lineout.fit('magy', degree=10, fit_func="piecewise", plot=False)
     lineout.fit('magz', degree=10, fit_func="piecewise", plot=False)
 
-    lineout.fit('Ex', degree=5, fit_func="piecewise", plot=False)
-    lineout.fit('Ey', degree=8, fit_func="piecewise", plot=False)
+    lineout.fit('Ex', degree=10, fit_func="piecewise", plot=False)
+    lineout.fit('Ey', degree=10, fit_func="piecewise", plot=False)
     lineout.fit('Ez', degree=10, fit_func="piecewise", plot=False)
 
-    lineout.fit("sidens", degree=8, fit_func="piecewise", plot=False)
-    lineout.fit("aldens", degree=8, fit_func="piecewise", plot=False)
-    lineout.fit("edens", degree=8, fit_func="piecewise", plot=False)
+    lineout.fit("sidens", degree=10, fit_func="piecewise", plot=False)
+    lineout.fit("aldens", degree=10, fit_func="piecewise", plot=False)
+    lineout.fit("edens", degree=10, fit_func="piecewise", plot=False)
 
-    lineout.fit('v_ex', degree=5, fit_func="piecewise", plot=False)
-    lineout.fit('v_ix', degree=15, fit_func="piecewise", plot=False)
+    lineout.fit('v_ex', degree=10, fit_func="piecewise", plot=False)
+    lineout.fit('v_ix', degree=10, fit_func="piecewise", plot=False)
 
-    lineout.fit('v_iy', degree=15, fit_func="piecewise", plot=False)
-    lineout.fit('v_ey', degree=15, fit_func="piecewise", plot=False)
+    lineout.fit('v_iy', degree=10, fit_func="piecewise", plot=False)
+    lineout.fit('v_ey', degree=10, fit_func="piecewise", plot=False)
 
-    lineout.fit('v_iz', degree=8, fit_func="piecewise", plot=False)
-    lineout.fit('v_ez', degree=8, fit_func="piecewise", plot=False)
+    lineout.fit('v_iz', degree=10, fit_func="piecewise", plot=False)
+    lineout.fit('v_ez', degree=10, fit_func="piecewise", plot=False)
 
-    lineout.fit('tele', degree=5, fit_func="piecewise", plot=False)
-    lineout.fit('tion', degree=5, fit_func="piecewise", plot=False)
+    lineout.fit('tele', degree=10, fit_func="piecewise", plot=False)
+    lineout.fit('tion', degree=10, fit_func="piecewise", plot=False)
 
     # Write the input file for OSIRIS
     input_file_content = write_input_file(lineout = lineout, template_type=template_type, **kwargs)
@@ -372,8 +375,8 @@ if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description="Run simplified MagShockZ analysis and generate OSIRIS input file.")
   parser.add_argument('-d', '--data_path', type=str, default="/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005", help="Path to the FLASH data directory")
-  parser.add_argument('-s', '--start_point', type=float, nargs=3, default=(0, 0.05, 0), help="Start point of the lineout (x, y, z)")
-  parser.add_argument('-e', '--end_point', type=float, nargs=3, default=(0, 0.37, 0), help="End point of the lineout (x, y, z)")
+  parser.add_argument('-s', '--start_point', type=float, nargs=3, default=(0, 0.07, 0), help="Start point of the lineout (x, y, z)")
+  parser.add_argument('-e', '--end_point', type=float, nargs=3, default=(0, 0.3, 0), help="End point of the lineout (x, y, z)")
   parser.add_argument('-i', '--inputfile_name', type=str, default="testing_writeout.txt", help="Name of the output input file for OSIRIS")
   parser.add_argument('-t', '--template_type', type=str, default="basic", help="Type of template configuration to use")
   parser.add_argument('-m', '--rqm_factor', type=float, default=100, help="RQM factor to normalize by")

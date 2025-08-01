@@ -1,12 +1,11 @@
 #!/bin/bash
-# arg 1 is the absolute path to simulation directory
 # hard code in where your project is and where osiris is on your hard drive
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
 # Use rm -i directly in the script to avoid unexpected behavior for users
 
-NUM_NODES=2 # Default value for chablis
+NUM_NODES=2 # Default value for GPU 
 DIMENSIONS=2
 restart='false'
 INPUTFILENAME=''
@@ -14,9 +13,8 @@ interactive='false'
 PATHTOINPUTFILE=''
 verbose='false'
 
-
+# EDIT THESE PATHS AS NEEDED
 OSIRISPATH="/home/${USER}/osiris"
-PYTHONSCRIPT=''
 PATHTOPROJECT="/home/${USER}/MagShockZ"
 
 print_usage() {
@@ -90,4 +88,3 @@ else
         nohup mpirun -n ${NUM_NODES} ${OSIRISPATH}/bin/osiris-${DIMENSIONS}D.e input_file.txt > osiris_output.log 2>&1 || { echo "Osiris simulation failed"; exit 1; } &
     fi
 fi
-
