@@ -14,19 +14,6 @@ Welcome to the MagShockZ project!
 
 This repository primarily contains the code used to convert FLASH simulation to OSIRIS simulation, though it is generally for analysis of simulations related to the Magnetized Collisionless Shocks on Z experiment (MagShockZ).
 
-## Installation
-
-To "install" MagShockZ, follow these steps:
-
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/Schaeffer-Lab/MagShockZ.git
-    ```
-2. Navigate to the project directory:
-    ```bash
-    cd MagShockZ
-    ```
-
 3 (optional). Install the [pyVisOS](https://github.com/UCLA-Plasma-Simulation-Group/pyVisOS.git) package for visualization:
     ```bash
     pip install git+https://github.com/UCLA-Plasma-Simulation-Group/pyVisOS.git@dev

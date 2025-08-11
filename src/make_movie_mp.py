@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 
 def generate_frame(args):
 
-    frame, path_to_data, vlimits, gyrotime_scale, dpi, gyrotime = args
-    data = osh5io.read_h5(f'{path_to_data}-{frame:06d}.h5')
+    frame, vlimits, dpi, gyrotime = args
+    data = osh5io.read_h5(frame)
     fig, ax = plt.subplots(dpi=dpi)
     # Add this line to adjust subplot parameters
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
@@ -21,7 +21,7 @@ def generate_frame(args):
     else:
         osh5vis.osplot(data, vmax=vlimits[1], vmin=vlimits[0]) if vlimits else osh5vis.osplot(data)
     
-    if gyrotime_scale:
+    if gyrotime:
         plt.title(f"{data.run_attrs['NAME']} {np.round(data.run_attrs['TIME'][0]/gyrotime, 2)}" + r" $\omega_{ci}$")
     
     # Add this line to ensure tight layout
@@ -33,28 +33,31 @@ def generate_frame(args):
     return frame, frame_data
 
 
-def movie(path_to_data, frames=True, vlimits=None, n_jobs=cpu_count(), gyrotime = 625, dpi=100):
-    parent_dir = Path(path_to_data).parent
-    frames = len(list(parent_dir.glob('*.h5'))) if frames is True else frames
-
-
+def movie(path_to_data, vlimits=None, gyrotime = None, dpi=100):
+    parent_dir = Path(path_to_data).resolve()
+    frames = sorted(list(parent_dir.glob('*.h5')))
+    n_jobs = cpu_count()
+    
+    if vlimits is None:
+        data_middle = osh5io.read_h5(str(frames[len(frames)//2]))
+        vlimits = [np.min(data_middle), np.max(data_middle)]
     with Pool(n_jobs) as pool:
-        results = pool.map(generate_frame, [(frame, path_to_data, vlimits, True, dpi, gyrotime) for frame in range(frames)])
+        results = pool.map(generate_frame, [(str(frame), vlimits, dpi, gyrotime) for frame in frames])
 
-    frame_data = dict(results)
+    results
 
     fig, ax = plt.subplots(dpi=dpi)
-    def animate(frame):
+    def animate(frame_data):
         ax.clear()
-        ax.imshow(frame_data[frame], aspect='auto')
+        ax.imshow(frame_data, aspect='auto')
         ax.axis('off')
         plt.tight_layout(pad=0)
         return ax
 
-    ani = FuncAnimation(fig, animate, frames=frames, interval=60)
-    video = ani.to_html5_video()
-    display.display(display.HTML(video))
-    plt.close()
+    # Extract only the image data from results
+    frame_images = [fd[1] for fd in results]
+    ani = FuncAnimation(fig, animate, frames=frame_images, interval=60)
+    return ani
 
 def phase_space_frame(args):
     import matplotlib.pylab as pl
@@ -140,3 +143,10 @@ def phase_space_movie(path_to_data, frames=True, vlimits=None, n_jobs=cpu_count(
     video = ani.to_html5_video()
     display.display(display.HTML(video))
     plt.close()
+
+def test_movie():
+    path_to_data = '/home/dschneidinger/MagShockZ/simulations/raw_data/magshockz-v2.3.1d/MS/DENSITY/Magnesium/charge'
+    movie(path_to_data)
+
+if __name__ == "__main__":
+    test_movie()
