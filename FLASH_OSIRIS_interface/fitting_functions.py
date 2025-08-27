@@ -19,11 +19,10 @@ class Ray:
         omega_pe = np.sqrt(4 * np.pi * yt.units.elementary_charge_cgs**2 * reference_density / yt.units.electron_mass_cgs) # rad/s, assuming electron density of 1e18 cm^-3
 
         B_norm = (omega_pe * yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs) / yt.units.elementary_charge_cgs
-        E_norm = B_norm * yt.units.speed_of_light_cgs
+        E_norm = B_norm * yt.units.speed_of_light_cgs / np.sqrt(self.rqm_factor)
         v_norm = yt.units.speed_of_light_cgs / np.sqrt(self.rqm_factor)
         vth_ele_norm = np.sqrt(yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs**2 / yt.units.boltzmann_constant_cgs)
         vth_ion_norm = np.sqrt(yt.units.electron_mass_cgs * yt.units.speed_of_light_cgs**2 / yt.units.boltzmann_constant_cgs) * np.sqrt(3800 / self.rqm_factor) # This is using a very rough calculation for the rqm of silicon and Aluminum. Will need to change if you are using more complicated species
-
 
 
         self.start_pt = start_pt
@@ -100,6 +99,8 @@ class Ray:
         """
         Fit a polynomial to the lineout data.
         """
+        if field.endswith("dens"):
+            print("suggest using fit_density for initializing density fields")
 
         vals = self._get_field_values(field)
         if fit_func == "polynomial":
@@ -187,6 +188,33 @@ class Ray:
         self.math_funcs[field] = result
         return result
 
+    def fit_density(self, species, n_skip=2, precision = 2, plot = False):
+        """
+        OSIRIS has a built-in piecewise linear density initialization, so let's take advantage of that
+        If you are encountering errors with OSIRIS reading in the profile information, you likely have too many points - increase n_skip
+        """
+        vals = self._get_field_values(species)
+
+        vals = vals[::n_skip]
+
+
+
+        x_axis = np.linspace(self.osiris_length[0], self.osiris_length[-1], len(vals))
+
+        # Looks like we accidentally get something larger than xmax sometimes, this should be kosher
+        vals = vals[0:-2]
+        x_axis = x_axis[0:-2]
+        if plot == True:
+            plt.plot(x_axis, vals, label=species)
+
+        result = ', '.join(map(lambda v: np.format_float_positional(v, precision=precision), vals))
+        x = ', '.join(map(lambda v: np.format_float_positional(v, precision=precision), x_axis))
+        self.math_funcs[species] = { "x" : x, "dens" : result}
+        return x, result
+
+
+
+
 def main():
     # Example usage:
     yt.enable_plugins()
@@ -202,8 +230,8 @@ def main():
     print(fit_result)
 
 if __name__ == "__main__":
-    import sys.argparse as argparse
-    parser = argparse.ArgumentParser(
+    import sys
+    parser = sys.argparse.ArgumentParser(
                         prog='fitting_functions.py',
                         description='',
                         epilog='Text at the bottom of help')

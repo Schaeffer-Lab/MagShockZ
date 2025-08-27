@@ -14,11 +14,12 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
         "basic": {  # Fallback with reasonable defaults
             'xmax': [int(-4*np.sqrt(380/lineout.rqm_factor)), int(4*np.sqrt(380/lineout.rqm_factor))], # try to get 8 ion inertial lengths in x direction. sqrt(380) ~ 20
             "nx_p": None, # Get about the same resolution in x and y
-            "num_par_x": [3, 3],
+            "num_par_x": [5, 5],
             "ndump": None,
+            "dx": 0.07,
             "dt": None,
             "tmax": None,
-            "node_number": [1, 2],
+            "node_number": [2, 1],
             "n_threads": 1,
             "tile_number": [32, 64],
             "emf_boundary_x2": ["open", "open"],
@@ -30,7 +31,9 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
             "ps_np": [128, 1024, 128],
             "ps_nx": [256, 1024],
             "emf_reports": '"e1", "e2", "e3", "b1", "b2", "b3"',
-            "ps_xmin_x1": lineout.osiris_length[0]
+            "ps_xmin_x1": lineout.osiris_length[0],
+            "smooth_type": "none",
+            "smooth_order": "1",
         }
     }
     
@@ -46,13 +49,12 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     si_charge_state = 14
     B0 = 70_000  # Gauss, fully ionized aluminum ions
 
-    n_cells_per_x = 15 
     config["upstream_gyrotime"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor / (B0 / lineout.normalizations['magx'])) # 70k Gauss field, fully ionized alumium ions
     config["rqm_al"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor)
     config["rqm_si"] = int(mass_proton * silicon_mass_number / si_charge_state / lineout.rqm_factor)
     config["tmax"] = config["upstream_gyrotime"] * 15 # want to run for 10 upstream gyroperiods
-    config["nx_p"] = [int((config["xmax"][1] - config["xmax"][0]) * n_cells_per_x), int((lineout.osiris_length[-1] - lineout.osiris_length[0]) * n_cells_per_x)] # Get about the same resolution in x and y
-    config["dt"] = lineout.osiris_length[-1] / config["nx_p"][1] / np.sqrt(2.0) # CFL condition. Factor of sqrt(2) to account for 2D simulation
+    config["nx_p"] = [int((config["xmax"][1] - config["xmax"][0]) / config['dx']), int((lineout.osiris_length[-1] - lineout.osiris_length[0]) / config['dx'])] # Get about the same resolution in x and y
+    config["dt"] = config['dx'] * 0.99 / np.sqrt(2.0) # CFL condition. Factor of sqrt(2) to account for 2D simulation
     config["ndump"] = int(config["tmax"] / config['dt'] / 256) # 256 dumps total
 
     # # num_tiles must be a power of two and greater than n_cells_tot / 1024
@@ -194,8 +196,8 @@ udist
 !----------density profile for electrons----------
 profile
 \u007b
-  profile_type = "math func",
-  math_func_expr = "{lineout.math_funcs['edens']}",
+  x(1:{lineout.math_funcs['edens']['x'].count(',') + 1},2) = {lineout.math_funcs['edens']['x']},
+  fx(1:{lineout.math_funcs['edens']['dens'].count(',') + 1},2) = {lineout.math_funcs['edens']['dens']},
 \u007d
 
 !----------boundary conditions for electrons----------
@@ -246,8 +248,8 @@ udist
 !----------density profile for Aluminum ions----------
 profile
 \u007b
- profile_type = "math func",
- math_func_expr = "{lineout.math_funcs['aldens']}",
+  x(1:{lineout.math_funcs['aldens']['x'].count(',') + 1},2) = {lineout.math_funcs['aldens']['x']},
+  fx(1:{lineout.math_funcs['aldens']['dens'].count(',') + 1},2) = {lineout.math_funcs['aldens']['dens']},
 \u007d
 
 !----------boundary conditions for Alumium ions----------
@@ -298,8 +300,8 @@ udist
 !----------density profile for Silicon ions----------
 profile
 \u007b
-  profile_type = "math func",
-  math_func_expr = "{lineout.math_funcs['sidens']}",
+  x(1:{lineout.math_funcs['sidens']['x'].count(',') + 1},2) = {lineout.math_funcs['sidens']['x']},
+  fx(1:{lineout.math_funcs['sidens']['dens'].count(',') + 1},2) = {lineout.math_funcs['sidens']['dens']},
 \u007d
 
 !----------boundary conditions for Silicon ions----------
@@ -323,6 +325,13 @@ diag_species
  ps_np(1:3) = {config["ps_np"][0]}, {config["ps_np"][1]}, {config["ps_np"][2]},
  ps_nx(1:2) = {config["ps_nx"][0]}, {config["ps_nx"][1]},
  phasespaces = "p1x1", "p1x2", "p2x1", "p2x2",
+\u007d
+
+!--------Current smoothing----------
+smooth
+\u007b
+  type = "{config["smooth_type"]}",
+  order = {config["smooth_order"]},
 \u007d
 '''
 
@@ -349,9 +358,9 @@ def main(FLASH_data, start_point, end_point, inputfile_name, rqm_factor, templat
     lineout.fit('Ey', degree=10, fit_func="piecewise", plot=False)
     lineout.fit('Ez', degree=10, fit_func="piecewise", plot=False)
 
-    lineout.fit("sidens", degree=10, fit_func="piecewise", plot=False)
-    lineout.fit("aldens", degree=10, fit_func="piecewise", plot=False)
-    lineout.fit("edens", degree=10, fit_func="piecewise", plot=False)
+    lineout.fit_density("sidens")
+    lineout.fit_density("aldens")
+    lineout.fit_density("edens")
 
     lineout.fit('v_ex', degree=10, fit_func="piecewise", plot=False)
     lineout.fit('v_ix', degree=10, fit_func="piecewise", plot=False)
@@ -374,7 +383,7 @@ def main(FLASH_data, start_point, end_point, inputfile_name, rqm_factor, templat
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description="Run simplified MagShockZ analysis and generate OSIRIS input file.")
-  parser.add_argument('-d', '--data_path', type=str, default="/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_06-2024/MAGON/MagShockZ_hdf5_chk_0005", help="Path to the FLASH data directory")
+  parser.add_argument('-d', '--data_path', type=str, default="/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005", help="Path to the FLASH data directory")
   parser.add_argument('-s', '--start_point', type=float, nargs=3, default=(0, 0.07, 0), help="Start point of the lineout (x, y, z)")
   parser.add_argument('-e', '--end_point', type=float, nargs=3, default=(0, 0.3, 0), help="End point of the lineout (x, y, z)")
   parser.add_argument('-i', '--inputfile_name', type=str, default="testing_writeout.txt", help="Name of the output input file for OSIRIS")
