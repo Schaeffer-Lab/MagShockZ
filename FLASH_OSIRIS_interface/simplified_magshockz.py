@@ -14,7 +14,7 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
         "basic": {  # Fallback with reasonable defaults
             'xmax': [int(-4*np.sqrt(380/lineout.rqm_factor)), int(4*np.sqrt(380/lineout.rqm_factor))], # try to get 8 ion inertial lengths in x direction. sqrt(380) ~ 20
             "nx_p": None, # Get about the same resolution in x and y
-            "num_par_x": [5, 5],
+            "num_par_x": [7, 7],
             "ndump": None,
             "dx": 0.07,
             "dt": None,
@@ -32,8 +32,9 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
             "ps_nx": [256, 1024],
             "emf_reports": '"e1", "e2", "e3", "b1", "b2", "b3"',
             "ps_xmin_x1": lineout.osiris_length[0],
-            "smooth_type": "none",
-            "smooth_order": "1",
+            "smooth_type": "compensated",
+            "smooth_order": "2",
+            "interpolation": "quadratic",
         }
     }
     
@@ -55,7 +56,7 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     config["tmax"] = config["upstream_gyrotime"] * 15 # want to run for 10 upstream gyroperiods
     config["nx_p"] = [int((config["xmax"][1] - config["xmax"][0]) / config['dx']), int((lineout.osiris_length[-1] - lineout.osiris_length[0]) / config['dx'])] # Get about the same resolution in x and y
     config["dt"] = config['dx'] * 0.99 / np.sqrt(2.0) # CFL condition. Factor of sqrt(2) to account for 2D simulation
-    config["ndump"] = int(config["tmax"] / config['dt'] / 256) # 256 dumps total
+    config["ndump"] = int(config["tmax"] / config['dt'] / 512) # 512 dumps total
 
     # # num_tiles must be a power of two and greater than n_cells_tot / 1024
     # n_cells_tot = config["nx_p"][0] * config["nx_p"][1]
@@ -167,7 +168,7 @@ diag_emf
 !----------number of particle species----------
 particles
 \u007b
-  interpolation = "quadratic",
+  interpolation = "{config['interpolation']}",
   num_species = 3,
 \u007d
 
@@ -196,6 +197,8 @@ udist
 !----------density profile for electrons----------
 profile
 \u007b
+  profile_type(1:2) = "uniform", "piecewise-linear",
+  num_x = {lineout.math_funcs['edens']['x'].count(',') + 1},
   x(1:{lineout.math_funcs['edens']['x'].count(',') + 1},2) = {lineout.math_funcs['edens']['x']},
   fx(1:{lineout.math_funcs['edens']['dens'].count(',') + 1},2) = {lineout.math_funcs['edens']['dens']},
 \u007d
@@ -248,6 +251,8 @@ udist
 !----------density profile for Aluminum ions----------
 profile
 \u007b
+  profile_type(1:2) = "uniform", "piecewise-linear",
+  num_x = {lineout.math_funcs['edens']['x'].count(',') + 1},
   x(1:{lineout.math_funcs['aldens']['x'].count(',') + 1},2) = {lineout.math_funcs['aldens']['x']},
   fx(1:{lineout.math_funcs['aldens']['dens'].count(',') + 1},2) = {lineout.math_funcs['aldens']['dens']},
 \u007d
@@ -300,6 +305,8 @@ udist
 !----------density profile for Silicon ions----------
 profile
 \u007b
+  profile_type(1:2) = "uniform", "piecewise-linear",
+  num_x = {lineout.math_funcs['edens']['x'].count(',') + 1},
   x(1:{lineout.math_funcs['sidens']['x'].count(',') + 1},2) = {lineout.math_funcs['sidens']['x']},
   fx(1:{lineout.math_funcs['sidens']['dens'].count(',') + 1},2) = {lineout.math_funcs['sidens']['dens']},
 \u007d

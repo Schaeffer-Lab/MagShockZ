@@ -188,12 +188,12 @@ class Ray:
         self.math_funcs[field] = result
         return result
 
-    def fit_density(self, species, n_skip=2, precision = 2, plot = False):
+    def fit_density(self, field, n_skip=2, precision = 2, plot = False):
         """
         OSIRIS has a built-in piecewise linear density initialization, so let's take advantage of that
         If you are encountering errors with OSIRIS reading in the profile information, you likely have too many points - increase n_skip
         """
-        vals = self._get_field_values(species)
+        vals = self._get_field_values(field)
 
         vals = vals[::n_skip]
 
@@ -205,11 +205,11 @@ class Ray:
         vals = vals[0:-2]
         x_axis = x_axis[0:-2]
         if plot == True:
-            plt.plot(x_axis, vals, label=species)
+            plt.plot(x_axis, vals, label=field)
 
         result = ', '.join(map(lambda v: np.format_float_positional(v, precision=precision), vals))
         x = ', '.join(map(lambda v: np.format_float_positional(v, precision=precision), x_axis))
-        self.math_funcs[species] = { "x" : x, "dens" : result}
+        self.math_funcs[field] = { "x" : x, "dens" : result}
         return x, result
 
 

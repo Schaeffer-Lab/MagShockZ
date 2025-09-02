@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from vysxd_define import *
+from src.vysxd_define import *
+from src.vysxd_analysis import *
 import h5py
 import numba
 
