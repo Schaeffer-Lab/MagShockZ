@@ -13,10 +13,10 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     templates = {
         "basic": {  # Fallback with reasonable defaults
             'xmax': [int(-4*np.sqrt(380/lineout.rqm_factor)), int(4*np.sqrt(380/lineout.rqm_factor))], # try to get 8 ion inertial lengths in x direction. sqrt(380) ~ 20
-            'if_move': ".true.",
+            'if_move': ".false.",
             'v_move': 0.01,
             "nx_p": None, # Get about the same resolution in x and y
-            "num_par_x": [7, 7],
+            "num_par_x": [5, 5],
             "ndump": None,
             "dx": 0.07,
             "dt": None,
@@ -34,9 +34,9 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
             "ps_nx": [256, 1024],
             "emf_reports": '"e1", "e2", "e3", "b1", "b2", "b3"',
             "ps_xmin_x1": lineout.osiris_length[0],
-            "smooth_type": "compensated",
-            "smooth_order": "2",
-            "interpolation": "quadratic",
+            "smooth_type": "none",
+            "smooth_order": "1",
+            "interpolation": "cubic",
         }
     }
     
@@ -57,7 +57,7 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     config["rqm_si"] = int(mass_proton * silicon_mass_number / si_charge_state / lineout.rqm_factor)
     config["tmax"] = config["upstream_gyrotime"] * 15 # want to run for 10 upstream gyroperiods
     config["nx_p"] = [int((config["xmax"][1] - config["xmax"][0]) / config['dx']), int((lineout.osiris_length[-1] - lineout.osiris_length[0]) / config['dx'])] # Get about the same resolution in x and y
-    config["dt"] = config['dx'] * 0.99 / np.sqrt(2.0) # CFL condition. Factor of sqrt(2) to account for 2D simulation
+    config["dt"] = np.round(config['dx'] * 0.95 / np.sqrt(2.0), 3) # CFL condition. Factor of sqrt(2) to account for 2D simulation # I was using 0.99 before but it turns out that it needs to be 0.95 instead. Fucking great
     config["ndump"] = int(config["tmax"] / config['dt'] / 512) # 512 dumps total
 
     # # num_tiles must be a power of two and greater than n_cells_tot / 1024
@@ -129,8 +129,8 @@ space
 \u007b
  xmin(1:2) = {config['xmax'][0]}, {int(lineout.osiris_length[0])},
  xmax(1:2) = {config['xmax'][1]}, {int(lineout.osiris_length[-1])},
- if_move(1:2) = .false., {config['if_move']},
- move_u = {-1*config['v_move']},
+ !if_move(1:2) = .false., {config['if_move']},
+ !move_u = {-1*config['v_move']},
 \u007d
 
 
