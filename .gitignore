@@ -57,7 +57,9 @@ npm-debug.log
 
 # Simulation data #
 */MS/
-
+*/RE/
+*/TIMINGS/
+*.out
 
 # tmp files and plotting files #
 */tmp/

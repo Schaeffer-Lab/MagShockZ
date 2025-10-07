@@ -16,15 +16,17 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
             'if_move': ".false.",
             'v_move': 0.01,
             "nx_p": None, # Get about the same resolution in x and y
-            "num_par_x": [5, 5],
+            "num_par_x": [16, 16],
             "ndump": None,
-            "dx": 0.07,
+            "dx": 0.3,
             "dt": None,
             "tmax": None,
             "node_number": [2, 1],
             "n_threads": 1,
             "tile_number": [32, 64],
-            "emf_boundary_x2": ["open", "open"],
+            "emf_boundary_x2": ["pmc", "vpml"],
+            "vpml_bnd_size": 50,
+            "vpml_diffuse": ".false.",
             "part_boundary_x2": ["thermal", "thermal"],
             "reports": '"charge"',
             "rep_udist": '', # I believe that this is broken for the gpu version as well
@@ -116,11 +118,10 @@ time_step
 !----------restart information----------
 restart
 \u007b
-! It seems like restart is broken on the GPU version
-!  ndump_fac = -1,
-!  ndump_time = 3590, !once/hour
-!  if_restart = .false.,
-!  if_remold = .true.,
+  ndump_fac = -1,
+  ndump_time = 3590, !once/hour
+  if_restart = .false.,
+  if_remold = .true.,
 \u007d
 
 
@@ -158,6 +159,8 @@ el_mag_fld
 emf_bound
 \u007b
  type(1:2,2) =  "{config["emf_boundary_x2"][0]}", "{config["emf_boundary_x2"][1]}", ! boundaries for x2
+ vpml_diffuse(2,2) = {config["vpml_diffuse"]},
+ vpml_bnd_size = {config["vpml_bnd_size"]},
 \u007d
 
 !----------- electro-magnetic field diagnostics ---------
@@ -396,7 +399,7 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Run simplified MagShockZ analysis and generate OSIRIS input file.")
   parser.add_argument('-d', '--data_path', type=str, default="/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005", help="Path to the FLASH data directory")
   parser.add_argument('-s', '--start_point', type=float, nargs=3, default=(0, 0.07, 0), help="Start point of the lineout (x, y, z)")
-  parser.add_argument('-e', '--end_point', type=float, nargs=3, default=(0, 0.3, 0), help="End point of the lineout (x, y, z)")
+  parser.add_argument('-e', '--end_point', type=float, nargs=3, default=(0, 0.9, 0), help="End point of the lineout (x, y, z)")
   parser.add_argument('-i', '--inputfile_name', type=str, default="testing_writeout.txt", help="Name of the output input file for OSIRIS")
   parser.add_argument('-t', '--template_type', type=str, default="basic", help="Type of template configuration to use")
   parser.add_argument('-m', '--rqm_factor', type=float, default=100, help="RQM factor to normalize by")

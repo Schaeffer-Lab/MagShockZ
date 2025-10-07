@@ -195,6 +195,9 @@ class Ray:
         """
         vals = self._get_field_values(field)
 
+        while len(vals) / n_skip > 64:
+            n_skip += 1
+
         vals = vals[::n_skip]
 
 
