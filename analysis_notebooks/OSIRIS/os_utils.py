@@ -141,6 +141,8 @@ def movie(time_series_data, **kwargs):
     # Run that ish in parallel so it goes FAST
     with Pool(cpu_count()) as pool:
         pool.starmap(_frame_generator, [(frame, time_series_data[frame], vlimits) for frame in range(len(time_series_data))])
+    # if isinstance(time_series_data, list) and isinstance(time_series_data[0], osh5io.H5Data):
+        # pool.starmap(_frame_generator, [(frame, time_series_data[frame], vlimits) for frame in range(len(time_series_data))])
 
     movie_path = _save_movie(path_to_tmp='tmp')
     # Read the movie file into memory and return bytes
