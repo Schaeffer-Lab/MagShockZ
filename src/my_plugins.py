@@ -103,9 +103,9 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
         
 
         def make_aluminum_density(field, data):
-                channel_density = data['flash','edens'] * (data["flash","species_mask"] == 2)
-                return channel_density
-        
+                aluminum_density = data['flash','edens'] * (data["flash","species_mask"] == 2)
+                return aluminum_density
+
         ds.add_field(("flash","aldens"),
                 function=make_aluminum_density,
                 units="1/code_length**3",
