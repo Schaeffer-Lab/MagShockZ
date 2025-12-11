@@ -13,10 +13,8 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     templates = {
         "basic": {  # Fallback with reasonable defaults
             'xmax': [int(-4*np.sqrt(380/lineout.rqm_factor)), int(4*np.sqrt(380/lineout.rqm_factor))], # try to get 8 ion inertial lengths in x direction. sqrt(380) ~ 20
-            'if_move': ".false.",
-            'v_move': 0.01,
             "nx_p": None, # Get about the same resolution in x and y
-            "num_par_x": [16, 16],
+            "num_par_x": [10, 10],
             "ndump": None,
             "dx": 0.3,
             "dt": None,
@@ -39,6 +37,33 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
             "smooth_type": "none",
             "smooth_order": "1",
             "interpolation": "cubic",
+        },
+        "perlmutter": {
+            'xmax': [int(-5*np.sqrt(380/lineout.rqm_factor)), int(5*np.sqrt(380/lineout.rqm_factor))],
+            "nx_p": None, # Get about the same resolution in x and y
+            "num_par_x": [16, 16],
+            "ndump": None,
+            "dx": 0.3,
+            "dt": None,
+            "tmax": None,
+            "tile_number": None,
+            "node_number": [24, 1], # Should be a multiple of 4 for Perlmutter, 4 GPUs per node
+            "n_threads": 1,
+            "emf_boundary_x2": ["pmc", "vpml"],
+            "vpml_bnd_size": 100,
+            "vpml_diffuse": ".true.",
+            "part_boundary_x2": ["thermal", "thermal"],
+            "reports": '"charge", "j1", "j2", "j3"',
+            "rep_udist": '', # I believe that this is broken for the gpu version
+            "ps_pmin": [-0.15, -0.15, -0.15],
+            "ps_pmax": [0.15, 0.15, 0.15],
+            "ps_np": [256, 2048, 128],
+            "ps_nx": [512, 4096],
+            "emf_reports": '"e1", "e2", "e3", "b1", "b2", "b3"',
+            "ps_xmin_x1": lineout.osiris_length[0],
+            "smooth_type": "binomial",
+            "smooth_order": "2",
+            "interpolation": "cubic",
         }
     }
     
@@ -57,15 +82,33 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     config["upstream_gyrotime"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor / (B0 / lineout.normalizations['magx'])) # 70k Gauss field, fully ionized alumium ions
     config["rqm_al"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor)
     config["rqm_si"] = int(mass_proton * silicon_mass_number / si_charge_state / lineout.rqm_factor)
-    config["tmax"] = config["upstream_gyrotime"] * 15 # want to run for 10 upstream gyroperiods
+    config["tmax"] = config["upstream_gyrotime"] * 15
     config["nx_p"] = [int((config["xmax"][1] - config["xmax"][0]) / config['dx']), int((lineout.osiris_length[-1] - lineout.osiris_length[0]) / config['dx'])] # Get about the same resolution in x and y
     config["dt"] = np.round(config['dx'] * 0.95 / np.sqrt(2.0), 3) # CFL condition. Factor of sqrt(2) to account for 2D simulation # I was using 0.99 before but it turns out that it needs to be 0.95 instead. Fucking great
     config["ndump"] = int(config["tmax"] / config['dt'] / 512) # 512 dumps total
 
-    # # num_tiles must be a power of two and greater than n_cells_tot / 1024
-    # n_cells_tot = config["nx_p"][0] * config["nx_p"][1]
-    # num_tiles = 2 ** np.ceil(np.log2(n_cells_tot / 1024))
-    # config["tile_number"] = [np.sqrt(int(num_tiles)), np.sqrt(int(num_tiles))]
+    # num_tiles must be a power of two and greater than n_cells_tot / 1024
+    n_cells_tot = config["nx_p"][0] * config["nx_p"][1]
+    i, j = 0, 0
+    while 2**i * 2**j < n_cells_tot / 1024:
+        if 2**i <= 2**j:
+            i += 1
+        else:
+            j += 1
+    config["tile_number"] = [2**i, 2**j]
+
+    n_species = 3
+
+    n_particles = n_cells_tot * config['num_par_x'][0] * config['num_par_x'][1] * n_species
+    n_bytes_particles = n_particles* 2 * 70 # maria says ~70 bytes per particle. I don't know if this is single or double precision, we also need to allocate for twice as many particles
+
+    mem_per_GPU = 40e9
+    max_bytes_per_GPU = mem_per_GPU * .8 # 80% of 16GB
+    print("Number of particles: ", np.format_float_scientific(n_particles,3))
+
+    print("Recommended number of GPUs: ", np.ceil(n_bytes_particles/max_bytes_per_GPU))
+    print("Recommended number of nodes:", np.ceil(n_bytes_particles/max_bytes_per_GPU/4))
+
 
     return config
 
@@ -130,8 +173,6 @@ space
 \u007b
  xmin(1:2) = {config['xmax'][0]}, {int(lineout.osiris_length[0])},
  xmax(1:2) = {config['xmax'][1]}, {int(lineout.osiris_length[-1])},
- !if_move(1:2) = .false., {config['if_move']},
- !move_u = {-1*config['v_move']},
 \u007d
 
 
@@ -406,5 +447,5 @@ if __name__ == "__main__":
   args = parser.parse_args()
   print(args)
 
-  print(f"Running MagShockZ analysis with data path: {args.data_path},\n start point: {args.start_point},\n end point: {args.end_point},\n input file name: {args.inputfile_name},\n rqm factor: {args.rqm_factor},\n template type: {args.template_type}\n")
+  print(f"Writing MagShockZ input deck from FLASH data: {args.data_path},\n start point: {args.start_point},\n end point: {args.end_point},\n input file name: {args.inputfile_name},\n rqm factor: {args.rqm_factor},\n template type: {args.template_type}\n")
   main(FLASH_data = args.data_path, start_point = args.start_point, end_point = args.end_point, inputfile_name = args.inputfile_name, rqm_factor=args.rqm_factor, template_type=args.template_type)
