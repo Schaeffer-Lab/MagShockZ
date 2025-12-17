@@ -1,0 +1,264 @@
+! For reference, this template expects the following arguments:
+! config: A dictionary of configuration parameters for the simulation.
+! lineout: An object containing precomputed mathematical functions and values for initializing fields and particle properties
+
+!----------global simulation parameters----------
+simulation
+{
+    algorithm = "{{ config['algorithm'] }}",
+    parallel_io = "mpi",
+}
+
+!--------the node configuration for this simulation--------
+node_conf 
+{
+ node_number = {{ config["node_number"][0] }}, {{ config["node_number"][1] }}, ! number of GPUs you are using
+ n_threads = {{ config["n_threads"] }}, ! number of threads per GPU
+ tile_number = {{ config["tile_number"][0] }}, {{ config["tile_number"][1] }}, ! n_tiles_tot should be greater than n_cells_tot / 1024 and be a power of two. Refer to osiris cuda documentation
+ if_periodic(1:2) = .true., .false.,
+}
+
+
+!----------spatial grid----------
+grid
+{
+ nx_p = {{ config["nx_p"][0] }}, {{ config["nx_p"][1] }}, ! number of cells 
+}
+
+
+!----------time step and global data dump timestep number----------
+time_step
+{
+ dt     = {{ config["dt"] }}, ! time step in wpe^-1
+ ndump  = {{ config["ndump"] }}, ! number of time steps between data dumps,
+}
+
+
+!----------restart information----------
+restart
+{
+  ndump_fac = -1,
+  ndump_time = 3590, !once/hour
+  if_restart = .false.,
+  if_remold = .true.,
+}
+
+!----------spatial limits ----------
+space
+{
+ xmin(1:2) = {{ config['xmax'][0] }}, {{ lineout.osiris_length[0] | int}},
+ xmax(1:2) = {{ config['xmax'][1] }}, {{ lineout.osiris_length[-1] | int }},
+}
+
+
+!----------time limits ----------
+time
+{
+ tmin = 0.0,
+ tmax = {{ config["tmax"] }}, ! Just to make your life easier, your upstream gyrotime for an rqm of {{ config["rqm_al"] }} is {{ config["upstream_gyrotime"] }}
+}
+
+!----------field solver set up----------
+el_mag_fld
+{
+  type_init_b(1:3) = "math func", "math func", "math func",
+  init_b_mfunc(1) = "{{ lineout.math_funcs['magx'] }}",
+  init_b_mfunc(2) = "{{ lineout.math_funcs['magy'] }}",
+  init_b_mfunc(3) = "{{ lineout.math_funcs['magz'] }}",
+  type_init_e(1:3) = "math func", "math func", "math func",
+  init_e_mfunc(1) = "{{ lineout.math_funcs['Ex'] }}",
+  init_e_mfunc(2) = "{{ lineout.math_funcs['Ey'] }}",
+  init_e_mfunc(3) = "{{ lineout.math_funcs['Ez'] }}", ! This is the most important component, can probably ignore others
+}
+
+!----------boundary conditions for em-fields ----------
+emf_bound
+{ 
+ type(1:2,2) =  "{{ config["emf_boundary_x2"][0] }}", "{{ config["emf_boundary_x2"][1] }}", ! boundaries for x2
+ vpml_diffuse(2,2) = {{ config["vpml_diffuse"] }},
+ vpml_bnd_size = {{ config["vpml_bnd_size"] }},
+}
+
+!----------- electro-magnetic field diagnostics ---------
+diag_emf
+{
+ ndump_fac = 1,
+ reports = 
+   "b1", "b2", "b3",
+   "e1", "e2", "e3",
+} 
+
+!----------number of particle species----------
+particles
+{
+  interpolation = "{{ config['interpolation'] }}",
+  num_species = 3,
+}
+
+!----------information for electrons----------
+species
+{
+ name = "electrons",
+ rqm=-1.0,
+ num_par_x(1:2) = {{ config["num_par_x"][0] }}, {{ config["num_par_x"][1] }}, ! number of particles per cell in x and y directions
+}
+
+!----------inital proper velocities - electrons-----------------
+udist
+{
+  use_spatial_uth = .true.,
+  use_spatial_ufl = .true.,
+  spatial_uth(1) = "{{ lineout.math_funcs['tele'] }}",
+  spatial_uth(2) = "{{ lineout.math_funcs['tele'] }}",
+  spatial_uth(3) = "{{ lineout.math_funcs['tele'] }}",
+
+  spatial_ufl(1) = "{{ lineout.math_funcs['v_ex'] }}",
+  spatial_ufl(2) = "{{ lineout.math_funcs['v_ey'] }}",
+  spatial_ufl(3) = "{{ lineout.math_funcs['v_ez'] }}",
+}
+
+!----------density profile for electrons----------
+profile
+{
+  profile_type(1:2) = "uniform", "piecewise-linear",
+  num_x = {{ lineout.math_funcs['edens']['x'].count(',') + 1 }},
+  x(1:{{ lineout.math_funcs['edens']['x'].count(',') + 1 }},2) = {{ lineout.math_funcs['edens']['x'] }},
+  fx(1:{{ lineout.math_funcs['edens']['dens'].count(',') + 1 }},2) = {{ lineout.math_funcs['edens']['dens'] }},
+}
+
+!----------boundary conditions for electrons----------
+spe_bound
+{
+ type(1:2,2) = "{{ config["part_boundary_x2"][0] }}","{{ config["part_boundary_x2"][1] }}",
+ uth_bnd(1:3,1,2) = {{ lineout._get_field_values('tele')[0] }},{{ lineout._get_field_values('tele')[0] }},{{ lineout._get_field_values('tele')[0] }},
+ uth_bnd(1:3,2,2) = {{ lineout._get_field_values('tele')[1] }},{{ lineout._get_field_values('tele')[1] }},{{ lineout._get_field_values('tele')[1] }},
+}
+
+!----------diagnostic for electrons----------
+diag_species
+{
+ ndump_fac = 1,
+ reports = {{ config["reports"] }},
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = {{ config["ps_pmin"][0] }}, {{ config["ps_pmin"][1] }}, {{ config["ps_pmin"][2] }},
+ ps_pmax(1:3) = {{ config["ps_pmax"][0] }}, {{ config["ps_pmax"][1] }}, {{ config["ps_pmax"][2] }},
+ ps_xmin(1:2) = {{ config['xmax'][0] }}, {{ lineout.osiris_length[0] | int }}, ! phase space covers the entire domain. change as needed
+ ps_xmax(1:2) = {{ config['xmax'][1] }}, {{ lineout.osiris_length[-1] | int }},
+ ps_np(1:3) = {{ config["ps_np"][0] }}, {{ config["ps_np"][1] }}, {{ config["ps_np"][2] }},
+ ps_nx(1:2) = {{ config["ps_nx"][0] }}, {{ config["ps_nx"][1] }},
+ phasespaces = "p1x1", "p1x2", "p2x1", "p2x2",
+}
+   
+!----------information for Aluminum ions----------
+species
+{
+ name = "aluminum",
+ rqm = {{ config["rqm_al"] }},
+ num_par_x(1:2) = {{ config["num_par_x"][0] }}, {{ config["num_par_x"][1] }}, ! number of particles per cell in x and y directions
+}
+
+!----------inital proper velocities Aluminum ions-----------------
+udist
+{
+  use_spatial_uth = .true.,
+  use_spatial_ufl = .true.,
+  spatial_uth(1) = "{{ lineout.math_funcs['tion'] }}",
+  spatial_uth(2) = "{{ lineout.math_funcs['tion'] }}",
+  spatial_uth(3) = "{{ lineout.math_funcs['tion'] }}",
+
+  spatial_ufl(1) = "{{ lineout.math_funcs['v_ix'] }}",
+  spatial_ufl(2) = "{{ lineout.math_funcs['v_iy'] }}",
+  spatial_ufl(3) = "{{ lineout.math_funcs['v_iz'] }}",
+}
+
+!----------density profile for Aluminum ions----------
+profile
+{
+  profile_type(1:2) = "uniform", "piecewise-linear",
+  num_x = {{ lineout.math_funcs['edens']['x'].count(',') + 1 }},
+  x(1:{{ lineout.math_funcs['aldens']['x'].count(',') + 1 }},2) = {{ lineout.math_funcs['aldens']['x'] }},
+  fx(1:{{ lineout.math_funcs['aldens']['dens'].count(',') + 1 }},2) = {{ lineout.math_funcs['aldens']['dens'] }},
+}
+
+!----------boundary conditions for Alumium ions----------
+spe_bound
+{
+ type(1:2,2) = "thermal", "thermal",
+ uth_bnd(1:3,1,2) = {{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},
+ uth_bnd(1:3,2,2) = {{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},
+}
+
+!----------diagnostic for Aluminum ions----------
+diag_species
+{ 
+ ndump_fac = 1,
+ reports = {{ config["reports"] }},
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = {{ config["ps_pmin"][0] }}, {{ config["ps_pmin"][1] }}, {{ config["ps_pmin"][2] }}, 
+ ps_pmax(1:3) = {{ config["ps_pmax"][0] }}, {{ config["ps_pmax"][1] }}, {{ config["ps_pmax"][2] }},
+ ps_xmin(1:2) = {{ config['xmax'][0] }}, {{ lineout.osiris_length[0] | int }},
+ ps_xmax(1:2) = {{ config['xmax'][1] }}, {{ lineout.osiris_length[-1] | int }},
+ ps_np(1:3) = {{ config["ps_np"][0] }}, {{ config["ps_np"][1] }}, {{ config["ps_np"][2] }},
+ ps_nx(1:2) = {{ config["ps_nx"][0] }}, {{ config["ps_nx"][1] }},
+ phasespaces = "p1x1", "p1x2", "p2x1", "p2x2",
+}
+
+!----------information for Silicon ions----------
+species
+{
+ name = "silicon",
+ rqm = {{ config["rqm_si"] }},
+ num_par_x(1:2) = {{ config["num_par_x"][0] }}, {{ config["num_par_x"][1] }}, ! number of particles per cell in x and y directions
+}
+
+!----------inital proper velocities Silicon ions-----------------
+udist
+{
+  use_spatial_uth = .true.,
+  use_spatial_ufl = .true.,
+  spatial_uth(1) = "{{ lineout.math_funcs['tion'] }}",
+  spatial_uth(2) = "{{ lineout.math_funcs['tion'] }}",
+  spatial_uth(3) = "{{ lineout.math_funcs['tion'] }}",
+
+  spatial_ufl(1) = "{{ lineout.math_funcs['v_ix'] }}",
+  spatial_ufl(2) = "{{ lineout.math_funcs['v_iy'] }}",
+  spatial_ufl(3) = "{{ lineout.math_funcs['v_iz'] }}",
+}
+
+!----------density profile for Silicon ions----------
+profile
+{ 
+  profile_type(1:2) = "uniform", "piecewise-linear",
+  num_x = {{ lineout.math_funcs['edens']['x'].count(',') + 1 }},
+  x(1:{{ lineout.math_funcs['sidens']['x'].count(',') + 1 }},2) = {{ lineout.math_funcs['sidens']['x'] }},
+  fx(1:{{ lineout.math_funcs['sidens']['dens'].count(',') + 1 }},2) = {{ lineout.math_funcs['sidens']['dens'] }},
+}
+
+!----------boundary conditions for Silicon ions----------
+spe_bound
+{
+ type(1:2,2) = "thermal","thermal",
+ uth_bnd(1:3,1,2) = {{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},
+ uth_bnd(1:3,2,2) = {{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},
+}
+
+!----------diagnostic for Silicon ions----------
+diag_species
+{ 
+ ndump_fac = 1,
+ reports = {{ config["reports"] }},
+ ndump_fac_pha = 1,
+ ps_pmin(1:3) = {{ config["ps_pmin"][0] }}, {{ config["ps_pmin"][1] }}, {{ config["ps_pmin"][2] }}, 
+ ps_pmax(1:3) = {{ config["ps_pmax"][0] }}, {{ config["ps_pmax"][1] }}, {{ config["ps_pmax"][2] }},
+ ps_xmin(1:2) = {{ config['xmax'][0] }}, {{ lineout.osiris_length[0] | int }},
+ ps_xmax(1:2) = {{ config['xmax'][1] }}, {{ lineout.osiris_length[-1] | int }},
+ ps_np(1:3) = {{ config["ps_np"][0] }}, {{ config["ps_np"][1] }}, {{ config["ps_np"][2] }},
+ ps_nx(1:2) = {{ config["ps_nx"][0] }}, {{ config["ps_nx"][1] }},
+ phasespaces = "p1x1", "p1x2", "p2x1", "p2x2",
+}
+!--------Current smoothing----------
+smooth
+{
+  type = "{{ config["smooth_type"] }}",
+  order = {{ config["smooth_order"] }},
+}
