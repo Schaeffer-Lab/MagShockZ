@@ -15,7 +15,7 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
     templates = {
       "basic": {  # Fallback with reasonable defaults
           'algorithm': "cuda",
-          'xmax': [int(-4*np.sqrt(380/lineout.rqm_factor)), int(4*np.sqrt(380/lineout.rqm_factor))], # try to get 8 ion inertial lengths in x direction. sqrt(380) ~ 20
+          'xmax': [int(-4*np.sqrt(3800/lineout.rqm_factor)), int(4*np.sqrt(3800/lineout.rqm_factor))],
           "nx_p": None, # Get about the same resolution in x and y
           "num_par_x": [10, 10],
           "ndump": None,
@@ -24,7 +24,7 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
           "tmax": None,
           "node_number": [2, 1],
           "n_threads": 1,
-          "tile_number": [32, 64],
+          "tile_number": [None, None],
           "emf_boundary_x2": ["pmc", "vpml"],
           "vpml_bnd_size": 50,
           "vpml_diffuse": ".false.",
@@ -43,14 +43,14 @@ def get_template_config(lineout: Ray, template_type: str, **kwargs):
       },
       "perlmutter": {
           'algorithm': "cuda",
-          'xmax': [int(-5*np.sqrt(380/lineout.rqm_factor)), int(5*np.sqrt(380/lineout.rqm_factor))],
+          'xmax': [int(-5*np.sqrt(3800/lineout.rqm_factor)), int(5*np.sqrt(3800/lineout.rqm_factor))],
           "nx_p": None, # Get about the same resolution in x and y
           "num_par_x": [16, 16],
           "ndump": None,
           "dx": 0.2,
           "dt": None,
           "tmax": None,
-          "tile_number": None,
+          "tile_number": [None, None],
           "node_number": [25, 4], # Should be a multiple of 4 for Perlmutter, 4 GPUs per node
           "n_threads": 1,
           "emf_boundary_x2": ["pmc", "vpml"],
