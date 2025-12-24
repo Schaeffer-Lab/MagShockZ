@@ -63,9 +63,9 @@ class FLASH_OSIRIS_Base:
         self.osiris_dims = osiris_dims
         self.FLASH_data = Path(path_to_FLASH_data)
         self.inputfile_name = OSIRIS_inputfile_name + f".{self.osiris_dims}d"
-        self.n0 = reference_density_cc
+        self.n0 = reference_density_cc * yt.units.cm**-3
         self.ppc = ppc
-        self.dx = dx
+        self.dx = dx 
         self.rqm_factor = rqm_normalization_factor
         self.species_rqms = species_rqms
         self.tmax_gyroperiods = tmax_gyroperiods
@@ -79,17 +79,18 @@ class FLASH_OSIRIS_Base:
         self.distance = distance
         self.normalizations_override = normalizations_override
 
-        self.proj_dir = Path.cwd()
+        self.proj_dir = Path.cwd().parent
+        logger.info(f"Project directory: {self.proj_dir}")
         self.output_dir = self.proj_dir / "input_files" / self.inputfile_name
+        logger.info(f"Output directory: {self.output_dir}")
 
-
-        self.omega_pe = np.sqrt(4 * np.pi * self.n0 * yt.units.cm**-3 * yt.units.electron_charge_cgs**2 / yt.units.electron_mass_cgs)
-        logger.info(f"Plasma frequency omega_pe: {np.format_float_scientific(self.omega_pe)} rad/s")
+        self.omega_pe = np.sqrt(4 * np.pi * self.n0 * yt.units.electron_charge**2 / (yt.units.electron_mass))
+        logger.info(f"Plasma frequency omega_pe: {self.omega_pe.to('1/s')}")
 
         logger.info(f"Loading FLASH data from {self.FLASH_data}")
         self.ds = yt.load_for_osiris(self.FLASH_data.as_posix(), rqm_factor=self.rqm_factor)
 
-        level = 1 # If you are getting inexplicable crashes, you are probably running out of memory. This is probably the culprit.
+        level = 0 # If you are getting inexplicable crashes, you are probably running out of memory. This is probably the culprit.
         self.dims = self.ds.domain_dimensions * self.ds.refine_by**level
 
         logger.info(f"Creating covering grid at level {level} with dims {self.dims}")
@@ -100,6 +101,7 @@ class FLASH_OSIRIS_Base:
             dims=self.dims,
             num_ghost_zones=1,
         )
+
         logger.info("Covering grid created successfully")
         logger.info("Extracting coordinate arrays")
         self.x = self.all_data['flash', 'x'][:, 0, 0] * self.omega_pe / yt.units.speed_of_light
@@ -111,26 +113,32 @@ class FLASH_OSIRIS_Base:
         logger.info(f"z bounds: {self.z[[0, -1]]} c/w_pe")
 
         debye_osiris = np.sqrt(
-            self.all_data['flash', 'tele'][-1, -1, 0] * yt.units.kB * yt.units.erg / (yt.units.electron_mass_cgs * yt.units.speed_of_light**2)
+            self.all_data['flash', 'tele'][-1, -1, 0] * yt.units.boltzmann_constant / (yt.units.electron_mass * yt.units.speed_of_light**2)
         )
         
-        logger.info(f"Debye length: {debye_osiris.value} osiris units")
-        logger.info(f"Background temperature: {round(self.all_data['flash', 'tele'][-1, -1, 0].value * yt.units.kB)} eV")
+        # logger.info(f"Debye length: {debye_osiris.value} osiris units")
+        logger.info(f"Background temperature: {self.all_data['flash', 'tele'][-1, -1, 0].to('K'):.3e}")
+        logger.info(f"Background temperature: {(self.all_data['flash', 'tele'][-1, -1, 0] * yt.units.boltzmann_constant).to('eV'):.3e}")
 
 
-        self.rqm_real = 1836 / self.all_data['flash', 'ye'][-1, -1, 0]
+        self.rqm_real = 1836 / self.all_data['flash', 'ye'][-1, -1, 0] # ye has units of 
         logger.info(f"{'*'*10} real mass ratio: {self.rqm_real} {'*'*10}")
 
 
         logger.info("normalizing plasma parameters")
         ######## NORMALIZATIONS ######## 
-        B_norm = (self.omega_pe * self.m_e * self.c) / self.e
-        E_norm = B_norm * self.c / np.sqrt(self.rqm_factor)
-        v_norm = self.c / np.sqrt(self.rqm_factor)
-        vth_ele_norm = np.sqrt(self.m_e * self.c**2)
+        B_norm = self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge
+        E_norm = self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge / np.sqrt(self.rqm_factor)
+        v_norm = yt.units.speed_of_light / np.sqrt(self.rqm_factor)
+
+        logger.info(f"Electric field normalization: {E_norm.to('statV/cm'):.3e}")
+        logger.info(f"Magnetic field normalization: {B_norm.to('Gauss'):.3e}")
+        logger.info(f"Velocity normalization: {v_norm.to('cm/s'):.3e} cm/s")
         
         self.normalizations = {
             'edens': self.n0,
+            'aldens': self.n0,
+            'sidens': self.n0,
             
             'magx': B_norm, 'magy': B_norm, 'magz': B_norm,
             
@@ -139,17 +147,16 @@ class FLASH_OSIRIS_Base:
             'v_ix': v_norm, 'v_iy': v_norm, 'v_iz': v_norm,
             'v_ex': v_norm, 'v_ey': v_norm, 'v_ez': v_norm,
             
-            'vthele': vth_ele_norm,
+            'vthele': yt.units.speed_of_light,
+            'vthal': v_norm,
+            'vthsi': v_norm,
         }
-        
-        # Add ion species specific normalizations
-        for species, rqms in self.species_rqms.items():
-            self.normalizations[species + 'dens'] = self.n0
-            self.normalizations[f'vth{species}'] = vth_ele_norm * np.sqrt(rqms / self.rqm_factor)
         
         # Calculate gyrotime and simulation duration
         self.gyrotime = self.species_rqms['al']/ self.rqm_factor / (self.all_data['flash', 'magx'][-1, -1, 0] / self.normalizations['magx'])
         self.tmax = int(self.gyrotime * self.tmax_gyroperiods)
+
+        # print(f"Normalizations: {self.normalizations}")
 
     
     def save_slices(self, normal_axis="z"):
@@ -184,62 +191,23 @@ class FLASH_OSIRIS_Base:
                 normalization = normalization * self.normalizations_override[field]
                 logger.info(f"{field} is normalized by additional factor of {np.format_float_scientific(self.normalizations_override[field],3)}")
             logger.info(f"Processing {field} with normalization {np.format_float_scientific(normalization, 3)}")
+            self._save_field(field, normalization, middle_index, chunk_size, interp_dir)
             
-            # Special handling for thermal velocity fields
-            if field.startswith('vth'):
-                self._save_thermal_field(field, normalization, middle_index, chunk_size, interp_dir)
-                continue
-                
-            # Process regular fields
-            self._save_regular_field(field, normalization, middle_index, chunk_size, interp_dir)
-    
-    def _save_thermal_field(self, field, normalization, middle_index, chunk_size, interp_dir):
-        """Save thermal velocity field data."""
-        import pickle
-        from scipy.interpolate import RegularGridInterpolator
-        
-        if field == 'vthele':
-            temp_field = 'tele'
-        else:
-            temp_field = 'tion'
-        
-        field_data = np.zeros(self.all_data['flash', temp_field][:, :, middle_index].shape)
-        
-        # Process data in chunks to save memory
-        for i in range(0, self.all_data['flash', temp_field].shape[0], chunk_size):
-            end = min(i + chunk_size, self.all_data['flash', temp_field].shape[0])
-            field_data_chunk = np.array(
-                np.sqrt(self.all_data['flash', temp_field][i:end, :, middle_index] * yt.units.kb_cgs)
-            ) / normalization
-            field_data[i:end, :] = field_data_chunk
-        
-        # Create and save interpolator
-        interp = RegularGridInterpolator(
-            (self.y, self.x), field_data.T, 
-            method='linear', bounds_error=True, fill_value=0
-        )
-        
-        with open(f"{interp_dir}/{field}.pkl", "wb") as f:
-            pickle.dump(interp, f)
-
-        # Tried to include memory cleanup here, but it just doesn't work
-    
-    def _save_regular_field(self, field, normalization, middle_index, chunk_size, interp_dir):
+    def _save_field(self, field, normalization, middle_index, chunk_size, interp_dir):
         """Save regular field data."""
         import pickle
         from scipy.interpolate import RegularGridInterpolator
         
         # Initialize field data array
+            
         field_data = np.zeros(self.all_data['flash', field][:, :, middle_index].shape)
         
         # Process data in chunks to save memory
         for i in range(0, self.all_data['flash', field].shape[0], chunk_size):
             end = min(i + chunk_size, self.all_data['flash', field].shape[0])
-            field_data_chunk = np.array(
-                self.all_data['flash', field][i:end, :, middle_index]
-            ) / normalization
+            field_data_chunk = self.all_data['flash', field][i:end, :, middle_index] / normalization
             field_data[i:end, :] = field_data_chunk
-        
+
         # Special handling for density fields
         if field.endswith('dens'):
             # Remove small density values
@@ -266,30 +234,11 @@ class FLASH_OSIRIS_Base:
         # Read thermal velocity bounds for all species
         thermal_bounds = self._read_thermal_bounds()
         
-        # Prepare template context
-        context = self._prepare_template_context(thermal_bounds)
-        
-        # Load and render template
-        template_dir = Path(__file__).parent
-        env = Environment(loader=FileSystemLoader(template_dir))
-        template = env.get_template('MagShockZ_OSIRIS_TEMPLATE.jinja')
-        content = template.render(**context)
-        
-        # Write the actual input file
-        input_file_path = self.output_dir / self.inputfile_name
-        logger.info(f"Writing OSIRIS input file to {input_file_path}")
-        
-        with open(input_file_path, "w") as f:
-            f.write(content)
-        
-        logger.info(f"OSIRIS input file written successfully")
-
-    def _prepare_template_context(self, thermal_bounds):
-        """Prepare the context dictionary for Jinja2 template rendering."""
+        # Prepare the context dictionary for Jinja2 template rendering
         if self.osiris_dims == 1:
-            nx = int(self.xmax / self.dx)
+            nx = int(self.distance / self.dx)
             ny = None
-            xmin, xmax = 0, self.xmax
+            xmin, xmax = 0, self.distance 
             ymin, ymax = None, None
         else:
             nx = int((self.xmax - self.xmin) / self.dx)
@@ -297,15 +246,13 @@ class FLASH_OSIRIS_Base:
             xmin, xmax = self.xmin, self.xmax
             ymin, ymax = self.ymin, self.ymax
             
-
-        
-        tile_numbers = self._calculate_tile_numbers() if self.algorithm in ["cuda", "tiles"] else []
+        n_tiles_x, n_tiles_y = self._calculate_tile_numbers()
         
         species_list = self._prepare_species_list(thermal_bounds) # Type: List[Dictionary]
 
         # preset params. Feel free to modify.
-        n_dump_total = 400
-        vpml_bnd_size = 50
+        n_dump_total = 800
+        vpml_bnd_size = 100
         interpolation = 'cubic'
         
         context = {
@@ -323,41 +270,63 @@ class FLASH_OSIRIS_Base:
             'dt': np.format_float_scientific(self.dt, 4),
             'ndump': int(self.tmax / (n_dump_total * self.dt)),
             'tmax': self.tmax,
-            'tile_numbers': tile_numbers,
+            'tile_numbers': [n_tiles_x, n_tiles_y],
             'num_species': len(self.species_rqms) + 1,
             'species_list': species_list,
             'vpml_bnd_size': vpml_bnd_size,
             'ps_pmin': [-0.1, -0.1, -0.02],
+            'ps_pmax': [0.1, 0.1, 0.02],
+            'ps_np': [1024, 1024, 64],
+            'ps_nx': 1024,
+            'ps_ny': 1024,
+            'smooth_type': 'binomial',
+            'smooth_order': 2,
         }
         
-        return context
-    
+        # Load and render template
+        template_dir = Path(__file__).parent
+        env = Environment(loader=FileSystemLoader(template_dir))
+        template = env.get_template('MagShockZ_python_TEMPLATE.jinja')
+        content = template.render(**context)
+        
+        # Write the actual input file
+        input_file_path = self.output_dir / self.inputfile_name
+        logger.info(f"Writing OSIRIS input file to {input_file_path}")
+        
+        with open(input_file_path, "w") as f:
+            f.write(content)
+        
+        logger.info(f"OSIRIS input file written successfully")
+   
     def _calculate_tile_numbers(self):
         """Calculate tile numbers for GPU algorithms."""
         if self.osiris_dims == 1:
-            n_tiles_min = self.xmax / self.dx / 1024
-            i = 0
-            while True:
-                n_tiles_x = 2**i
-                if n_tiles_x > n_tiles_min:
-                    break
+            n_cells_tot = (self.xmax - self.xmin) / self.dx
+            i = 1
+            while 2**i < n_cells_tot / 1024:
                 i += 1
-            return [n_tiles_x]
-        else:
-            n_tiles_min = (self.xmax - self.xmin) * (self.ymax - self.ymin) / self.dx**2 / 1024
-            i = j = 0
-            while True:
-                n_tiles_x = 2**i
-                n_tiles_y = 2**j
-                if n_tiles_x * n_tiles_y > n_tiles_min:
-                    break
-                j += 1
-                n_tiles_x = 2**i
-                n_tiles_y = 2**j
-                if n_tiles_x * n_tiles_y > n_tiles_min:
-                    break
-                i += 1
-            return [n_tiles_x, n_tiles_y]
+            return 2**i, None
+        if self.osiris_dims == 2:
+            n_cells_tot = (self.xmax - self.xmin) * (self.ymax - self.ymin) / self.dx**2
+            i, j = 1,1 
+            while 2**i * 2**j < n_cells_tot / 1024:
+                if 2**i <= 2**j:
+                    i += 1
+                else:
+                    j += 1
+                n_tiles_x, n_tiles_y = 2**i, 2**j
+
+                while (self.xmax - self.xmin) / self.dx / n_tiles_x < 7 or (self.ymax - self.ymin) / self.dx / n_tiles_y < 7:
+                    
+                    if (self.xmax - self.xmin) / self.dx / n_tiles_x < 7:
+                        i -= 1
+                        j += 1
+                        n_tiles_x, n_tiles_y = 2**i, 2**j
+                    if (self.ymax - self.ymin) / self.dx / n_tiles_y < 7:
+                        i += 1
+                        j -= 1
+                        n_tiles_x, n_tiles_y = 2**i, 2**j
+            return 2**i, 2**j
     
     def _prepare_species_list(self, thermal_bounds):
         """Prepare species data for template rendering."""
@@ -484,71 +453,49 @@ class FLASH_OSIRIS_Base:
                     logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")        
         return bounds
     
-    def show_lineout_in_plane(self, fields):
+    def write_python_file(self):
+        """
+        Generate and write OSIRIS python initialization file using Jinja2 templates.
+        """
+        # Prepare the context dictionary for Jinja2 template rendering
+        context = {
+            "dims": self.osiris_dims,
+            "start_point": [self.xmin, self.ymin], 
+            "distance": self.distance,
+            "theta": self.theta,
+            "xmin": self.xmin,
+            "xmax": self.xmax,
+            "ymin": self.ymin,
+            "ymax": self.ymax,
+            "species_list": list(self.species_rqms.keys()),
+        }
+        
+        # Load and render template
+        template_dir = Path(__file__).parent
+        env = Environment(loader=FileSystemLoader(template_dir))
+        template = env.get_template('MagShockZ_py-script_TEMPLATE.jinja')
+        content = template.render(**context)
+        
+        # Write the actual python initialization file
+        python_file_path = self.output_dir / f"py-script-{self.osiris_dims}d.py"
+        logger.info(f"Writing OSIRIS python initialization file to {python_file_path}")
+        
+        with open(python_file_path, "w") as f:
+            f.write(content)
+        
+        logger.info(f"OSIRIS python initialization file written successfully")
+    
+    def plot1D(self, fields):
         import matplotlib.pyplot as plt
-        for field in fields:
-            if field.endswith('dens'):
-                data = np.log(np.load(self.output_dir / f'interp/{field}.npy')) # I take the log here because density has a large numerical range
-
-            else:
-                import pickle
-                with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
-                    f = pickle.load(p)
-                    x1,x2 = np.meshgrid(self.x, self.y, indexing='ij')
-                    data = f((x2,x1))
-
-            plt.figure()
-
-            plt.imshow(data.T, origin='lower',
-                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
-
-            plt.plot([self.xmin, self.xmax], [self.ymin, self.ymax],color='r')
-
-            plt.savefig(f'{self.output_dir}/{field}_lineout.png')
-
-    def show_box_in_plane(self, field):
-        import matplotlib.pyplot as plt
-        if self.osiris_dims != 2:
-            raise ValueError("show_box_in_plane is only applicable for 2D simulations.")
-        if field.endswith('dens'):
-            data = np.load(self.output_dir / f'interp/{field}.npy')
-
-        else:
-            import pickle
-            with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
-                f = pickle.load(p)
-                x1,x2 = np.meshgrid(self.y,self.x)
-                data = f((x1,x2))
-
-        plt.figure()
-
-        plt.imshow(data.T, origin='lower',
-                    extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]],vmax = 10) # TODO add some logic for vmax
-
-        plt.plot([self.xmin, self.xmax], [self.ymin, self.ymin], color='r')
-        plt.plot([self.xmin, self.xmax], [self.ymax, self.ymax], color='r')
-        plt.plot([self.xmin, self.xmin], [self.ymin, self.ymax], color='r')
-        plt.plot([self.xmax, self.xmax], [self.ymin, self.ymax], color='r')
-
-        plt.show()
-
-    def plot_1D_lineout(self, fields):
         from scipy.interpolate import RegularGridInterpolator
-        import matplotlib.pyplot as plt
         import pickle
-        x_osiris = np.linspace(self.xmin, self.xmax,1000)
-        y_osiris = np.linspace(self.ymin, self.ymax,1000)
 
-        results = {}
-
-        # Check if fields is a string (single field) or an iterable
         if isinstance(fields, str):
-            fields_to_plot = [fields]  # Convert to a list with a single element
+            fields = [fields]  # Convert to a list with a single element
         else:
-            fields_to_plot = fields  # Use as is
-        plt.figure()
-        for field in fields_to_plot:
+            fields = fields  # Use as is
 
+        for field in fields:
             if field.endswith('dens'):
                 data = np.load(self.output_dir / f'interp/{field}.npy')
                 f = RegularGridInterpolator(
@@ -557,68 +504,137 @@ class FLASH_OSIRIS_Base:
             else:
                 with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
                     f = pickle.load(p)
+                    x1,x2 = np.meshgrid(self.x, self.y, indexing='ij')
+                    data = f((x2,x1))
 
-            plt.plot(np.linspace(0, self.xmax, 1000), f((y_osiris,x_osiris)).T, label=field)
-            results[field] = (f((y_osiris,x_osiris)).T)
-        plt.xlabel(r'x [$c/\omega_{pe}$]')
+            # Create figure with two subplots side by side
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-        plt.grid(visible=True) 
-        plt.legend()
-        plt.show()
-        return results
-    
-    def plot_2D_lineouts(self, fields):
-        from scipy.interpolate import RegularGridInterpolator
-        import matplotlib.pyplot as plt
-        import pickle
-        
-        # Plot the boundaries
-        boundary_segments = [
-            ('Bottom_edge', self.xmax[0], self.xmax[-1], self.ymax[0], self.ymax[0]),
-            ('Top_edge', self.xmax[0], self.xmax[-1], self.ymax[-1], self.ymax[-1]),
-            ('Left_edge', self.xmax[0], self.xmax[0], self.ymax[0], self.ymax[-1]),
-            ('Right_edge', self.xmax[-1], self.xmax[-1], self.ymax[0], self.ymax[-1])
-        ]
-                 
-        results = {}
+            # Left subplot: 2D plane with lineout
+            if field.endswith('dens'):
+                im = ax1.imshow(np.log(data.T), origin='lower',
+                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
+            else:
+                im = ax1.imshow(data.T, origin='lower',
+                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
+            ax1.plot([self.xmin, self.xmax], [self.ymin, self.ymax], color='r', linewidth=2, label='Lineout')
+            ax1.set_xlabel(r'x [$c/\omega_{pe}$]')
+            ax1.set_ylabel(r'y [$c/\omega_{pe}$]')
+            ax1.set_title(f'{field} - 2D plane')
+            ax1.legend()
+            plt.colorbar(im, ax=ax1)
 
-
-        # Check if fields is a string (single field) or an iterable
-        if isinstance(fields, str):
-            fields_to_plot = [fields]  # Convert to a list with a single element
-        else:
-            fields_to_plot = fields  # Use as is
-        plt.figure()
-        for edge, xmin, xmax, ymin, ymax in boundary_segments:
-            results[edge] = {}
-            x_osiris = np.linspace(xmin, xmax,1000)
-            y_osiris = np.linspace(ymin, ymax,1000)
-            for field in fields_to_plot:
-
-                if field.endswith('dens'):
-                    data = np.load(self.output_dir / f'interp/{field}.npy')
-                    f = RegularGridInterpolator(
-                        (self.y, self.x), data.T, 
-                        method='linear', bounds_error=True, fill_value=0)
-                else:
-                    with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
-                        f = pickle.load(p)
-                if xmax == xmin:
-                    plt.plot(np.linspace(ymin, ymax, 1000), f((y_osiris,x_osiris)).T, 'r-', linewidth=2, label=field)
-                    plt.xlabel('Y [c/ωpe]')
-                elif ymax == ymin:
-                    plt.plot(np.linspace(xmin, xmax, 1000), f((y_osiris,x_osiris)).T, 'r-', linewidth=2, label=field)
-                    plt.xlabel('X [c/ωpe]')
-
-                results[edge][field] = f((y_osiris,x_osiris)).T
+            # Create points along the lineout from (xmin, ymin) to (xmax, ymax)
+            n_points = 10000
             
-            plt.grid(visible=True) 
-            plt.legend()
-            plt.title(f'Fields on {edge}')
-            plt.show()
-        return results
+            x_points = np.linspace(self.xmin, self.xmax, n_points)
+            y_points = np.linspace(self.ymin, self.ymax, n_points)
+            data_line = f(np.column_stack([y_points, x_points]))
+            
+            # Right subplot: 1D lineout
+            ax2.plot(np.linspace(0, self.distance, n_points), data_line, color='r', linewidth=2)
+            ax2.set_xlabel(r'Distance along lineout [$c/\omega_{pe}$]')
+            ax2.set_ylabel(field)
+            ax2.set_title(f'{field} - Lineout')
+            ax2.grid(True)
+            
+            plt.tight_layout()
+            plt.savefig(f'{self.output_dir}/{field}_1D.png', dpi=150)
+            plt.close()
+
+    def plot2D(self, fields):
+        import matplotlib.pyplot as plt
+        from scipy.interpolate import RegularGridInterpolator
+        import pickle
+        output = {}
+        if isinstance(fields, str):
+            fields = [fields]  # Convert to a list with a single element
+        else:
+            fields = fields  # Use as is
+        for field in fields:
+            if field.endswith('dens'):
+                data = np.load(self.output_dir / f'interp/{field}.npy')
+                f = RegularGridInterpolator(
+                    (self.y, self.x), data.T, 
+                    method='linear', bounds_error=True, fill_value=0)
+            else:
+                with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
+                    f = pickle.load(p)
+                    x1,x2 = np.meshgrid(self.x,self.y, indexing='ij')
+                    data = f((x2,x1))
+
+            # Create figure with two subplots side by side
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
 
+            # plt.imshow(data.T, origin='lower',
+            #             extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]],vmax = 10) # TODO add some logic for vmax
+
+            ax1.plot([self.xmin, self.xmax], [self.ymin, self.ymin], color='r')
+            ax1.plot([self.xmin, self.xmax], [self.ymax, self.ymax], color='r')
+            ax1.plot([self.xmin, self.xmin], [self.ymin, self.ymax], color='r')
+            ax1.plot([self.xmax, self.xmax], [self.ymin, self.ymax], color='r')
+
+            # Left subplot: 2D plane with lineout
+            if field.endswith('dens'):
+                im = ax1.imshow(np.log(data.T), origin='lower',
+                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
+            else:
+                im = ax1.imshow(data.T, origin='lower',
+                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
+            ax1.set_xlabel(r'x [$c/\omega_{pe}$]')
+            ax1.set_ylabel(r'y [$c/\omega_{pe}$]')
+            ax1.set_title(f'{field} - 2D plane')
+            ax1.legend()
+            fig.colorbar(im, ax=ax1)
+
+            # Create points along the lineout from (xmin, ymin) to (xmax, ymax)
+            n_points = 10000
+            
+            bottom_line_x = np.linspace(self.xmin, self.xmax, n_points)
+            bottom_line_y = self.ymin * np.ones_like(bottom_line_x)
+            bottom_line = np.column_stack([bottom_line_y, bottom_line_x])
+            bottom_data = f(bottom_line)
+
+            top_line_x = np.linspace(self.xmin, self.xmax, n_points)
+            top_line_y = self.ymax * np.ones_like(top_line_x)
+            top_line = np.column_stack([top_line_y, top_line_x])
+            top_data = f(top_line)
+
+            left_line_x = self.xmin * np.ones_like(bottom_line_x)
+            left_line_y = np.linspace(self.ymin, self.ymax, n_points)
+            left_line = np.column_stack([left_line_y, left_line_x])
+            left_data = f(left_line)
+
+            right_line_x = self.xmax * np.ones_like(bottom_line_x)
+            right_line_y = np.linspace(self.ymin, self.ymax, n_points)
+            right_line = np.column_stack([right_line_y, right_line_x])
+            right_data = f(right_line)
+            
+            # Right subplot: 1D lineout
+            bottom_distance = np.linspace(0, self.xmax - self.xmin, n_points)
+            top_distance = np.linspace(0, self.xmax - self.xmin, n_points)
+            left_distance = np.linspace(0, self.ymax - self.ymin, n_points)
+            right_distance = np.linspace(0, self.ymax - self.ymin, n_points)
+            
+            ax2.plot(bottom_distance, bottom_data, color='r', linewidth=2, label = 'Bottom edge')
+            ax2.plot(top_distance, top_data, color='b', linewidth=2, label = 'Top edge')
+            ax2.plot(left_distance, left_data, color='g', linewidth=2, label = 'Left edge')
+            ax2.plot(right_distance, right_data, color='m', linewidth=2, label = 'Right edge')
+            ax2.set_xlabel(r'[$c/\omega_{pe}$]')
+            ax2.set_ylabel(field)
+            ax2.set_title(f'{field} - Lineout')
+            ax2.grid(True)
+            ax2.legend()
+            
+            plt.tight_layout()
+            plt.savefig(f'{self.output_dir}/{field}_1D.png', dpi=150)
+            plt.close()
+
+            output[field] = [bottom_data, top_data, left_data, right_data]
+
+        return output
+    
 class FLASH_OSIRIS_1D(FLASH_OSIRIS_Base):
     
     def __init__(self,
@@ -652,13 +668,13 @@ class FLASH_OSIRIS_1D(FLASH_OSIRIS_Base):
             "FLASH-OSIRIS INTERFACE",
             f"FLASH data: {self.FLASH_data}",
             f"Input file: {self.inputfile_name}",
-            f"Reference density: {self.n0:.2e} cm^-3",
+            f"Reference density: {self.n0}",
             f"Species rqms: {self.species_rqms}",
             f"RQM normalization factor: {self.rqm_factor}",
             f"OSIRIS dimensions: 1D",
             f"Particles per cell: {self.ppc}",
             f"Start point: [{self.xmin}, {self.ymin}] [c/ωpe]",
-            f"Ray angle: {self.theta:.4f} rad",
+            f"Ray angle: {self.theta} rad",
             f"Lineout distance: {self.distance} [c/ωpe]",
             f"Output directory: {self.output_dir}",
             "=" * 50
@@ -681,7 +697,7 @@ class FLASH_OSIRIS_2D(FLASH_OSIRIS_Base):
             if not isinstance(param_value, (int, float)):
                 raise TypeError(f"{param_name} must be a number for 2D simulations")
 
-        super().__init__(osiris_dims=2, **kwargs)
+        super().__init__(osiris_dims=2,xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, **kwargs)
         self.xmin = xmin
         self.xmax = xmax
         self.ymin = ymin
@@ -714,16 +730,36 @@ if __name__ == "__main__":
         OSIRIS_inputfile_name="test_1d",
         reference_density_cc=5e18,
         ppc=8,
-        dx=0.1,
+        dx=0.3,
         start_point=[0, 100],
-        distance=1000,
+        distance=4000,
         theta=np.pi/2,
         rqm_normalization_factor=10,
         tmax_gyroperiods=10,
-        algorithm="cpu"
+        algorithm="cuda"
     )
 
-    test_1d.save_slices()
-    test_1d.write_input_file()
-    test_1d.show_lineout_in_plane(['edens', 'magx', 'magy'])
+    # test_1d.save_slices()
+    # test_1d.write_input_file()
+    # test_1d.plot1D(['edens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'v_ix', 'v_iy'])
+    # test_1d.write_python_file()
 
+    test_2d = FLASH_OSIRIS_2D(
+        path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
+        OSIRIS_inputfile_name="test_2d",
+        reference_density_cc=5e18,
+        ppc=8,
+        dx=0.3,
+        xmin=-2000,
+        xmax=2000,
+        ymin=200,
+        ymax=3000,
+        rqm_normalization_factor=100,
+        tmax_gyroperiods=10,
+        algorithm="cuda"
+    )
+
+    test_2d.save_slices()
+    test_2d.write_input_file()
+    test_2d.plot2D(['edens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'v_ix', 'v_iy'])
+    test_2d.write_python_file()

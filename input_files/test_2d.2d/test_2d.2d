@@ -1,9 +1,9 @@
 !----------------- Input deck illustrating the Python-Fortran interface ------------------
 ! To run this input deck as is, first put the input deck, OSIRIS executable, and the
-! py-script-1d.py file all in the same directory.  Next, do `export PYTHONPATH=.` to set the Python
-! path to the directory that contains the py-script-1d.py file (current directory). Finally,
-! execute `./osiris-1D.e test_1d.1d` to run the simulation, which will use the
-! py-script-1d.py and interp.npy files to set various field and particle data.
+! py-script-2d.py file all in the same directory.  Next, do `export PYTHONPATH=.` to set the Python
+! path to the directory that contains the py-script-2d.py file (current directory). Finally,
+! execute `./osiris-2D.e test_2d.2d` to run the simulation, which will use the
+! py-script-2d.py and interp.npy files to set various field and particle data.
 !-----------------------------------------------------------------------------------------
 
 !----------global simulation parameters----------
@@ -18,26 +18,28 @@ node_conf
 {
     
     
-    node_number = 2,
+    node_number = 2, 1,
     n_threads = 1,
     
-    if_periodic(1:1) = .false.,
+    if_periodic(1:2) = .true., .false.,
     
     
-    tile_number(1:1) = 2, 
+    
+    tile_number(1:2) = 512, 256, 
 }
 
 !----------spatial grid----------
 grid
 {
-    nx_p = 13333,
+    
+    nx_p(1:2) = 13333, 9333,
 }
 
 !----------time step and global data dump timestep number----------
 time_step
 {
-    dt     =  2.85e-01,
-    ndump  =  429,
+    dt     =  2.0153e-01,
+    ndump  =  60,
 }
 
 !----------restart information----------
@@ -52,10 +54,9 @@ restart
 !----------spatial limits of the simulations----------
 space
 {
-    ! This is euclidean distance, not the span in y direction
-    ! Start point in 1D plane is specified in py-script-1d
-    xmin =  0, ! This should always be == 0
-    xmax =  4000,
+    
+    xmin(1:2) = -2000, 200,
+    xmax(1:2) = 2000, 3000,
     
 }
 
@@ -63,16 +64,16 @@ space
 time
 {
     tmin = 0.0,
-    tmax  = 97886,
+    tmax  = 9788,
 }
 
 !----------field solver set up----------
 el_mag_fld
 {
-    ! Note, you need to set PYTHONPATH in the console to the folder containing py-script-1d.py
+    ! Note, you need to set PYTHONPATH in the console to the folder containing py-script-2d.py
     type_init_b(1:3) = "python", "python", "python",
     type_init_e(1:3) = "python", "python", "python",
-    init_py_mod = "py-script-1d", ! Name of Python file
+    init_py_mod = "py-script-2d", ! Name of Python file
     init_py_func = "set_fld_int", ! Name of function in the Python file to call (same for all components)
 }
 
@@ -80,9 +81,10 @@ el_mag_fld
 emf_bound
 {
     
-    type(1:2,1) =   "pmc", "vpml",
-    vpml_bnd_size = 100,
+    type(1:2,1) =   "vpml", "pmc",
+    type(1:2,2) =   "vpml", "vpml",
     vpml_diffuse(1:2,1) = .true., .true.,
+    vpml_diffuse(1:2,2) = .true., .true.,
     
 }
 
@@ -101,7 +103,7 @@ diag_emf
     ndump_fac_ene_int = 10,
     ndump_fac_charge_cons = 10,
     
-    n_ave(1:1) = 4,
+    n_ave(1:2) = 4, 4,
     
 }
 
@@ -119,7 +121,7 @@ species
     name = "e",
     rqm = -1.0,
     
-    num_par_x = 8,
+    num_par_x(1:2) = 8, 8,
     
     init_type = "python",
 }
@@ -128,27 +130,31 @@ species
 udist
 {
     use_spatial_uth = .true.,
-    uth_py_mod = "py-script-1d", ! Name of Python file
+    uth_py_mod = "py-script-2d", ! Name of Python file
     uth_py_func = "set_uth_e", ! Name of function in the Python file to call
 
     ! use_spatial_ufl = .true.,
-    ufl_py_mod = "py-script-1d", ! Name of Python file
+    ufl_py_mod = "py-script-2d", ! Name of Python file
     ufl_py_func = "set_ufl_e", ! Name of function in the Python file to call
 }
 
 !----------density profile for e----------
 profile
 {
-    py_mod = "py-script-1d", ! Name of Python file
+    py_mod = "py-script-2d", ! Name of Python file
     py_func = "set_density_e", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for e----------
 spe_bound
 {
+    
     type(1:2,1) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 5.7303e-02, 5.7303e-02, 5.7303e-02, 
-    uth_bnd(1:3,2,1) = 2.0605e-02, 2.0605e-02, 2.0605e-02,
+    type(1:2,2) = "thermal","thermal",
+    uth_bnd(1:3,1,1) = 7.4333e-03, 7.4333e-03, 7.4333e-03, 
+    uth_bnd(1:3,2,1) = 7.4545e-03, 7.4545e-03, 7.4545e-03, 
+    uth_bnd(1:3,1,2) = 1.9377e-02, 1.9377e-02, 1.9377e-02, 
+    uth_bnd(1:3,2,2) = 1.5698e-02, 1.5698e-02, 1.5698e-02, 
 }
 
 !----------diagnostic for e----------
@@ -162,12 +168,13 @@ diag_species
     ndump_fac_pha = 1,
     ps_pmin(1:3) = -0.1, -0.1, -0.02,
     ps_pmax(1:3) = 0.1,  0.1,  0.02,
-    ps_xmin(1:1) = 0.0,
-    ps_xmax(1:1) = 4000,
+    
+    ps_xmin(1:2) = -2000, 200,
+    ps_xmax(1:2) = 2000, 3000,
     ps_np = 1024, 1024, 64,
     
-    ps_nx = 1024,
-    phasespaces = "p1x1", "p2x1", "p3x1",
+    ps_nx(1:2) = 1024, 1024,
+    phasespaces = "p1x1", "p2x1", "p3x1", "p1x2", "p2x2", "p3x2",
     
 }
 
@@ -175,9 +182,9 @@ diag_species
 species
 {
     name = "al",
-    rqm = 725,
+    rqm = 72,
     
-    num_par_x = 8,
+    num_par_x(1:2) = 8, 8,
     
     init_type = "python",
 }
@@ -186,27 +193,31 @@ species
 udist
 {
     use_spatial_uth = .true.,
-    uth_py_mod = "py-script-1d", ! Name of Python file
+    uth_py_mod = "py-script-2d", ! Name of Python file
     uth_py_func = "set_uth_al", ! Name of function in the Python file to call
 
     ! use_spatial_ufl = .true.,
-    ufl_py_mod = "py-script-1d", ! Name of Python file
+    ufl_py_mod = "py-script-2d", ! Name of Python file
     ufl_py_func = "set_ufl_al", ! Name of function in the Python file to call
 }
 
 !----------density profile for al----------
 profile
 {
-    py_mod = "py-script-1d", ! Name of Python file
+    py_mod = "py-script-2d", ! Name of Python file
     py_func = "set_density_al", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for al----------
 spe_bound
 {
+    
     type(1:2,1) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 7.0456e-04, 7.0456e-04, 7.0456e-04, 
-    uth_bnd(1:3,2,1) = 2.8197e-04, 2.8197e-04, 2.8197e-04,
+    type(1:2,2) = "thermal","thermal",
+    uth_bnd(1:3,1,1) = 3.3576e-04, 3.3576e-04, 3.3576e-04, 
+    uth_bnd(1:3,2,1) = 3.3673e-04, 3.3673e-04, 3.3673e-04, 
+    uth_bnd(1:3,1,2) = 6.6519e-04, 6.6519e-04, 6.6519e-04, 
+    uth_bnd(1:3,2,2) = 4.7028e-04, 4.7028e-04, 4.7028e-04, 
 }
 
 !----------diagnostic for al----------
@@ -220,12 +231,13 @@ diag_species
     ndump_fac_pha = 1,
     ps_pmin(1:3) = -0.1, -0.1, -0.02,
     ps_pmax(1:3) = 0.1,  0.1,  0.02,
-    ps_xmin(1:1) = 0.0,
-    ps_xmax(1:1) = 4000,
+    
+    ps_xmin(1:2) = -2000, 200,
+    ps_xmax(1:2) = 2000, 3000,
     ps_np = 1024, 1024, 64,
     
-    ps_nx = 1024,
-    phasespaces = "p1x1", "p2x1", "p3x1",
+    ps_nx(1:2) = 1024, 1024,
+    phasespaces = "p1x1", "p2x1", "p3x1", "p1x2", "p2x2", "p3x2",
     
 }
 
@@ -233,9 +245,9 @@ diag_species
 species
 {
     name = "si",
-    rqm = 389,
+    rqm = 38,
     
-    num_par_x = 8,
+    num_par_x(1:2) = 8, 8,
     
     init_type = "python",
 }
@@ -244,27 +256,31 @@ species
 udist
 {
     use_spatial_uth = .true.,
-    uth_py_mod = "py-script-1d", ! Name of Python file
+    uth_py_mod = "py-script-2d", ! Name of Python file
     uth_py_func = "set_uth_si", ! Name of function in the Python file to call
 
     ! use_spatial_ufl = .true.,
-    ufl_py_mod = "py-script-1d", ! Name of Python file
+    ufl_py_mod = "py-script-2d", ! Name of Python file
     ufl_py_func = "set_ufl_si", ! Name of function in the Python file to call
 }
 
 !----------density profile for si----------
 profile
 {
-    py_mod = "py-script-1d", ! Name of Python file
+    py_mod = "py-script-2d", ! Name of Python file
     py_func = "set_density_si", ! Name of function in the Python file to call
 }
 
 !----------boundary conditions for si----------
 spe_bound
 {
+    
     type(1:2,1) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 7.0456e-04, 7.0456e-04, 7.0456e-04, 
-    uth_bnd(1:3,2,1) = 2.8197e-04, 2.8197e-04, 2.8197e-04,
+    type(1:2,2) = "thermal","thermal",
+    uth_bnd(1:3,1,1) = 3.3576e-04, 3.3576e-04, 3.3576e-04, 
+    uth_bnd(1:3,2,1) = 3.3673e-04, 3.3673e-04, 3.3673e-04, 
+    uth_bnd(1:3,1,2) = 6.6519e-04, 6.6519e-04, 6.6519e-04, 
+    uth_bnd(1:3,2,2) = 4.7028e-04, 4.7028e-04, 4.7028e-04, 
 }
 
 !----------diagnostic for si----------
@@ -278,12 +294,13 @@ diag_species
     ndump_fac_pha = 1,
     ps_pmin(1:3) = -0.1, -0.1, -0.02,
     ps_pmax(1:3) = 0.1,  0.1,  0.02,
-    ps_xmin(1:1) = 0.0,
-    ps_xmax(1:1) = 4000,
+    
+    ps_xmin(1:2) = -2000, 200,
+    ps_xmax(1:2) = 2000, 3000,
     ps_np = 1024, 1024, 64,
     
-    ps_nx = 1024,
-    phasespaces = "p1x1", "p2x1", "p3x1",
+    ps_nx(1:2) = 1024, 1024,
+    phasespaces = "p1x1", "p2x1", "p3x1", "p1x2", "p2x2", "p3x2",
     
 }
 

@@ -1,3 +1,14 @@
+'''
+This template needs parameters:
+- dims: int (1 or 2)
+- start_point: list of float (length 2)
+- theta: float (radians)
+- distance: float
+- xmin, xmax, ymin, ymax: float
+- ion_species: list of str
+- species_list: list of dict
+'''
+
 import numpy as np
 import pickle
 
@@ -13,10 +24,10 @@ theta = {{ theta }} # angle that ray makes with the x axis [radians]
 
 # Parameters of FLASH simulation
 box_bounds = {
-    "xmin": {{ box_xmin }},
-    "xmax": {{ box_xmax }},
-    "ymin": {{ box_ymin }},
-    "ymax": {{ box_ymax }},
+    "xmin": {{ (xmin - 3)|int }},
+    "xmax": {{ (xmax + 3)|int }},
+    "ymin": {{ (ymin - 3)|int }},
+    "ymax": {{ (ymax + 3)|int }},
 }
 
 def set_fld_int( STATE ):
@@ -358,7 +369,7 @@ def load_and_interpolate_density(STATE, filename):
     {% if dims == 1 %}
     STATE["nx"] = np.array([4096])
     STATE["xmin"] = np.array([0.0])
-    STATE["xmax"] = np.array([{{ xmax + 2 }}]) # a little more than the final distance specified in input file
+    STATE["xmax"] = np.array([{{ distance + 2 }}]) # a little more than the final distance specified in input file
 
     from scipy.interpolate import RegularGridInterpolator
     loaded_interpolator = RegularGridInterpolator((np.linspace(box_bounds["xmin"], box_bounds['xmax'], density_grid.shape[0]), 
@@ -372,7 +383,7 @@ def load_and_interpolate_density(STATE, filename):
 
     {% else %}
     STATE["nx"] = np.array(density_grid.shape)//2
-    STATE["xmin"] = np.array([{{ xmin - 2 }}, {{ ymin - 2}}]) # go a little beyond the bounds sepcified in the input file
+    STATE["xmin"] = np.array([{{ xmin - 2 }}, {{ ymin - 2 }}]) # go a little beyond the bounds sepcified in the input file
     STATE["xmax"] = np.array([{{ xmax + 2 }}, {{ ymax + 2 }}])
     STATE['data'] = density_grid[::2,::2].T # We have to down sample here or else it breaks
     {% endif %}
@@ -392,7 +403,7 @@ def set_density_e( STATE ):
     load_and_interpolate_density(STATE, "interp/edens.npy")
 
 #-----------------------------------------------------------------------------------------
-{% for ion in ion_species %}
+{% for ion in species_list %}
 
 def set_density_{{ ion }}( STATE ):
     """

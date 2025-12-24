@@ -9,15 +9,11 @@ import numpy as np
 
 @derived_field(name=("flash","idens"), sampling_type="cell", units="1/code_length**3",)
 def _ion_number_density(field, data):
-        avogadro = 6.02214076e23
-        ion_number_density = avogadro*data["flash","dens"]*data["flash","sumy"]/units.gram
-        return ion_number_density
-
+        return data['gas', 'ion_number_density']
+        
 @derived_field(name=("flash","edens"), sampling_type="cell", units="1/code_length**3",)
 def _electron_number_density(field, data):
-        avogadro = 6.02214076e23
-        electron_number_density = avogadro*data["flash","dens"]*data["flash","ye"]/units.gram
-        return electron_number_density
+        return data['gas', 'El_number_density']
 
 @derived_field(name=("flash","Ex"), sampling_type="cell", units="code_velocity*code_magnetic")
 def _Ex(field, data):
@@ -71,14 +67,14 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
         e = units.electron_charge_cgs
         m_e = units.mass_electron_cgs
         
-        CONV_FACTOR = c/(4*np.pi)
-
-        ion_mass_thresholds = [25.5]
+        ion_mass_thresholds = [25.5] # Units of proton mass
 
         def make_species_mask(field, data):
                 """
-                This field is used to mask the species in the FLASH simulation.
-                It is used to determine which species are present in the simulation.
+                Split up the simulation domain based on whether the average ion mass at a given point is above or below the specified threshold(s)
+                Will return an object where each point is assigned a value (1, 2, ..., len(ion_mass_thresholds)+1)
+
+                Counterintuitively, a value of 1 corresponds with the highest ion mass bin and a value of len(ion_mass_thresholds)+1 corresponds with the lowest ion mass
                 """
                 bins = [-np.inf] + ion_mass_thresholds + [np.inf]
                 species_mask = np.digitize(1/data["flash","sumy"], bins)
@@ -90,7 +86,8 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
                 units="",
                 sampling_type="cell",
                 force_override=False) 
-      
+        
+        # Silicon and Aluminum are both hard-coded for MagShockZ
         def make_silicon_density(field, data):
                 silicon_density = data['flash','edens'] * (data["flash","species_mask"] == 1)
                 return silicon_density
@@ -112,6 +109,26 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
                 sampling_type="cell",
                 force_override=False)
 
+        def make_vthele(field, data):
+               vthele = np.sqrt(data['flash','tele'] * units.boltzmann_constant / units.electron_mass_cgs)
+               return vthele.to('code_velocity')
+        
+        ds.add_field(('flash', 'vthele'), function=make_vthele, units='code_velocity', sampling_type='cell', force_override=False)
+
+        def make_vthion(field, data):
+               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'sumy']))
+               return vthion.to('code_velocity')
+
+        def make_vthal(field, data):
+               return data['flash','vthion']
+        
+        def make_vthsi(field, data):
+               return data['flash','vthion']
+        
+        ds.add_field(('flash', 'vthion'), function=make_vthion, units='code_velocity', sampling_type='cell', force_override=False)
+        ds.add_field(('flash', 'vthal'), function=make_vthal, units='code_velocity', sampling_type='cell', force_override=False)
+        ds.add_field(('flash', 'vthsi'), function=make_vthsi, units='code_velocity', sampling_type='cell', force_override=False)
+        
         # We need the gradients in order to calculate ampere's law
         ds.add_gradient_fields(('flash', 'magx'))
         ds.add_gradient_fields(('flash', 'magy'))
@@ -120,11 +137,11 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
 
 
         def make_Jx(field, data):
-            return CONV_FACTOR * (data["flash","magz_gradient_y"] - data["flash","magy_gradient_z"])
+            return c/(4*np.pi) * (data["flash","magz_gradient_y"] - data["flash","magy_gradient_z"])
         def make_Jy(field, data):
-            return CONV_FACTOR * (data["flash","magx_gradient_z"] - data["flash","magz_gradient_x"])
+            return c/(4*np.pi) * (data["flash","magx_gradient_z"] - data["flash","magz_gradient_x"])
         def make_Jz(field, data):
-            return CONV_FACTOR * (data["flash","magy_gradient_x"] - data["flash","magx_gradient_y"])
+            return c/(4*np.pi) * (data["flash","magy_gradient_x"] - data["flash","magx_gradient_y"])
         
 
         ds.add_field(('flash', 'Jx'), function=make_Jx, units='code_magnetic/code_time', sampling_type='cell')
