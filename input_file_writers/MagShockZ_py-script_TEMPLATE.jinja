@@ -1,3 +1,4 @@
+{% if dims == 1 %}
 '''
 This template needs parameters:
 - dims: int (1 or 2)
@@ -8,6 +9,17 @@ This template needs parameters:
 - ion_species: list of str
 - species_list: list of dict
 '''
+{% endif %}
+{% if dims == 2 %}
+'''
+This template needs parameters:
+- dims: int (1 or 2)
+- xmin, xmax, ymin, ymax: float
+- xmin, xmax, ymin, ymax: float
+- ion_species: list of str
+- species_list: list of dict
+'''
+{% endif %}
 
 import numpy as np
 import pickle

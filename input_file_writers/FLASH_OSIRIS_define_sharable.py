@@ -1,3 +1,4 @@
+from logging import config
 import numpy as np
 import logging
 from pathlib import Path
@@ -157,6 +158,21 @@ class FLASH_OSIRIS_Base:
         self.tmax = int(self.gyrotime * self.tmax_gyroperiods)
 
         # print(f"Normalizations: {self.normalizations}")
+        n_species = 3
+        if self.osiris_dims == 1:
+            n_particles = (self.xmax-self.xmin) / self.dx  * n_species * self.ppc
+        elif self.osiris_dims == 2:
+            n_particles = (self.xmax-self.xmin) * (self.ymax - self.ymin) / self.dx**2  * n_species * self.ppc**2
+        n_bytes_particles = n_particles* 2 * 70 # maria says ~70 bytes per particle. I don't know if this is single or double precision, we also need to allocate for twice as many particles
+
+        mem_per_GPU = 40e9
+        max_bytes_per_GPU = mem_per_GPU * .8 # 80% of 16GB
+        print("Number of particles: ", np.format_float_scientific(n_particles,3))
+
+        logger.info(f"Recommended number of GPUs: {np.ceil(n_bytes_particles/max_bytes_per_GPU)}")
+        logger.info(f"Recommended number of nodes: {np.ceil(n_bytes_particles/max_bytes_per_GPU/4)}")
+
+ 
 
     
     def save_slices(self, normal_axis="z"):
@@ -628,7 +644,7 @@ class FLASH_OSIRIS_Base:
             ax2.legend()
             
             plt.tight_layout()
-            plt.savefig(f'{self.output_dir}/{field}_1D.png', dpi=150)
+            plt.savefig(f'{self.output_dir}/{field}_2D.png', dpi=150)
             plt.close()
 
             output[field] = [bottom_data, top_data, left_data, right_data]
@@ -725,19 +741,19 @@ class FLASH_OSIRIS_2D(FLASH_OSIRIS_Base):
     
 
 if __name__ == "__main__":
-    test_1d = FLASH_OSIRIS_1D(
-        path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
-        OSIRIS_inputfile_name="test_1d",
-        reference_density_cc=5e18,
-        ppc=8,
-        dx=0.3,
-        start_point=[0, 100],
-        distance=4000,
-        theta=np.pi/2,
-        rqm_normalization_factor=10,
-        tmax_gyroperiods=10,
-        algorithm="cuda"
-    )
+    # test_1d = FLASH_OSIRIS_1D(
+    #     path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
+    #     OSIRIS_inputfile_name="test_1d",
+    #     reference_density_cc=5e18,
+    #     ppc=8,
+    #     dx=0.3,
+    #     start_point=[0, 100],
+    #     distance=4000,
+    #     theta=np.pi/2,
+    #     rqm_normalization_factor=10,
+    #     tmax_gyroperiods=10,
+    #     algorithm="cuda"
+    # )
 
     # test_1d.save_slices()
     # test_1d.write_input_file()
@@ -745,13 +761,13 @@ if __name__ == "__main__":
     # test_1d.write_python_file()
 
     test_2d = FLASH_OSIRIS_2D(
-        path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
-        OSIRIS_inputfile_name="test_2d",
+        path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/MagShockZ_hdf5_chk_0005"),
+        OSIRIS_inputfile_name="perlmutter_2d",
         reference_density_cc=5e18,
-        ppc=8,
+        ppc=4,
         dx=0.3,
-        xmin=-2000,
-        xmax=2000,
+        xmin=-1500,
+        xmax=1500,
         ymin=200,
         ymax=3000,
         rqm_normalization_factor=100,

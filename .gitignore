@@ -64,3 +64,4 @@ npm-debug.log
 # tmp files and plotting files #
 */tmp/
 *.mp4
+*.png
