@@ -6,7 +6,6 @@ This template needs parameters:
 - theta: float (radians)
 - distance: float
 - xmin, xmax, ymin, ymax: float
-- ion_species: list of str
 - species_list: list of dict
 '''
 {% endif %}
@@ -14,15 +13,17 @@ This template needs parameters:
 '''
 This template needs parameters:
 - dims: int (1 or 2)
+- box_bounds: dict
 - xmin, xmax, ymin, ymax: float
 - xmin, xmax, ymin, ymax: float
-- ion_species: list of str
 - species_list: list of dict
 '''
 {% endif %}
 
 import numpy as np
 import pickle
+
+debug = False
 
 #-----------------------------------------------------------------------------------------
 # Functions callable by OSIRIS
@@ -36,22 +37,28 @@ theta = {{ theta }} # angle that ray makes with the x axis [radians]
 
 # Parameters of FLASH simulation
 box_bounds = {
-    "xmin": {{ (xmin - 3)|int }},
-    "xmax": {{ (xmax + 3)|int }},
-    "ymin": {{ (ymin - 3)|int }},
-    "ymax": {{ (ymax + 3)|int }},
+    "xmin": {{ box_bounds["xmin"]|int }},
+    "xmax": {{ box_bounds["xmax"]|int }},
+    "ymin": {{ box_bounds["ymin"]|int }},
+    "ymax": {{ box_bounds["ymax"]|int }},
 }
 
 def set_fld_int( STATE ):
     """
     Function to set the field data in the STATE dictionary based on the field component.
     """
+    if debug:
+        print("Setting field:", STATE['fld'])
     
     # Positional boundary data (makes a copy, but it's small)
     x_bnd = STATE["x_bnd"]
+    if debug:
+        print("x_bnd:", x_bnd)
 
     # Shape of the data array
     nx = STATE["data"].shape
+    if debug:
+        print("nx:", nx)
 
     {% if dims == 1 %}
     # Create x arrays that indicate the position (remember indexing order is reversed)
@@ -63,9 +70,9 @@ def set_fld_int( STATE ):
         "e1": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
         "e2": ("interp/Ex.pkl", "interp/Ey.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
         "e3": ("interp/Ez.pkl", None, lambda Ez, _: Ez),
-        "b1": ("interp/Bx_int.pkl", "interp/By_int.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
-        "b2": ("interp/Bx_int.pkl", "interp/By_int.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
-        "b3": ("interp/Bz_int.pkl", None, lambda Bz, _: Bz)
+        "b1": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
+        "b2": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
+        "b3": ("interp/magz.pkl", None, lambda Bz, _: Bz)
     }
 
     # Determine the filenames and operation based on the field component
@@ -84,6 +91,9 @@ def set_fld_int( STATE ):
     x1 = np.linspace( x_bnd[0,0], x_bnd[0,1], nx[1], endpoint=True )
     x2 = np.linspace( x_bnd[1,0], x_bnd[1,1], nx[0], endpoint=True )
     X1, X2 = np.meshgrid( x1, x2, indexing='xy' )
+    if debug:
+        print("X1 shape:", X1.shape)
+        print("X2 shape:", X2.shape)
 
     # Determine the filename based on the field component
     match STATE['fld']:
@@ -94,16 +104,15 @@ def set_fld_int( STATE ):
         case "e3":
             filename = "interp/Ez.pkl"
         case "b1":
-            filename = "interp/Bx_int.pkl"
+            filename = "interp/magx.pkl"
         case "b2":
-            filename = "interp/By_int.pkl"
+            filename = "interp/magy.pkl"
         case "b3":
-            filename = "interp/Bz_int.pkl"
-
+            filename = "interp/magz.pkl"
     with open(filename, "rb") as f:
         loaded_interpolator = pickle.load(f)
 
-    STATE["data"] = loaded_interpolator((X2, X1))
+    STATE["data"] = loaded_interpolator((X1, X2))
     {% endif %}
 
     return
@@ -124,17 +133,17 @@ def set_fld_ext( STATE ):
 
     {% if dims == 1 %}
     # Create x arrays that indicate the position (remember indexing order is reversed)
-    x = np.linspace(x_bnd[0][0] * np.cos(theta), x_bnd[0][1] * np.cos(theta), nx[0], endpoint=True) + start_point[0]
-    y = np.linspace(x_bnd[0][0] * np.sin(theta), x_bnd[0][1] * np.sin(theta), nx[0], endpoint=True) + start_point[1]
+    x = np.linspace(x_bnd[0,0] * np.cos(theta), x_bnd[0,1] * np.cos(theta), nx[0], endpoint=True) + start_point[0]
+    y = np.linspace(x_bnd[0,0] * np.sin(theta), x_bnd[0,1] * np.sin(theta), nx[0], endpoint=True) + start_point[1]
 
     # Dictionary to map field components to their respective filenames and operations
     field_map = { 
         "e1": ("interp/Ex_ext.pkl", "interp/Ey_ext.pkl", lambda Ex, Ey: np.cos(theta) * Ex + np.sin(theta) * Ey),
         "e2": ("interp/Ex_ext.pkl", "interp/Ey_ext.pkl", lambda Ex, Ey: -np.sin(theta) * Ex + np.cos(theta) * Ey),
         "e3": ("interp/Ez_ext.pkl", None, lambda Ez, _: Ez),
-        "b1": ("interp/Bx_ext.pkl", "interp/By_ext.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
-        "b2": ("interp/Bx_ext.pkl", "interp/By_ext.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
-        "b3": ("interp/Bz_ext.pkl", None, lambda Bz, _: Bz)
+        "b1": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: np.cos(theta) * Bx + np.sin(theta) * By),
+        "b2": ("interp/magx.pkl", "interp/magy.pkl", lambda Bx, By: -np.sin(theta) * Bx + np.cos(theta) * By),
+        "b3": ("interp/magz.pkl", None, lambda Bz, _: Bz)
     }
 
     # Determine the filenames and operation based on the field component
@@ -147,7 +156,7 @@ def set_fld_ext( STATE ):
         if filename2:
             with open(filename2, "rb") as f:
                 field2 = pickle.load(f)
-        STATE["data"] = operation(field1((y, x)), field2((y, x)) if field2 else None)
+        STATE["data"] = operation(field1((x, y)), field2((x, y)) if field2 else None)
     {% else %}
 
     # Could make decisions based on field component
@@ -174,7 +183,7 @@ def set_fld_ext( STATE ):
     # with open(filename, "rb") as f:
     #     loaded_interpolator = pickle.load(f)
 
-    # STATE["data"] = loaded_interpolator((X2, X1))
+    # STATE["data"] = loaded_interpolator((X1, X2))
     {% endif %}
 
     return
@@ -186,90 +195,111 @@ def set_fld_ext( STATE ):
 def set_uth_e(STATE):
     """
     The `STATE` dictionary will be prepared with the following key:
-    "x" - A real array of size `(p_x_dim, npart)` containing the positions of the particles.
+    "x" - A real array of size `(npart, p_x_dim)` containing the positions of the particles.
 
     The desired momentum array can then be created and set based on the positions `"x"`. This array should be passed to the `STATE` array with the following key:
-    "u" - A real array of size `(3, npart)` containing either the thermal or fluid momenta of the particles. **This quantity should be set to the desired momentum data.**
+    "u" - A real array of size `(npart, 3)` containing either the thermal or fluid momenta of the particles. **This quantity should be set to the desired momentum data.**
     """
+    npart = STATE["x"].shape[0]
+    if debug:
+        print("x_dim", STATE["x"].shape[1])
+    x_dim = STATE["x"].shape[1]
+
+    if debug:
+        print("xmax and xmin", STATE["x"].max(), STATE["x"].min())
+
+    # Prepare velocity array
+    STATE["u"] = np.zeros((npart, 3))
 
     if "vthele" not in STATE:
         with open('interp/vthele.pkl', "rb") as f:
             STATE['vthele'] = pickle.load(f)
 
-    # Prepare velocity array
-    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
 
-    # Define a chunk size for processing
-    chunk_size = 1024
-
+    {% if dims == 1 %}
     # Assign velocities in chunks, this saves memory in 2D. In 1D the difference is negligible
+    chunk_size = 1024
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
-        {% if dims == 1 %}
         x_positions = start_point[0] + np.cos(theta) * STATE["x"][start:end, 0]
         y_positions = start_point[1] + np.sin(theta) * STATE["x"][start:end, 0]
 
         STATE["u"][start:end, 0] = STATE['vthele']((y_positions, x_positions))
         STATE["u"][start:end, 1] = STATE['vthele']((y_positions, x_positions))
         STATE["u"][start:end, 2] = STATE['vthele']((y_positions, x_positions))
-        {% else %}
-        STATE["u"][start:end, 0] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 1] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 2] = STATE['vthele']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        {% endif %}
+    {% else %}
+    STATE["u"][:,0] = STATE['vthele']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:,1] = STATE['vthele']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:,2] = STATE['vthele']((STATE["x"][:,0], STATE["x"][:,1]))
+    {% endif %}
 
     return
 #-----------------------------------------------------------------------------------------
-{% for ion in ion_species %}
+{% for ion in species_list %}
 def set_uth_{{ ion }}( STATE ):
-    """ 
-    The `STATE` dictionary will be prepared with the following key:
-    "x" - A real array of size `(p_x_dim, npart)` containing the positions of the particles.
-
-    The desired momentum array can then be created and set based on the positions `"x"`.  This array should be passed to the `STATE` array with the following key:
-    "u" - A real array of size `(3, npart)` containing either the thermal or fluid momenta of the particles.  **This quantity should be set to the desired momentum data.**
     """
+    The `STATE` dictionary will be prepared with the following key:
+    "x" - A real array of size `(npart, p_x_dim)` containing the positions of the particles.
 
-    if "vth{{ ion }}" not in STATE:
-        with open(f'interp/vth{{ ion }}.pkl', "rb") as f:
-            STATE[f'vth{{ ion }}'] = pickle.load(f)
+    The desired momentum array can then be created and set based on the positions `"x"`. This array should be passed to the `STATE` array with the following key:
+    "u" - A real array of size `(npart, 3)` containing either the thermal or fluid momenta of the particles. **This quantity should be set to the desired momentum data.**
+    """
+    npart = STATE["x"].shape[0]
+    x_dim = STATE["x"].shape[1]
 
     # Prepare velocity array
-    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+    STATE["u"] = np.zeros((npart, 3))
 
-    chunk_size = 1024  # Define a chunk size
+    if "vth{{ ion }}" not in STATE:
+        with open('interp/vth{{ ion }}.pkl', "rb") as f:
+            STATE['vth{{ ion }}'] = pickle.load(f)
 
+    {% if dims == 1 %}
     # Assign velocities in chunks, this saves memory in 2D. In 1D the difference is negligible
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
-        {% if dims == 1 %}
         x_positions = start_point[0] + np.cos(theta) * STATE["x"][start:end, 0]
         y_positions = start_point[1] + np.sin(theta) * STATE["x"][start:end, 0]
 
-        STATE["u"][start:end, 0] = STATE[f'vth{{ ion }}']((y_positions, x_positions))
-        STATE["u"][start:end, 1] = STATE[f'vth{{ ion }}']((y_positions, x_positions))
-        STATE["u"][start:end, 2] = STATE[f'vth{{ ion }}']((y_positions, x_positions))
-        {% else %}
-        STATE["u"][start:end, 0] = STATE[f'vth{{ ion }}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 1] = STATE[f'vth{{ ion }}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        STATE["u"][start:end, 2] = STATE[f'vth{{ ion }}']((STATE["x"][start:end, 1], STATE["x"][start:end, 0]))
-        {% endif %}
+        STATE["u"][start:end, 0] = STATE['vth{{ ion }}']((y_positions, x_positions))
+        STATE["u"][start:end, 1] = STATE['vth{{ ion }}']((y_positions, x_positions))
+        STATE["u"][start:end, 2] = STATE['vth{{ ion }}']((y_positions, x_positions))
+    {% else %}
+    STATE["u"][:, 0] = STATE['vth{{ ion }}']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:, 1] = STATE['vth{{ ion }}']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:, 2] = STATE['vth{{ ion }}']((STATE["x"][:,0], STATE["x"][:,1]))
+    {% endif %}
     return
 #-----------------------------------------------------------------------------------------
 {% endfor %}
 
 #-----------------------------------------------------------------------------------------
 def set_ufl_e( STATE ):
-    # print("calling set_ufl...")
-    # Prepare velocity array
-    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+    """
+    The `STATE` dictionary will be prepared with the following key:
+    "x" - A real array of size `(npart, p_x_dim)` containing the positions of the particles.
 
-    with open("interp/v_ex.pkl", "rb") as f:
-        velx = pickle.load(f)
-    with open("interp/v_ey.pkl", "rb") as f:
-        vely = pickle.load(f)
-    with open("interp/v_ez.pkl", "rb") as f:
-        velz = pickle.load(f)
+    The desired momentum array can then be created and set based on the positions `"x"`. This array should be passed to the `STATE` array with the following key:
+    "u" - A real array of size `(npart, 3)` containing either the thermal or fluid momenta of the particles. **This quantity should be set to the desired momentum data.**
+    """
+    npart = STATE["x"].shape[0]
+    x_dim = STATE["x"].shape[1]
+
+    # Prepare velocity array
+    STATE["u"] = np.zeros((npart, 3))
+
+    if "v_ex" not in STATE:
+        with open('interp/v_ex.pkl', "rb") as f:
+            STATE['v_ex'] = pickle.load(f)
+
+    if "v_ey" not in STATE:
+        with open('interp/v_ey.pkl', "rb") as f:
+            STATE['v_ey'] = pickle.load(f)
+
+    if "v_ez" not in STATE:
+        with open('interp/v_ez.pkl', "rb") as f:
+            STATE['v_ez'] = pickle.load(f)
+
         
     {% if dims == 1 %}
     # Calculate positions
@@ -278,50 +308,51 @@ def set_ufl_e( STATE ):
 
     # Set ufl_x1
     STATE["u"][:, 0] = (
-        np.cos(theta) * velx((y_positions, x_positions)) +
-        np.sin(theta) * vely((y_positions, x_positions))
+        np.cos(theta) * STATE['v_ex']((x_positions, y_positions)) +
+        np.sin(theta) * STATE['v_ey']((x_positions, y_positions))
     )
 
     # Set ufl_x2
     STATE["u"][:, 1] = (
-        -np.sin(theta) * velx((y_positions, x_positions)) +
-        np.cos(theta) * vely((y_positions, x_positions))
+        -np.sin(theta) * STATE['v_ex']((x_positions, y_positions)) +
+        np.cos(theta) * STATE['v_ey']((x_positions, y_positions))
     )
-
     # Set ufl_x3
-    STATE["u"][:, 2] = velz((y_positions, x_positions))
+    STATE["u"][:, 2] = STATE['v_ez']((x_positions, y_positions))
     {% else %}
-    chunk_size = 1024  # Define a chunk size
-
-    # Set ufl_x1
-    for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end,0] = velx((STATE["x"][start:end,1], STATE["x"][start:end,0]))
-
-    # Set ufl_x2
-    for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end,1] = vely((STATE["x"][start:end,1], STATE["x"][start:end,0]))
-
-    # Set ufl_x3
-    for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end,2] = velz((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+    STATE["u"][:, 0] = STATE['v_ex']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:, 1] = STATE['v_ey']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:, 2] = STATE['v_ez']((STATE["x"][:,0], STATE["x"][:,1]))
     {% endif %}
 
     return
 #-----------------------------------------------------------------------------------------
 
 def set_ufl_i( STATE ):
-    # Prepare velocity array
-    STATE["u"] = np.zeros((STATE["x"].shape[0], 3))
+    """
+    The `STATE` dictionary will be prepared with the following key:
+    "x" - A real array of size `(npart, p_x_dim)` containing the positions of the particles.
 
-    with open("interp/v_ix.pkl", "rb") as f:
-        velx = pickle.load(f)
-    with open("interp/v_iy.pkl", "rb") as f:
-        vely = pickle.load(f)
-    with open("interp/v_iz.pkl", "rb") as f:
-        velz = pickle.load(f)
+    The desired momentum array can then be created and set based on the positions `"x"`. This array should be passed to the `STATE` array with the following key:
+    "u" - A real array of size `(npart, 3)` containing either the thermal or fluid momenta of the particles. **This quantity should be set to the desired momentum data.**
+    """
+    npart = STATE["x"].shape[0]
+    x_dim = STATE["x"].shape[1]
+
+    # Prepare velocity array
+    STATE["u"] = np.zeros((npart, 3))
+
+    if "v_ix" not in STATE:
+        with open('interp/v_ix.pkl', "rb") as f:
+            STATE['v_ix'] = pickle.load(f)
+
+    if "v_iy" not in STATE:
+        with open('interp/v_iy.pkl', "rb") as f:
+            STATE['v_iy'] = pickle.load(f)
+
+    if "v_iz" not in STATE:
+        with open('interp/v_iz.pkl', "rb") as f:
+            STATE['v_iz'] = pickle.load(f)
      
     {% if dims == 1 %}
     # Calculate positions
@@ -330,35 +361,22 @@ def set_ufl_i( STATE ):
 
     # Set ufl_x1
     STATE["u"][:, 0] = (
-        np.cos(theta) * velx((y_positions, x_positions)) +
-        np.sin(theta) * vely((y_positions, x_positions))
+        np.cos(theta) * STATE['v_ix']((x_positions, y_positions)) +
+        np.sin(theta) * STATE['v_iy']((x_positions, y_positions))
     )
 
     # Set ufl_x2
     STATE["u"][:, 1] = (
-        -np.sin(theta) * velx((y_positions, x_positions)) +
-        np.cos(theta) * vely((y_positions, x_positions))
+        -np.sin(theta) * STATE['v_ix']((x_positions, y_positions)) +
+        np.cos(theta) * STATE['v_iy']((x_positions, y_positions))
     )
 
     # Set ufl_x3
-    STATE["u"][:, 2] = velz((y_positions, x_positions))
+    STATE["u"][:, 2] = STATE['v_iz']((x_positions, y_positions))
     {% else %}
-    chunk_size = 1024  # Define a chunk size
-
-    # Set ufl_x1
-    for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end,0] = velx((STATE["x"][start:end,1], STATE["x"][start:end,0]))
-
-    # Set ufl_x2
-    for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end,1] = vely((STATE["x"][start:end,1], STATE["x"][start:end,0]))
-
-    # Set ufl_x3
-    for start in range(0, len(STATE["u"][:,0]), chunk_size):
-        end = min(start + chunk_size, len(STATE["u"][:,0]))
-        STATE["u"][start:end,2] = velz((STATE["x"][start:end,1], STATE["x"][start:end,0]))
+    STATE["u"][:, 0] = STATE['v_ix']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:, 1] = STATE['v_iy']((STATE["x"][:,0], STATE["x"][:,1]))
+    STATE["u"][:, 2] = STATE['v_iz']((STATE["x"][:,0], STATE["x"][:,1]))
     {% endif %}
 
     return
@@ -381,7 +399,7 @@ def load_and_interpolate_density(STATE, filename):
     {% if dims == 1 %}
     STATE["nx"] = np.array([4096])
     STATE["xmin"] = np.array([0.0])
-    STATE["xmax"] = np.array([{{ distance + 2 }}]) # a little more than the final distance specified in input file
+    STATE["xmax"] = np.array([{{ distance + 5 }}]) # a little more than the final distance specified in input file
 
     from scipy.interpolate import RegularGridInterpolator
     loaded_interpolator = RegularGridInterpolator((np.linspace(box_bounds["xmin"], box_bounds['xmax'], density_grid.shape[0]), 
@@ -394,10 +412,17 @@ def load_and_interpolate_density(STATE, filename):
     STATE["data"] = loaded_interpolator((x, y)) # This one is reversed because it does not come pre-interpolated
 
     {% else %}
-    STATE["nx"] = np.array(density_grid.shape)//2
-    STATE["xmin"] = np.array([{{ xmin - 2 }}, {{ ymin - 2 }}]) # go a little beyond the bounds sepcified in the input file
-    STATE["xmax"] = np.array([{{ xmax + 2 }}, {{ ymax + 2 }}])
-    STATE['data'] = density_grid[::2,::2].T # We have to down sample here or else it breaks
+    # Downsample by factor of 2
+    downsampled = density_grid.T 
+    
+    # You might need this I'm not sure
+    # downsampled = np.maximum(downsampled, 0.0)
+    
+    STATE['data'] = downsampled
+    
+    STATE["nx"] = np.array([STATE['data'].shape[1], STATE['data'].shape[0]]) # This is correct holy shit
+    STATE["xmin"] = np.array([box_bounds["xmin"], box_bounds["ymin"]])
+    STATE["xmax"] = np.array([box_bounds["xmax"], box_bounds["ymax"]])
     {% endif %}
 
     return
@@ -410,8 +435,8 @@ def set_density_e( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    print("setting ELECTRON DENSITY...")
-
+    if debug:
+        print("setting ELECTRON DENSITY...")
     load_and_interpolate_density(STATE, "interp/edens.npy")
 
 #-----------------------------------------------------------------------------------------
@@ -424,7 +449,8 @@ def set_density_{{ ion }}( STATE ):
     Parameters:
     STATE (dict): Dictionary containing the state information.
     """
-    print(f"setting {{ ion|upper }} DENSITY...")
+    if debug:
+        print(f"setting {{ ion|upper }} DENSITY...")
     load_and_interpolate_density(STATE, f"interp/{{ ion }}dens.npy")
 
 #-----------------------------------------------------------------------------------------

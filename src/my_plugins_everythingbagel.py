@@ -21,17 +21,20 @@ def _electron_number_density(field, data):
 
 @derived_field(name=("flash","Ex"), sampling_type="cell", units="code_velocity*code_magnetic")
 def _Ex(field, data):
-        Ex = data['flash','velz']*data["flash","magy"]-data["flash","vely"]*data["flash","magz"]
+        # E = -v x B for MHD equilibrium
+        Ex = -(data['flash','velz']*data["flash","magy"]-data['flash','vely']*data["flash","magz"])
         return Ex
 
 @derived_field(name=("flash","Ey"), sampling_type="cell", units="code_velocity*code_magnetic")
 def _Ey(field, data):
-        Ey = data['flash','velx']*data["flash","magz"]-data["flash","velz"]*data["flash","magx"]
+        # E = -v x B for MHD equilibrium
+        Ey = -(data['flash','velx']*data["flash","magz"]-data['flash','velz']*data["flash","magx"])
         return Ey
 
 @derived_field(name=("flash","Ez"), sampling_type="cell", units="code_velocity*code_magnetic")
 def _Ez(field, data):
-        Ez = data['flash','vely']*data["flash","magx"]-data["flash","velx"]*data["flash","magy"]
+        # E = -v x B for MHD equilibrium
+        Ez = -(data['flash','vely']*data["flash","magx"]-data['flash','velx']*data["flash","magy"])
         return Ez
 
 

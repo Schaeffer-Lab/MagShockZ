@@ -91,7 +91,7 @@ class FLASH_OSIRIS_Base:
         logger.info(f"Loading FLASH data from {self.FLASH_data}")
         self.ds = yt.load_for_osiris(self.FLASH_data.as_posix(), rqm_factor=self.rqm_factor)
 
-        level = 0 # If you are getting inexplicable crashes, you are probably running out of memory. This is probably the culprit.
+        level = 1 # If you are getting inexplicable crashes, you are probably running out of memory. This is probably the culprit.
         self.dims = self.ds.domain_dimensions * self.ds.refine_by**level
 
         logger.info(f"Creating covering grid at level {level} with dims {self.dims}")
@@ -129,8 +129,10 @@ class FLASH_OSIRIS_Base:
         logger.info("normalizing plasma parameters")
         ######## NORMALIZATIONS ######## 
         B_norm = self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge
-        E_norm = self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge / np.sqrt(self.rqm_factor)
         v_norm = yt.units.speed_of_light / np.sqrt(self.rqm_factor)
+        E_norm = self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge / np.sqrt(self.rqm_factor)
+        # E_norm must equal v_norm * B_norm so that E = -v x B holds in normalized units
+        # E_norm = v_norm * B_norm
 
         logger.info(f"Electric field normalization: {E_norm.to('statV/cm'):.3e}")
         logger.info(f"Magnetic field normalization: {B_norm.to('Gauss'):.3e}")
@@ -232,7 +234,7 @@ class FLASH_OSIRIS_Base:
             np.save(f"{interp_dir}/{field}.npy", field_data)
         else:
             interp = RegularGridInterpolator(
-                (self.y, self.x), field_data.T,
+                (self.x, self.y), field_data,
                 method='linear', bounds_error=True, fill_value=0)
             with open(f"{interp_dir}/{field}.pkl", "wb") as f:
                 pickle.dump(interp, f)
@@ -407,8 +409,8 @@ class FLASH_OSIRIS_Base:
             with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
                 vthele = pickle.load(f)
                 bounds['electron'] = [
-                    vthele((self.ymin, self.xmin)),
-                    vthele((self.ymax, self.xmax))
+                    vthele((self.xmin, self.ymin)),
+                    vthele((self.xmax, self.ymax))
                 ]
                 logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
             
@@ -417,8 +419,8 @@ class FLASH_OSIRIS_Base:
                 with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
                     vthion = pickle.load(f)
                     bounds['ions'][ion] = [
-                        vthion((self.ymin, self.xmin)),
-                        vthion((self.ymax, self.xmax))
+                        vthion((self.xmin, self.ymin)),
+                        vthion((self.xmax, self.ymax))
                     ]
                     logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")
         elif self.osiris_dims == 2:             
@@ -431,12 +433,11 @@ class FLASH_OSIRIS_Base:
             y_samples = np.linspace(self.ymin, self.ymax, num_samples)
             with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
                     vthele = pickle.load(f)
-                    x_lower_bound = np.mean([vthele((y, self.xmin)) for y in y_samples])
-                    x_upper_bound = np.mean([vthele((y, self.xmax)) for y in y_samples])
+                    x_lower_bound = np.mean([vthele((self.xmin, y)) for y in y_samples])
+                    x_upper_bound = np.mean([vthele((self.xmax, y)) for y in y_samples])
 
-                    y_lower_bound = np.mean([vthele((self.ymin, x)) for x in x_samples])
-                    y_upper_bound = np.mean([vthele((self.ymax, x)) for x in x_samples])
-
+                    y_lower_bound = np.mean([vthele((x, self.ymin)) for x in x_samples])
+                    y_upper_bound = np.mean([vthele((x, self.ymax)) for x in x_samples])
                     bounds['electron']['x'] = [
                         x_lower_bound,
                         x_upper_bound
@@ -452,12 +453,11 @@ class FLASH_OSIRIS_Base:
                 bounds['ions'][ion] = {}
                 with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
                     vthion = pickle.load(f)
-                    x_lower_bound = np.mean([vthion((y, self.xmin)) for y in y_samples])
-                    x_upper_bound = np.mean([vthion((y, self.xmax)) for y in y_samples])
+                    x_lower_bound = np.mean([vthion((self.xmin, y)) for y in y_samples])
+                    x_upper_bound = np.mean([vthion((self.xmax, y)) for y in y_samples])
 
-                    y_lower_bound = np.mean([vthion((self.ymin, x)) for x in x_samples])
-                    y_upper_bound = np.mean([vthion((self.ymax, x)) for x in x_samples])
-
+                    y_lower_bound = np.mean([vthion((x, self.ymin)) for x in x_samples])
+                    y_upper_bound = np.mean([vthion((x, self.ymax)) for x in x_samples])
                     bounds['ions'][ion]['x'] = [
                         x_lower_bound,
                         x_upper_bound
@@ -484,6 +484,12 @@ class FLASH_OSIRIS_Base:
             "ymin": self.ymin,
             "ymax": self.ymax,
             "species_list": list(self.species_rqms.keys()),
+            "box_bounds": {
+                "xmin": np.min(self.x).value,
+                "xmax": np.max(self.x).value,
+                "ymin": np.min(self.y).value,
+                "ymax": np.max(self.y).value,
+            },
         }
         
         # Load and render template
@@ -515,23 +521,23 @@ class FLASH_OSIRIS_Base:
             if field.endswith('dens'):
                 data = np.load(self.output_dir / f'interp/{field}.npy')
                 f = RegularGridInterpolator(
-                    (self.y, self.x), data.T, 
+                    (self.x, self.y), data, 
                     method='linear', bounds_error=True, fill_value=0)
             else:
                 with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
                     f = pickle.load(p)
-                    x1,x2 = np.meshgrid(self.x, self.y, indexing='ij')
-                    data = f((x2,x1))
+                    x1,x2 = np.meshgrid(self.x, self.y)
+                    data = f((x1,x2))
 
             # Create figure with two subplots side by side
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
             # Left subplot: 2D plane with lineout
             if field.endswith('dens'):
-                im = ax1.imshow(np.log(data.T), origin='lower',
+                im = ax1.imshow(np.log(data), origin='lower',
                         extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
             else:
-                im = ax1.imshow(data.T, origin='lower',
+                im = ax1.imshow(data, origin='lower',
                         extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
             ax1.plot([self.xmin, self.xmax], [self.ymin, self.ymax], color='r', linewidth=2, label='Lineout')
             ax1.set_xlabel(r'x [$c/\omega_{pe}$]')
@@ -545,7 +551,7 @@ class FLASH_OSIRIS_Base:
             
             x_points = np.linspace(self.xmin, self.xmax, n_points)
             y_points = np.linspace(self.ymin, self.ymax, n_points)
-            data_line = f(np.column_stack([y_points, x_points]))
+            data_line = f(np.column_stack([x_points, y_points]))
             
             # Right subplot: 1D lineout
             ax2.plot(np.linspace(0, self.distance, n_points), data_line, color='r', linewidth=2)
@@ -571,13 +577,13 @@ class FLASH_OSIRIS_Base:
             if field.endswith('dens'):
                 data = np.load(self.output_dir / f'interp/{field}.npy')
                 f = RegularGridInterpolator(
-                    (self.y, self.x), data.T, 
+                    (self.x, self.y), data, 
                     method='linear', bounds_error=True, fill_value=0)
             else:
                 with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
                     f = pickle.load(p)
-                    x1,x2 = np.meshgrid(self.x,self.y, indexing='ij')
-                    data = f((x2,x1))
+                    x1,x2 = np.meshgrid(self.x,self.y)
+                    data = f((x1,x2))
 
             # Create figure with two subplots side by side
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
@@ -593,10 +599,10 @@ class FLASH_OSIRIS_Base:
 
             # Left subplot: 2D plane with lineout
             if field.endswith('dens'):
-                im = ax1.imshow(np.log(data.T), origin='lower',
+                im = ax1.imshow(np.log(data).T, origin='lower',
                         extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
             else:
-                im = ax1.imshow(data.T, origin='lower',
+                im = ax1.imshow(data, origin='lower',
                         extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
             ax1.set_xlabel(r'x [$c/\omega_{pe}$]')
             ax1.set_ylabel(r'y [$c/\omega_{pe}$]')
@@ -609,22 +615,22 @@ class FLASH_OSIRIS_Base:
             
             bottom_line_x = np.linspace(self.xmin, self.xmax, n_points)
             bottom_line_y = self.ymin * np.ones_like(bottom_line_x)
-            bottom_line = np.column_stack([bottom_line_y, bottom_line_x])
+            bottom_line = np.column_stack([bottom_line_x, bottom_line_y])
             bottom_data = f(bottom_line)
 
             top_line_x = np.linspace(self.xmin, self.xmax, n_points)
             top_line_y = self.ymax * np.ones_like(top_line_x)
-            top_line = np.column_stack([top_line_y, top_line_x])
+            top_line = np.column_stack([top_line_x, top_line_y])
             top_data = f(top_line)
 
             left_line_x = self.xmin * np.ones_like(bottom_line_x)
             left_line_y = np.linspace(self.ymin, self.ymax, n_points)
-            left_line = np.column_stack([left_line_y, left_line_x])
+            left_line = np.column_stack([left_line_x, left_line_y])
             left_data = f(left_line)
 
             right_line_x = self.xmax * np.ones_like(bottom_line_x)
             right_line_y = np.linspace(self.ymin, self.ymax, n_points)
-            right_line = np.column_stack([right_line_y, right_line_x])
+            right_line = np.column_stack([right_line_x, right_line_y])
             right_data = f(right_line)
             
             # Right subplot: 1D lineout
@@ -745,37 +751,37 @@ if __name__ == "__main__":
     #     path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
     #     OSIRIS_inputfile_name="test_1d",
     #     reference_density_cc=5e18,
-    #     ppc=8,
+    #     ppc=20,
     #     dx=0.3,
-    #     start_point=[0, 100],
-    #     distance=4000,
+    #     start_point=[0, 300],
+    #     distance=2000,
     #     theta=np.pi/2,
-    #     rqm_normalization_factor=10,
-    #     tmax_gyroperiods=10,
+    #     rqm_normalization_factor=500,
+    #     tmax_gyroperiods=20,
     #     algorithm="cuda"
     # )
 
     # test_1d.save_slices()
     # test_1d.write_input_file()
-    # test_1d.plot1D(['edens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'v_ix', 'v_iy'])
+    # test_1d.plot1D(['edens', 'aldens','sidens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'v_ix', 'v_iy','v_ey'])
     # test_1d.write_python_file()
 
     test_2d = FLASH_OSIRIS_2D(
-        path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/MagShockZ_hdf5_chk_0005"),
-        OSIRIS_inputfile_name="perlmutter_2d",
+        path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
+        OSIRIS_inputfile_name="test_2d",
         reference_density_cc=5e18,
-        ppc=4,
-        dx=0.3,
-        xmin=-1500,
-        xmax=1500,
-        ymin=200,
-        ymax=3000,
-        rqm_normalization_factor=100,
+        ppc=2,
+        dx=0.6,
+        xmin=-700,
+        xmax=700,
+        ymin=300,
+        ymax=2000,
+        rqm_normalization_factor=500,
         tmax_gyroperiods=10,
         algorithm="cuda"
     )
 
     test_2d.save_slices()
     test_2d.write_input_file()
-    test_2d.plot2D(['edens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'v_ix', 'v_iy'])
+    test_2d.plot2D(['edens', 'aldens','sidens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'vthsi', 'v_ix', 'v_iy','v_ey'])
     test_2d.write_python_file()

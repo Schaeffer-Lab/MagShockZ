@@ -15,19 +15,19 @@ def _ion_number_density(field, data):
 def _electron_number_density(field, data):
         return data['gas', 'El_number_density']
 
-@derived_field(name=("flash","Ex"), sampling_type="cell", units="code_velocity*code_magnetic")
+@derived_field(name=("flash","Ex"), sampling_type="cell", units="code_magnetic",)
 def _Ex(field, data):
-        Ex = data['flash','velz']*data["flash","magy"]-data["flash","vely"]*data["flash","magz"]
+        Ex = (data['flash','velz']*data["flash","magy"]-data["flash","vely"]*data["flash","magz"])/units.speed_of_light
         return Ex
 
-@derived_field(name=("flash","Ey"), sampling_type="cell", units="code_velocity*code_magnetic")
+@derived_field(name=("flash","Ey"), sampling_type="cell", units="code_magnetic",)
 def _Ey(field, data):
-        Ey = data['flash','velx']*data["flash","magz"]-data["flash","velz"]*data["flash","magx"]
+        Ey = (data['flash','velx']*data["flash","magz"]-data["flash","velz"]*data["flash","magx"])/units.speed_of_light
         return Ey
 
-@derived_field(name=("flash","Ez"), sampling_type="cell", units="code_velocity*code_magnetic")
+@derived_field(name=("flash","Ez"), sampling_type="cell", units="code_magnetic",)
 def _Ez(field, data):
-        Ez = data['flash','vely']*data["flash","magx"]-data["flash","velx"]*data["flash","magy"]
+        Ez = (data['flash','vely']*data["flash","magx"]-data["flash","velx"]*data["flash","magy"])/units.speed_of_light
         return Ez
 
 
@@ -120,10 +120,12 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
                return vthion.to('code_velocity')
 
         def make_vthal(field, data):
-               return data['flash','vthion']
+               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'sumy'])) 
+               return vthion.to('code_velocity') 
         
         def make_vthsi(field, data):
-               return data['flash','vthion']
+               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'sumy'])) 
+               return vthion.to('code_velocity')
         
         ds.add_field(('flash', 'vthion'), function=make_vthion, units='code_velocity', sampling_type='cell', force_override=False)
         ds.add_field(('flash', 'vthal'), function=make_vthal, units='code_velocity', sampling_type='cell', force_override=False)

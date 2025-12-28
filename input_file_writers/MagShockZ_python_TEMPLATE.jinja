@@ -120,7 +120,7 @@ diag_emf
 
     ndump_fac_ave = 1,
     ndump_fac_ene_int = 10,
-    ndump_fac_charge_cons = 10,
+    !ndump_fac_charge_cons = 10,
     {% if dims == 1 %}
     n_ave(1:1) = 4,
     {% else %}
@@ -148,7 +148,19 @@ species
     {% endif %}
     init_type = "python",
 }
+{% if species['name'] not in ['e', 'ele'] %}
+!----------inital proper velocities - {{ species['name'] }}-----------------
+udist
+{
+    use_spatial_uth = .true.,
+    uth_py_mod = "py-script-{{ dims }}d", ! Name of Python file
+    uth_py_func = "set_uth_{{ species['name'] }}", ! Name of function in the Python file to call
 
+    ! use_spatial_ufl = .true.,
+    ufl_py_mod = "py-script-{{ dims }}d", ! Name of Python file
+    ufl_py_func = "set_ufl_i", ! Name of function in the Python file to call
+}
+{% else %}
 !----------inital proper velocities - {{ species['name'] }}-----------------
 udist
 {
@@ -160,7 +172,7 @@ udist
     ufl_py_mod = "py-script-{{ dims }}d", ! Name of Python file
     ufl_py_func = "set_ufl_{{ species['name'] }}", ! Name of function in the Python file to call
 }
-
+{% endif %}
 !----------density profile for {{ species['name'] }}----------
 profile
 {
