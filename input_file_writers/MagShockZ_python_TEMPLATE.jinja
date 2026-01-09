@@ -33,7 +33,8 @@ node_conf
     node_number = 16, 1,
     n_threads = 2,
     {% endif %}
-    if_periodic(1:2) = .true., .false.,
+    !if_periodic(1:2) = .true., .false.,
+    if_periodic(1:2) = .false., .false.,
     {% endif %}
     {% if algorithm in ["cuda", "tiles"] %}
     {% if dims ==1 %}tile_number(1:1) = {{ tile_numbers[0] }},{% else %}
@@ -44,7 +45,14 @@ node_conf
 grid
 {
     {% if dims == 1 %}nx_p = {{ nx }},{% else %}
-    nx_p(1:2) = {{ nx }}, {{ ny }},{% endif %}
+    nx_p(1:2) = {{ nx }}, {{ ny }},
+    !load_balance(1:2) = .true., .true.,
+    !lb_type = "dynamic",
+    !n_dynamic = 1024, ! estimate this to be once per crossing time
+    !cell_weight = 1.0,
+    !ndump_global_load = 1,
+    !start_load_balance = 100,
+    !balance_on_start = .false.,{% endif %}
 }
 
 !----------time step and global data dump timestep number----------
@@ -101,9 +109,11 @@ emf_bound
     vpml_bnd_size = {{ vpml_bnd_size }},
     vpml_diffuse(1:2,1) = .true., .true.,
     {% else %}
-    type(1:2,2) =  "pmc", "vpml", ! boundaries for x2
+    type(1:2,1) =  "vpml", "vpml",
+    type(1:2,2) =  "pmc", "vpml",
+    vpml_diffuse(1:2) = .true., .true.,
     vpml_diffuse(2,2) = .true.,
-    vpml_bnd_size = 100,
+    vpml_bnd_size = 128,
     {% endif %}
 }
 
@@ -215,7 +225,7 @@ diag_species
     phasespaces = "p1x1", "p2x1", "p3x1",
     {% else %}
     ps_nx(1:{{ dims }}) = {{ ps_nx }}, {{ ps_ny }},
-    phasespaces = "p1x1", "p2x1", "p3x1", "p1x2", "p2x2", "p3x2",
+    phasespaces = "p1x1", "p2x1", "p3x1", "p1x2, line, x2, 0", "p2x2, line, x2, 0", "p3x2, line, x2, 0",
     {% endif %}
 }
 {% endfor %}

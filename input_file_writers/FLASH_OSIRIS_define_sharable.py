@@ -66,6 +66,7 @@ class FLASH_OSIRIS_Base:
         self.inputfile_name = OSIRIS_inputfile_name + f".{self.osiris_dims}d"
         self.n0 = reference_density_cc * yt.units.cm**-3
         self.ppc = ppc
+        self.interpolation = 'cubic'
         self.dx = dx 
         self.rqm_factor = rqm_normalization_factor
         self.species_rqms = species_rqms
@@ -269,9 +270,9 @@ class FLASH_OSIRIS_Base:
         species_list = self._prepare_species_list(thermal_bounds) # Type: List[Dictionary]
 
         # preset params. Feel free to modify.
-        n_dump_total = 800
+        n_dump_total = 300
         vpml_bnd_size = 100
-        interpolation = 'cubic'
+
         
         context = {
             'dims': self.osiris_dims,
@@ -283,7 +284,7 @@ class FLASH_OSIRIS_Base:
             'xmax': xmax,
             'ymin': ymin,
             'ymax': ymax,
-            'interpolation': interpolation,
+            'interpolation': self.interpolation,
             'ppc': self.ppc,
             'dt': np.format_float_scientific(self.dt, 4),
             'ndump': int(self.tmax / (n_dump_total * self.dt)),
@@ -292,15 +293,15 @@ class FLASH_OSIRIS_Base:
             'num_species': len(self.species_rqms) + 1,
             'species_list': species_list,
             'vpml_bnd_size': vpml_bnd_size,
-            'ps_pmin': [-0.1, -0.1, -0.02],
-            'ps_pmax': [0.1, 0.1, 0.02],
+            'ps_pmin': [-0.2, -0.2, -0.05],
+            'ps_pmax': [0.2, 0.2, 0.05],
             'ps_np': [1024, 1024, 64],
             'ps_nx': 1024,
             'ps_ny': 1024,
             'smooth_type': 'binomial',
             'smooth_order': 2,
         }
-        
+
         # Load and render template
         template_dir = Path(__file__).parent
         env = Environment(loader=FileSystemLoader(template_dir))
@@ -317,34 +318,48 @@ class FLASH_OSIRIS_Base:
         logger.info(f"OSIRIS input file written successfully")
    
     def _calculate_tile_numbers(self):
-        """Calculate tile numbers for GPU algorithms."""
-        if self.osiris_dims == 1:
-            n_cells_tot = (self.xmax - self.xmin) / self.dx
-            i = 1
-            while 2**i < n_cells_tot / 1024:
-                i += 1
-            return 2**i, None
-        if self.osiris_dims == 2:
-            n_cells_tot = (self.xmax - self.xmin) * (self.ymax - self.ymin) / self.dx**2
-            i, j = 1,1 
-            while 2**i * 2**j < n_cells_tot / 1024:
-                if 2**i <= 2**j:
-                    i += 1
-                else:
-                    j += 1
-                n_tiles_x, n_tiles_y = 2**i, 2**j
+        precision = 8 # bytes per number (double precision)
+        match self.interpolation:
+            case 'linear':
+                interp = 1
+            case 'quadratic':
+                interp = 2
+            case 'cubic':
+                interp = 3
+            case 'quartic':
+                interp = 4
+            case _:
+                raise ValueError("Unsupported interpolation type")
+        ### FOR PERLMUTTER:
+        shmemsize = 163e3 * 0.8 # 80% of shared memory per block in bytes
 
-                while (self.xmax - self.xmin) / self.dx / n_tiles_x < 7 or (self.ymax - self.ymin) / self.dx / n_tiles_y < 7:
-                    
-                    if (self.xmax - self.xmin) / self.dx / n_tiles_x < 7:
-                        i -= 1
-                        j += 1
-                        n_tiles_x, n_tiles_y = 2**i, 2**j
-                    if (self.ymax - self.ymin) / self.dx / n_tiles_y < 7:
-                        i += 1
-                        j -= 1
-                        n_tiles_x, n_tiles_y = 2**i, 2**j
-            return 2**i, 2**j
+        ### FOR LOCAL MACHINES:
+        # TBD: adjust shared memory size accordingly
+        max_tile_size = int((shmemsize/(2*3*precision))**(1/self.osiris_dims) - (2 * interp - 1))
+        print("Max tile size per dimension: ", max_tile_size)
+        if self.osiris_dims == 1:
+            i = 0
+            n_tiles_x = 2**i
+            tile_size_x = (self.xmax - self.xmin) / self.dx / n_tiles_x
+            while tile_size_x > max_tile_size:
+                i += 1
+                n_tiles_x = 2**i
+                tile_size_x = (self.xmax - self.xmin) / self.dx / n_tiles_x
+        if self.osiris_dims == 2:
+            i, j = 0, 0
+            n_tiles_x, n_tiles_y = 2**i, 2**j
+            tile_size_x = (self.xmax - self.xmin) / self.dx / n_tiles_x
+            tile_size_y = (self.ymax - self.ymin) / self.dx / n_tiles_y
+            while tile_size_x > max_tile_size:
+                i += 1
+                n_tiles_x = 2**i
+                tile_size_x = (self.xmax - self.xmin) / self.dx / n_tiles_x
+            while tile_size_y > max_tile_size:
+                j += 1
+                n_tiles_y = 2**j
+                tile_size_y = (self.ymax - self.ymin) / self.dx / n_tiles_y
+        logger.info(f"Calculated tile numbers: n_tiles_x = {n_tiles_x}, n_tiles_y = {n_tiles_y}")
+        return n_tiles_x, n_tiles_y
     
     def _prepare_species_list(self, thermal_bounds):
         """Prepare species data for template rendering."""
@@ -766,18 +781,32 @@ if __name__ == "__main__":
     # test_1d.plot1D(['edens', 'aldens','sidens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'v_ix', 'v_iy','v_ey'])
     # test_1d.write_python_file()
 
+    # test_2d = FLASH_OSIRIS_2D(
+    #     path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
+    #     OSIRIS_inputfile_name="test_2d",
+    #     reference_density_cc=5e18,
+    #     ppc=2,
+    #     dx=0.6,
+    #     xmin=-700,
+    #     xmax=700,
+    #     ymin=300,
+    #     ymax=2000,
+    #     rqm_normalization_factor=500,
+    #     tmax_gyroperiods=10,
+    #     algorithm="cuda"
+    # )
     test_2d = FLASH_OSIRIS_2D(
-        path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
-        OSIRIS_inputfile_name="test_2d",
+        path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/MagShockZ_hdf5_chk_0005"),
+        OSIRIS_inputfile_name="perlmutter_2d",
         reference_density_cc=5e18,
-        ppc=2,
-        dx=0.6,
-        xmin=-700,
-        xmax=700,
-        ymin=300,
-        ymax=2000,
-        rqm_normalization_factor=500,
-        tmax_gyroperiods=10,
+        ppc=3,
+        dx=0.3,
+        xmin=-1500,
+        xmax=1500,
+        ymin=350,
+        ymax=3000,
+        rqm_normalization_factor=10,
+        tmax_gyroperiods=50,
         algorithm="cuda"
     )
 
