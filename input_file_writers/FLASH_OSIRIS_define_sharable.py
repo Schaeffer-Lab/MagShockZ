@@ -273,6 +273,10 @@ class FLASH_OSIRIS_Base:
         n_dump_total = 300
         vpml_bnd_size = 100
 
+        if self.osiris_dims == 1:
+            num_par_max = int(10*self.ppc*nx/n_tiles_x)
+        else:
+            num_par_max = int(10*nx*ny/n_tiles_x/n_tiles_y*self.ppc**2)
         
         context = {
             'dims': self.osiris_dims,
@@ -286,6 +290,7 @@ class FLASH_OSIRIS_Base:
             'ymax': ymax,
             'interpolation': self.interpolation,
             'ppc': self.ppc,
+            'num_par_max': num_par_max,
             'dt': np.format_float_scientific(self.dt, 4),
             'ndump': int(self.tmax / (n_dump_total * self.dt)),
             'tmax': self.tmax,
@@ -296,7 +301,7 @@ class FLASH_OSIRIS_Base:
             'ps_pmin': [-0.2, -0.2, -0.05],
             'ps_pmax': [0.2, 0.2, 0.05],
             'ps_np': [1024, 1024, 64],
-            'ps_nx': 1024,
+            'ps_nx': 128,
             'ps_ny': 1024,
             'smooth_type': 'binomial',
             'smooth_order': 2,
@@ -796,16 +801,17 @@ if __name__ == "__main__":
     #     algorithm="cuda"
     # )
     test_2d = FLASH_OSIRIS_2D(
-        path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/MagShockZ_hdf5_chk_0005"),
+        # path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/MagShockZ_hdf5_chk_0005"),
+        path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
         OSIRIS_inputfile_name="perlmutter_2d",
         reference_density_cc=5e18,
         ppc=3,
         dx=0.3,
-        xmin=-1500,
-        xmax=1500,
+        xmin=-1000,
+        xmax=1000,
         ymin=350,
-        ymax=3000,
-        rqm_normalization_factor=10,
+        ymax=2000,
+        rqm_normalization_factor=100,
         tmax_gyroperiods=50,
         algorithm="cuda"
     )

@@ -155,6 +155,7 @@ species
     num_par_x = {{ ppc }},
     {% else %}
     num_par_x(1:2) = {{ ppc|int }}, {{ ppc|int }},
+    num_par_max = {{ num_par_max|int }},
     {% endif %}
     init_type = "python",
 }
@@ -217,15 +218,15 @@ diag_species
     ps_pmax(1:3) = {{ ps_pmax[0] }},  {{ ps_pmax[1] }},  {{ ps_pmax[2] }},
     {% if dims == 1 %}ps_xmin(1:1) = 0.0,
     ps_xmax(1:1) = {{ xmax }},{% else %}
-    ps_xmin(1:{{ dims }}) = {{ xmin }}, {{ ymin }},
-    ps_xmax(1:{{ dims }}) = {{ xmax }}, {{ ymax }},{% endif %}
+    ps_xmin(1:{{ dims }}) = {{ -10 }}, {{ ymin }},
+    ps_xmax(1:{{ dims }}) = {{ 10 }}, {{ ymax }},{% endif %}
     ps_np = {{ ps_np[0] }}, {{ ps_np[1] }}, {{ ps_np[2] }},
     {% if dims == 1 %}
     ps_nx = {{ ps_nx }},
     phasespaces = "p1x1", "p2x1", "p3x1",
     {% else %}
     ps_nx(1:{{ dims }}) = {{ ps_nx }}, {{ ps_ny }},
-    phasespaces = "p1x1", "p2x1", "p3x1", "p1x2, line, x2, 0", "p2x2, line, x2, 0", "p3x2, line, x2, 0",
+    phasespaces = "p1x2", "p2x2", "p3x2",
     {% endif %}
 }
 {% endfor %}
