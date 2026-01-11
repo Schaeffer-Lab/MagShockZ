@@ -21,19 +21,18 @@ node_conf
     node_number = 2, 1,
     n_threads = 1,
     
-    !if_periodic(1:2) = .true., .false.,
-    if_periodic(1:2) = .false., .false.,
+    if_periodic(1:2) = .true., .false.,
     
     
     
-    tile_number(1:2) = 256, 128, 
+    tile_number(1:2) = 512, 512, 
 }
 
 !----------spatial grid----------
 grid
 {
     
-    nx_p(1:2) = 6666, 5500,
+    nx_p(1:2) = 13333, 12166,
     !load_balance(1:2) = .true., .true.,
     !lb_type = "dynamic",
     !n_dynamic = 1024, ! estimate this to be once per crossing time
@@ -47,7 +46,7 @@ grid
 time_step
 {
     dt     =  2.0153e-01,
-    ndump  =  809,
+    ndump  =  9486,
 }
 
 !----------restart information----------
@@ -63,8 +62,8 @@ restart
 space
 {
     
-    xmin(1:2) = -1000, 350,
-    xmax(1:2) = 1000, 2000,
+    xmin(1:2) = -2000, 350,
+    xmax(1:2) = 2000, 4000,
     
 }
 
@@ -72,7 +71,7 @@ space
 time
 {
     tmin = 0.0,
-    tmax  = 48943,
+    tmax  = 489434,
 }
 
 !----------field solver set up----------
@@ -89,10 +88,8 @@ el_mag_fld
 emf_bound
 {
     
-    type(1:2,1) =  "vpml", "vpml",
     type(1:2,2) =  "pmc", "vpml",
-    vpml_diffuse(1:2,1) = .true., .true.,
-    vpml_diffuse(1:2,2) = .true., .true.,
+    vpml_diffuse(2,2) = .true.,
     vpml_bnd_size = 128,
     
 }
@@ -130,8 +127,8 @@ species
     name = "e",
     rqm = -1.0,
     
-    num_par_x(1:2) = 3, 3,
-    num_par_max = 100697,
+    num_par_x(1:2) = 5, 5,
+    num_par_max = 3867,
     
     init_type = "python",
 }
@@ -161,10 +158,10 @@ spe_bound
     
     type(1:2,1) = "thermal","thermal",
     type(1:2,2) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 7.8017e-03, 7.8017e-03, 7.8017e-03, 
-    uth_bnd(1:3,2,1) = 8.039e-03, 8.039e-03, 8.039e-03, 
-    uth_bnd(1:3,1,2) = 3.0148e-02, 3.0148e-02, 3.0148e-02, 
-    uth_bnd(1:3,2,2) = 2.1342e-02, 2.1342e-02, 2.1342e-02, 
+    uth_bnd(1:3,1,1) = 7.4427e-03, 7.4427e-03, 7.4427e-03, 
+    uth_bnd(1:3,2,1) = 7.4922e-03, 7.4922e-03, 7.4922e-03, 
+    uth_bnd(1:3,1,2) = 1.9800e-02, 1.9800e-02, 1.9800e-02, 
+    uth_bnd(1:3,2,2) = 1.5849e-02, 1.5849e-02, 1.5849e-02, 
 }
 
 !----------diagnostic for e----------
@@ -180,7 +177,7 @@ diag_species
     ps_pmax(1:3) = 0.2,  0.2,  0.05,
     
     ps_xmin(1:2) = -10, 350,
-    ps_xmax(1:2) = 10, 2000,
+    ps_xmax(1:2) = 10, 4000,
     ps_np = 1024, 1024, 64,
     
     ps_nx(1:2) = 128, 1024,
@@ -192,10 +189,10 @@ diag_species
 species
 {
     name = "al",
-    rqm = 72,
+    rqm = 725,
     
-    num_par_x(1:2) = 3, 3,
-    num_par_max = 100697,
+    num_par_x(1:2) = 5, 5,
+    num_par_max = 3867,
     
     init_type = "python",
 }
@@ -225,10 +222,10 @@ spe_bound
     
     type(1:2,1) = "thermal","thermal",
     type(1:2,2) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 3.5129e-04, 3.5129e-04, 3.5129e-04, 
-    uth_bnd(1:3,2,1) = 3.6180e-04, 3.6180e-04, 3.6180e-04, 
-    uth_bnd(1:3,1,2) = 1.2431e-03, 1.2431e-03, 1.2431e-03, 
-    uth_bnd(1:3,2,2) = 5.6338e-04, 5.6338e-04, 5.6338e-04, 
+    uth_bnd(1:3,1,1) = 1.0632e-04, 1.0632e-04, 1.0632e-04, 
+    uth_bnd(1:3,2,1) = 1.0703e-04, 1.0703e-04, 1.0703e-04, 
+    uth_bnd(1:3,1,2) = 2.0735e-04, 2.0735e-04, 2.0735e-04, 
+    uth_bnd(1:3,2,2) = 1.5138e-04, 1.5138e-04, 1.5138e-04, 
 }
 
 !----------diagnostic for al----------
@@ -244,7 +241,7 @@ diag_species
     ps_pmax(1:3) = 0.2,  0.2,  0.05,
     
     ps_xmin(1:2) = -10, 350,
-    ps_xmax(1:2) = 10, 2000,
+    ps_xmax(1:2) = 10, 4000,
     ps_np = 1024, 1024, 64,
     
     ps_nx(1:2) = 128, 1024,
@@ -256,10 +253,10 @@ diag_species
 species
 {
     name = "si",
-    rqm = 38,
+    rqm = 389,
     
-    num_par_x(1:2) = 3, 3,
-    num_par_max = 100697,
+    num_par_x(1:2) = 5, 5,
+    num_par_max = 3867,
     
     init_type = "python",
 }
@@ -289,10 +286,10 @@ spe_bound
     
     type(1:2,1) = "thermal","thermal",
     type(1:2,2) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 3.5129e-04, 3.5129e-04, 3.5129e-04, 
-    uth_bnd(1:3,2,1) = 3.6180e-04, 3.6180e-04, 3.6180e-04, 
-    uth_bnd(1:3,1,2) = 1.2431e-03, 1.2431e-03, 1.2431e-03, 
-    uth_bnd(1:3,2,2) = 5.6338e-04, 5.6338e-04, 5.6338e-04, 
+    uth_bnd(1:3,1,1) = 1.0632e-04, 1.0632e-04, 1.0632e-04, 
+    uth_bnd(1:3,2,1) = 1.0703e-04, 1.0703e-04, 1.0703e-04, 
+    uth_bnd(1:3,1,2) = 2.0735e-04, 2.0735e-04, 2.0735e-04, 
+    uth_bnd(1:3,2,2) = 1.5138e-04, 1.5138e-04, 1.5138e-04, 
 }
 
 !----------diagnostic for si----------
@@ -308,7 +305,7 @@ diag_species
     ps_pmax(1:3) = 0.2,  0.2,  0.05,
     
     ps_xmin(1:2) = -10, 350,
-    ps_xmax(1:2) = 10, 2000,
+    ps_xmax(1:2) = 10, 4000,
     ps_np = 1024, 1024, 64,
     
     ps_nx(1:2) = 128, 1024,
@@ -320,8 +317,8 @@ diag_species
 !--------Current smoothing----------
 smooth
 {
-  type(1:2) = "binomial",
-  order(1:2) = 2,
+    type(1:2) = "binomial",
+    order(1:2) = 2,
 }
 
 !---------- end of osiris input file -------------

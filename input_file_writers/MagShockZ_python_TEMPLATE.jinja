@@ -33,8 +33,7 @@ node_conf
     node_number = 16, 1,
     n_threads = 2,
     {% endif %}
-    !if_periodic(1:2) = .true., .false.,
-    if_periodic(1:2) = .false., .false.,
+    if_periodic(1:2) = .true., .false.,
     {% endif %}
     {% if algorithm in ["cuda", "tiles"] %}
     {% if dims ==1 %}tile_number(1:1) = {{ tile_numbers[0] }},{% else %}
@@ -109,9 +108,7 @@ emf_bound
     vpml_bnd_size = {{ vpml_bnd_size }},
     vpml_diffuse(1:2,1) = .true., .true.,
     {% else %}
-    type(1:2,1) =  "vpml", "vpml",
     type(1:2,2) =  "pmc", "vpml",
-    vpml_diffuse(1:2) = .true., .true.,
     vpml_diffuse(2,2) = .true.,
     vpml_bnd_size = 128,
     {% endif %}
@@ -234,8 +231,8 @@ diag_species
 !--------Current smoothing----------
 smooth
 {
-  type(1:{{ dims }}) = "{{ smooth_type }}",
-  order(1:{{ dims }}) = {{ smooth_order }},
+    type(1:{{ dims }}) = "{{ smooth_type }}",
+    order(1:{{ dims }}) = {{ smooth_order }},
 }
 
 !---------- end of osiris input file -------------
