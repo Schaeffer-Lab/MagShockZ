@@ -125,7 +125,7 @@ diag_emf
     "e2, savg",
     "e3, savg",
 
-    ndump_fac_ave = 1,
+    ndump_fac_ave = 2,
     ndump_fac_ene_int = 10,
     !ndump_fac_charge_cons = 10,
     {% if dims == 1 %}
@@ -143,7 +143,7 @@ particles
 }
 
 {% for species in species_list %}
-!----------information for {{ species['name'] }}----------
+!----------information - {{ species['name'] }}----------
 species
 {
     name = "{{ species['name'] }}",
@@ -181,14 +181,14 @@ udist
     ufl_py_func = "set_ufl_{{ species['name'] }}", ! Name of function in the Python file to call
 }
 {% endif %}
-!----------density profile for {{ species['name'] }}----------
+!----------density profile - {{ species['name'] }}----------
 profile
 {
     py_mod = "py-script-{{ dims }}d", ! Name of Python file
     py_func = "set_density_{{ species['name'] }}", ! Name of function in the Python file to call
 }
 
-!----------boundary conditions for {{ species['name'] }}----------
+!----------boundary conditions - {{ species['name'] }}----------
 spe_bound
 {
     {% if dims == 1 %}type(1:2,1) = "thermal","thermal",
@@ -202,29 +202,39 @@ spe_bound
     uth_bnd(1:3,2,2) = {{ species['vth_y_end'] }}, {{ species['vth_y_end'] }}, {{ species['vth_y_end']}}, {% endif %}
 }
 
-!----------diagnostic for {{ species.name }}----------
+!----------diagnostic - {{ species['name'] }}----------
 diag_species
 {
-    ndump_fac_ave = 1,
-    ndump_fac_temp = 1,
-    ndump_fac_ene = 1,
-    ndump_fac_pha = 3,
+    ndump_fac_ave = 2,
+    !ndump_fac_temp = 1,
+    ndump_fac_ene = 10,
+    ndump_fac_pha = 1,
     n_ave(1:{{ dims }}) = 6{% if dims == 2 %}, 6{% endif %},
     reports = "charge, savg", "j1, savg"", "j2, savg"", "j3, savg"", "q1, savg"", "q2, savg"", "q3, savg"",
     rep_udist = "uth1", "uth2", "ufl1", "ufl2",
-    ps_pmin(1:3) = {{ ps_pmin[0] }}, {{ ps_pmin[1] }}, {{ ps_pmin[2] }},
-    ps_pmax(1:3) = {{ ps_pmax[0] }},  {{ ps_pmax[1] }},  {{ ps_pmax[2] }},
+
+    {% if species['name'] in ['e', 'ele', 'electron'] %}
+    ps_pmin(1:3) = {{ e_ps_pmin[0] }}, {{ e_ps_pmin[1] }}, {{ e_ps_pmin[2] }},
+    ps_pmax(1:3) = {{ e_ps_pmax[0] }},  {{ e_ps_pmax[1] }},  {{ e_ps_pmax[2] }},
+    {% else %}
+    ps_pmin(1:3) = {{ i_ps_pmin[0] }}, {{ i_ps_pmin[1] }}, {{ i_ps_pmin[2] }},
+    ps_pmax(1:3) = {{ i_ps_pmax[0] }},  {{ i_ps_pmax[1] }},  {{ i_ps_pmax[2] }},
+    {% endif %}
     {% if dims == 1 %}ps_xmin(1:1) = 0.0,
     ps_xmax(1:1) = {{ xmax }},{% else %}
     ps_xmin(1:{{ dims }}) = {{ xmin }}, {{ ymin }},
     ps_xmax(1:{{ dims }}) = {{ xmax }}, {{ ymax }},{% endif %}
     ps_np = {{ ps_np[0] }}, {{ ps_np[1] }}, {{ ps_np[2] }},
+    if_ps_gamma_auto = .true.,
+    ps_gammamin = 1.0,
+    ps_gammamax = {{ ps_gammamax }},
+    ps_ngamma = {{ ps_ngamma }},
     {% if dims == 1 %}
     ps_nx = {{ ps_nx }},
-    phasespaces = "p1x1", "p2x1", "p3x1",
+    phasespaces = "p1x1", "p2x1", "p3x1", "gx1",
     {% else %}
     ps_nx(1:{{ dims }}) = {{ ps_nx }}, {{ ps_ny }},
-    phasespaces = "p1x1x2", "p2x1x2",
+    phasespaces = "p1x1x2", "p2x1x2", "gx1x2",
     {% endif %}
 }
 {% endfor %}

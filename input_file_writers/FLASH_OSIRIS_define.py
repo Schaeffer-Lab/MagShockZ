@@ -86,7 +86,7 @@ class FLASH_OSIRIS_Base:
         self.output_dir = self.proj_dir / "input_files" / self.inputfile_name
         logger.info(f"Output directory: {self.output_dir}")
 
-        self.omega_pe = np.sqrt(4 * np.pi * self.n0 * yt.units.electron_charge**2 / (yt.units.electron_mass))
+        self.omega_pe = np.sqrt(self.n0 * yt.units.electron_charge_mks**2 / (yt.units.eps_0 * yt.units.electron_mass)).to('1/s')
         logger.info(f"Plasma frequency omega_pe: {np.format_float_scientific(self.omega_pe.to('1/s'), 2)} 1/s")
         logger.info(f"1000 c/w_pe is {np.format_float_scientific((1000 * yt.units.speed_of_light / self.omega_pe).to('cm'),2)} cm")
 
@@ -131,15 +131,15 @@ class FLASH_OSIRIS_Base:
 
         logger.info("normalizing plasma parameters")
         ######## NORMALIZATIONS ######## 
-        B_norm = self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge
-        v_norm = yt.units.speed_of_light / np.sqrt(self.rqm_factor)
-        E_norm = self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge / np.sqrt(self.rqm_factor)
+        B_norm = (self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge).to('Gauss')
+        v_norm = (yt.units.speed_of_light / np.sqrt(self.rqm_factor)).to('cm/s')
+        E_norm = (self.omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge / np.sqrt(self.rqm_factor)).to('statV/cm')
         # E_norm must equal v_norm * B_norm so that E = -v x B holds in normalized units
         # E_norm = v_norm * B_norm
 
-        logger.info(f"Electric field normalization: {E_norm.to('statV/cm'):.3e}")
-        logger.info(f"Magnetic field normalization: {B_norm.to('Gauss'):.3e}")
-        logger.info(f"Velocity normalization: {v_norm.to('cm/s'):.3e} cm/s")
+        logger.info(f"Electric field normalization: {E_norm:.3e}")
+        logger.info(f"Magnetic field normalization: {B_norm:.3e}")
+        logger.info(f"Velocity normalization: {v_norm:.3e} cm/s")
         
         self.normalizations = {
             'edens': self.n0,
@@ -161,6 +161,14 @@ class FLASH_OSIRIS_Base:
         # Calculate gyrotime and simulation duration
         self.gyrotime = self.species_rqms['al']/ self.rqm_factor / (self.all_data['flash', 'magx'][-1, -1, 0] / self.normalizations['magx'])
         self.tmax = int(self.gyrotime * self.tmax_gyroperiods)
+
+        # Verify. From the OSIRIS website we know that
+        B_test = 75000 * yt.units.Gauss / B_norm.to('Gauss')
+        B_gauss = 5.681e-8 * B_test * self.omega_pe
+        logger.info(f"Test magnetic field value: {B_test:.3e} OSIRIS units, which corresponds to {B_gauss:.3e} Gauss")
+        # Do it another way to make sure
+        B_gauss = 3.204e-3 * B_test * self.n0**0.5
+        logger.info(f"Test magnetic field value: {B_test:.3e} OSIRIS units, which corresponds to {B_gauss:.3e} Gauss")
 
         # print(f"Normalizations: {self.normalizations}")
         n_species = 3
@@ -272,7 +280,7 @@ class FLASH_OSIRIS_Base:
         species_list = self._prepare_species_list(thermal_bounds) # Type: List[Dictionary]
 
         # preset params. Feel free to modify.
-        n_dump_total = 256
+        n_dump_total = 512
         vpml_bnd_size = 100
 
         if self.osiris_dims == 1:
@@ -300,11 +308,15 @@ class FLASH_OSIRIS_Base:
             'num_species': len(self.species_rqms) + 1,
             'species_list': species_list,
             'vpml_bnd_size': vpml_bnd_size,
-            'ps_pmin': [-0.1, -0.1, -0.05],
-            'ps_pmax': [0.1, 0.1, 0.05],
-            'ps_np': [4096, 4096, 64],
-            'ps_nx': 32,
-            'ps_ny': 4096,
+            'e_ps_pmin': [-1, -1, -0.5],
+            'e_ps_pmax': [1, 1, 0.5],
+            'i_ps_pmin': [-0.1, -0.1, -0.05],
+            'i_ps_pmax': [0.1, 0.1, 0.05],
+            'ps_np': [6000, 6000, 1],
+            'ps_ngamma': 128,
+            'ps_gammamax': 10.0,
+            'ps_nx': 16,
+            'ps_ny': 512,
             'smooth_type': 'binomial',
             'smooth_order': 2,
         }
@@ -806,13 +818,13 @@ if __name__ == "__main__":
         path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/MagShockZ_hdf5_chk_0005"),
         # path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
         OSIRIS_inputfile_name="perlmutter_2d",
-        reference_density_cc=1e18,
+        reference_density_cc=5e18,
         ppc=5,
-        dx=0.2,
-        xmin=-1000,
-        xmax=1000,
-        ymin=200,
-        ymax=1800,
+        dx=0.3,
+        xmin=-1500,
+        xmax=1500,
+        ymin=350,
+        ymax=3000,
         rqm_normalization_factor=50,
         tmax_gyroperiods=50,
         algorithm="cuda"
