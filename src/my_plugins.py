@@ -67,7 +67,7 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
         e = units.electron_charge_cgs
         m_e = units.mass_electron_cgs
         
-        ion_mass_thresholds = [25.5] # Units of proton mass
+        ion_mass_thresholds = [27.5] # Units of proton mass
 
         def make_species_mask(field, data):
                 """
@@ -89,7 +89,7 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
         
         # Silicon and Aluminum are both hard-coded for MagShockZ
         def make_silicon_density(field, data):
-                silicon_density = data['flash','edens'] * (data["flash","species_mask"] == 1)
+                silicon_density = data['flash','edens'] * (data["flash","species_mask"] == 2)
                 return silicon_density
         
         ds.add_field(("flash",f"sidens"),
@@ -100,7 +100,7 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
         
 
         def make_aluminum_density(field, data):
-                aluminum_density = data['flash','edens'] * (data["flash","species_mask"] == 2)
+                aluminum_density = data['flash','edens'] * (data["flash","species_mask"] == 1)
                 return aluminum_density
 
         ds.add_field(("flash","aldens"),

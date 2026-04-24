@@ -93,7 +93,7 @@ class FLASH_OSIRIS_Base:
         logger.info(f"Loading FLASH data from {self.FLASH_data}")
         self.ds = yt.load_for_osiris(self.FLASH_data.as_posix(), rqm_factor=self.rqm_factor)
 
-        level = 1 # If you are getting inexplicable crashes, you are probably running out of memory. This is probably the culprit.
+        level = 3 # If you are getting inexplicable crashes, you are probably running out of memory. This is probably the culprit.
         self.dims = self.ds.domain_dimensions * self.ds.refine_by**level
 
         logger.info(f"Creating covering grid at level {level} with dims {self.dims}")
@@ -159,11 +159,11 @@ class FLASH_OSIRIS_Base:
         }
         
         # Calculate gyrotime and simulation duration
-        self.gyrotime = self.species_rqms['al']/ self.rqm_factor / (self.all_data['flash', 'magx'][-1, -1, 0] / self.normalizations['magx'])
+        self.gyrotime = self.species_rqms['al']/ self.rqm_factor / (self.all_data['flash', 'magz'][-1, -1, 0] / self.normalizations['magz'])
         self.tmax = int(self.gyrotime * self.tmax_gyroperiods)
 
         # Verify. From the OSIRIS website we know that
-        B_test = 75000 * yt.units.Gauss / B_norm.to('Gauss')
+        B_test = 1e5 * yt.units.Gauss / B_norm.to('Gauss')
         B_gauss = 5.681e-8 * B_test * self.omega_pe
         logger.info(f"Test magnetic field value: {B_test:.3e} OSIRIS units, which corresponds to {B_gauss:.3e} Gauss")
         # Do it another way to make sure
@@ -312,9 +312,9 @@ class FLASH_OSIRIS_Base:
             'e_ps_pmax': [1, 1, 0.5],
             'i_ps_pmin': [-0.1, -0.1, -0.05],
             'i_ps_pmax': [0.1, 0.1, 0.05],
-            'ps_np': [6000, 6000, 1],
+            'ps_np': [6000, 6000, 64],
             'ps_ngamma': 128,
-            'ps_gammamax': 10.0,
+            'ps_gammamax': 3.0,
             'ps_nx': 16,
             'ps_ny': 512,
             'smooth_type': 'binomial',
@@ -815,17 +815,17 @@ if __name__ == "__main__":
     #     algorithm="cuda"
     # )
     test_2d = FLASH_OSIRIS_2D(
-        path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/MagShockZ_hdf5_chk_0005"),
+        path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0007"),
         # path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
         OSIRIS_inputfile_name="perlmutter_2d",
         reference_density_cc=5e18,
         ppc=5,
         dx=0.3,
-        xmin=-1500,
-        xmax=1500,
+        xmin=-2000,
+        xmax=2000,
         ymin=350,
-        ymax=3000,
-        rqm_normalization_factor=50,
+        ymax=4000,
+        rqm_normalization_factor=100,
         tmax_gyroperiods=50,
         algorithm="cuda"
     )

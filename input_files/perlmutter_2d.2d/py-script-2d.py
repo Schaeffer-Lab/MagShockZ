@@ -23,10 +23,10 @@ debug = False
 
 # Parameters of FLASH simulation
 box_bounds = {
-    "xmin": -2520,
-    "xmax": 2520,
-    "ymin": -311,
-    "ymax": 4203,
+    "xmin": -3569,
+    "xmax": 3569,
+    "ymin": -413,
+    "ymax": 6725,
 }
 
 def set_fld_int( STATE ):

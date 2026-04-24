@@ -12,36 +12,6 @@ from multiprocessing import Pool, cpu_count
 from IPython.display import HTML
 import base64
 
-def gather_diags(MS_dir: Path) -> dict:
-    '''
-    omnomnom give me a yummy MS directory and I will spit out a dictionary of diagnostics
-    '''
-    if not isinstance(MS_dir, Path):
-        MS_dir = Path(MS_dir)
-    diagnostics = {} 
-    for item in MS_dir.rglob('*.h5'):
-        parent_dir = item.parent.relative_to(MS_dir)
-        if parent_dir not in diagnostics:
-            diagnostics[str(parent_dir)] = item.parent.as_posix() + '/'
-
-    if not diagnostics:
-        print("No subdirectories found.")
-        return
-
-    return diagnostics
-
-def time_series(diag_data_dir: Path) -> np.ndarray:
-    '''
-    stack up a time series of H5Data objects using osh5io.read_h5 given a directory of diagnostic data
-    final shape is (time, x, y)
-    '''
-    result = []
-    if not isinstance(diag_data_dir, Path):
-        diag_data_dir = Path(diag_data_dir)
-    data_sorted = sorted(list(diag_data_dir.glob('*.h5')))
-    for f in data_sorted:
-        result.append(osh5io.read_h5(f.as_posix()))
-    return result
 
 def streak_plot(time_series_data: list) -> np.ndarray:
     '''

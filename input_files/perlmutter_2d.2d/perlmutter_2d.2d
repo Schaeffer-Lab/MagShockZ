@@ -25,14 +25,14 @@ node_conf
     
     
     
-    tile_number(1:2) = 256, 256, 
+    tile_number(1:2) = 512, 512, 
 }
 
 !----------spatial grid----------
 grid
 {
     
-    nx_p(1:2) = 10000, 8833,
+    nx_p(1:2) = 13333, 12166,
     !load_balance(1:2) = .true., .true.,
     !lb_type = "dynamic",
     !n_dynamic = 1024, ! estimate this to be once per crossing time
@@ -46,7 +46,7 @@ grid
 time_step
 {
     dt     =  2.0153e-01,
-    ndump  =  948,
+    ndump  =  1016,
 }
 
 !----------restart information----------
@@ -62,8 +62,8 @@ restart
 space
 {
     
-    xmin(1:2) = -1500, 350,
-    xmax(1:2) = 1500, 3000,
+    xmin(1:2) = -2000, 350,
+    xmax(1:2) = 2000, 4000,
     
 }
 
@@ -71,7 +71,7 @@ space
 time
 {
     tmin = 0.0,
-    tmax  = 97886,
+    tmax  = 104873,
 }
 
 !----------field solver set up----------
@@ -128,7 +128,7 @@ species
     rqm = -1.0,
     
     num_par_x(1:2) = 5, 5,
-    num_par_max = 8423,
+    num_par_max = 3867,
     
     init_type = "python",
 }
@@ -158,10 +158,10 @@ spe_bound
     
     type(1:2,1) = "thermal","thermal",
     type(1:2,2) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 7.5246e-03, 7.5246e-03, 7.5246e-03, 
-    uth_bnd(1:3,2,1) = 7.6194e-03, 7.6194e-03, 7.6194e-03, 
-    uth_bnd(1:3,1,2) = 2.2841e-02, 2.2841e-02, 2.2841e-02, 
-    uth_bnd(1:3,2,2) = 1.7454e-02, 1.7454e-02, 1.7454e-02, 
+    uth_bnd(1:3,1,1) = 4.8125e-03, 4.8125e-03, 4.8125e-03, 
+    uth_bnd(1:3,2,1) = 4.8159e-03, 4.8159e-03, 4.8159e-03, 
+    uth_bnd(1:3,1,2) = 1.7580e-02, 1.7580e-02, 1.7580e-02, 
+    uth_bnd(1:3,2,2) = 1.1338e-02, 1.1338e-02, 1.1338e-02, 
 }
 
 !----------diagnostic - e----------
@@ -172,7 +172,7 @@ diag_species
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
     n_ave(1:2) = 6, 6,
-    reports = "charge, savg", "j1, savg"", "j2, savg"", "j3, savg"", "q1, savg"", "q2, savg"", "q3, savg"",
+    reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg",
     rep_udist = "uth1", "uth2", "ufl1", "ufl2",
 
     
@@ -180,9 +180,9 @@ diag_species
     ps_pmax(1:3) = 1,  1,  0.5,
     
     
-    ps_xmin(1:2) = -1500, 350,
-    ps_xmax(1:2) = 1500, 3000,
-    ps_np = 6000, 6000, 1,
+    ps_xmin(1:2) = -2000, 350,
+    ps_xmax(1:2) = 2000, 4000,
+    ps_np = 6000, 6000, 64,
     if_ps_gamma_auto = .true.,
     ps_gammamin = 1.0,
     ps_gammamax = 10.0,
@@ -197,10 +197,10 @@ diag_species
 species
 {
     name = "al",
-    rqm = 145,
+    rqm = 72,
     
     num_par_x(1:2) = 5, 5,
-    num_par_max = 8423,
+    num_par_max = 3867,
     
     init_type = "python",
 }
@@ -230,10 +230,10 @@ spe_bound
     
     type(1:2,1) = "thermal","thermal",
     type(1:2,2) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 2.4013e-04, 2.4013e-04, 2.4013e-04, 
-    uth_bnd(1:3,2,1) = 2.4321e-04, 2.4321e-04, 2.4321e-04, 
-    uth_bnd(1:3,1,2) = 1.0139e-03, 1.0139e-03, 1.0139e-03, 
-    uth_bnd(1:3,2,2) = 3.7393e-04, 3.7393e-04, 3.7393e-04, 
+    uth_bnd(1:3,1,1) = 2.1443e-04, 2.1443e-04, 2.1443e-04, 
+    uth_bnd(1:3,2,1) = 2.1431e-04, 2.1431e-04, 2.1431e-04, 
+    uth_bnd(1:3,1,2) = 5.6581e-04, 5.6581e-04, 5.6581e-04, 
+    uth_bnd(1:3,2,2) = 3.3218e-04, 3.3218e-04, 3.3218e-04, 
 }
 
 !----------diagnostic - al----------
@@ -244,7 +244,7 @@ diag_species
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
     n_ave(1:2) = 6, 6,
-    reports = "charge, savg", "j1, savg"", "j2, savg"", "j3, savg"", "q1, savg"", "q2, savg"", "q3, savg"",
+    reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg",
     rep_udist = "uth1", "uth2", "ufl1", "ufl2",
 
     
@@ -252,9 +252,9 @@ diag_species
     ps_pmax(1:3) = 0.1,  0.1,  0.05,
     
     
-    ps_xmin(1:2) = -1500, 350,
-    ps_xmax(1:2) = 1500, 3000,
-    ps_np = 6000, 6000, 1,
+    ps_xmin(1:2) = -2000, 350,
+    ps_xmax(1:2) = 2000, 4000,
+    ps_np = 6000, 6000, 64,
     if_ps_gamma_auto = .true.,
     ps_gammamin = 1.0,
     ps_gammamax = 10.0,
@@ -269,10 +269,10 @@ diag_species
 species
 {
     name = "si",
-    rqm = 77,
+    rqm = 38,
     
     num_par_x(1:2) = 5, 5,
-    num_par_max = 8423,
+    num_par_max = 3867,
     
     init_type = "python",
 }
@@ -302,10 +302,10 @@ spe_bound
     
     type(1:2,1) = "thermal","thermal",
     type(1:2,2) = "thermal","thermal",
-    uth_bnd(1:3,1,1) = 2.4013e-04, 2.4013e-04, 2.4013e-04, 
-    uth_bnd(1:3,2,1) = 2.4321e-04, 2.4321e-04, 2.4321e-04, 
-    uth_bnd(1:3,1,2) = 1.0139e-03, 1.0139e-03, 1.0139e-03, 
-    uth_bnd(1:3,2,2) = 3.7393e-04, 3.7393e-04, 3.7393e-04, 
+    uth_bnd(1:3,1,1) = 2.1443e-04, 2.1443e-04, 2.1443e-04, 
+    uth_bnd(1:3,2,1) = 2.1431e-04, 2.1431e-04, 2.1431e-04, 
+    uth_bnd(1:3,1,2) = 5.6581e-04, 5.6581e-04, 5.6581e-04, 
+    uth_bnd(1:3,2,2) = 3.3218e-04, 3.3218e-04, 3.3218e-04, 
 }
 
 !----------diagnostic - si----------
@@ -316,7 +316,7 @@ diag_species
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
     n_ave(1:2) = 6, 6,
-    reports = "charge, savg", "j1, savg"", "j2, savg"", "j3, savg"", "q1, savg"", "q2, savg"", "q3, savg"",
+    reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg",
     rep_udist = "uth1", "uth2", "ufl1", "ufl2",
 
     
@@ -324,9 +324,9 @@ diag_species
     ps_pmax(1:3) = 0.1,  0.1,  0.05,
     
     
-    ps_xmin(1:2) = -1500, 350,
-    ps_xmax(1:2) = 1500, 3000,
-    ps_np = 6000, 6000, 1,
+    ps_xmin(1:2) = -2000, 350,
+    ps_xmax(1:2) = 2000, 4000,
+    ps_np = 6000, 6000, 64,
     if_ps_gamma_auto = .true.,
     ps_gammamin = 1.0,
     ps_gammamax = 10.0,
