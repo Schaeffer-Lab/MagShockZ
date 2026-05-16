@@ -9,9 +9,10 @@ import h5py
 
 #TODO: allow better plotting routines for phase space. Allow to plot without taking moment
 #TODO: fix the units for plotting moments and stuff in 2D. Right now both axes are spatial, but one should be velocity.
-#TODO: allow for better integration when calculating things from the data, like multiplying by dimensional quantities
+#TODO: allow for better integration when calculating things from the data, like multiplying by dimensional quantities. Right now it's weirdly hard to calculate temperatures.
 #TODO: clean it up generally. Lot of AI cruft rn
 #TODO: make those plots where you have vector fields
+#TODO: make it so moments still have all the same class variables as regular diagnostics
 
 class LazyMoment:
     """Lazy-loading moment diagnostic that computes timesteps on-demand.
@@ -60,16 +61,16 @@ class LazyMoment:
     def __getitem__(self, timestep):
         """Compute or load moment for requested timestep."""
         if self.order == 0:
-            return self.sim_wrapper.calculate_0th_moment(
-                self.species, timestep, self.momentum_component
+            return self.sim_wrapper.calculate_moment(
+                self.species, timestep, order =0, momentum_component=self.momentum_component
             )
         elif self.order == 1:
-            return self.sim_wrapper.calculate_1st_moment(
-                self.species, timestep, self.momentum_component
+            return self.sim_wrapper.calculate_moment(
+                self.species, timestep, order =1, momentum_component=self.momentum_component
             )
         elif self.order == 2:
-            return self.sim_wrapper.calculate_2nd_moment(
-                self.species, timestep, self.momentum_component
+            return self.sim_wrapper.calculate_moment(
+                self.species, timestep, order =2, momentum_component=self.momentum_component
             )
         else:
             raise ValueError(f"Unsupported moment order: {self.order}")
@@ -280,13 +281,20 @@ class MagShockZRun:
         
         return h5_file.exists()
     
-    def calculate_0th_moment(self, species: str, timestep: int, momentum_component: str = 'p1'):
+    def calculate_moment(self, species: str, timestep: int, order: int, momentum_component: str = 'p1'):
         """
         Calculate density (0th moment) from phase space for a single timestep.
         
         Loads from cache if available, otherwise computes and saves to HDF5.
         """
-        diag_name = f'{species}/n-from-{momentum_component}'
+        if order not in [0, 1, 2]:
+            raise ValueError(f"order must be 0, 1, or 2, got {order}")
+        match order:
+            case 0: moment_name = 'n'
+            case 1: moment_name = f'v{momentum_component[1]}'
+            case 2: moment_name = 'vth2'
+        
+        diag_name = f'{species}/{moment_name}-from-{momentum_component}'
         h5_name = diag_name.replace('/', '_')
         
         # Check if this specific timestep already exists on disk
@@ -307,10 +315,33 @@ class MagShockZRun:
         p_min, p_max = pha_data.grid[p_axis_idx][0], pha_data.grid[p_axis_idx][-1]
         n_points = pha_data.nx[p_axis_idx]
         p_axis = np.linspace(p_min, p_max, n_points)
+
+        if order == 0:
+            # Get single timestep data and compute: n = ∫f dp
+            data_t = pha_data[timestep]
+            result = self._moment(data_t, p_axis, order=order, axis=p_axis_idx)
         
-        # Get single timestep data and compute: n = ∫f dp
-        data_t = pha_data[timestep]
-        result = self._moment(data_t, p_axis, order=0, axis=p_axis_idx)
+        elif order == 1:
+            # Compute velocity: v = (∫p·f dp) / n
+            density = self.calculate_moment(species, timestep, order=0, momentum_component=momentum_component)
+            data_t = pha_data[timestep]
+            flux = self._moment(data_t, p_axis, order=1, axis=p_axis_idx)
+            result = flux / density
+
+        elif order == 2:
+            density = self.calculate_moment(species, timestep, order=0, momentum_component=momentum_component)
+            velocity = self.calculate_moment(species, timestep, order=1, momentum_component=momentum_component)
+            data_t = pha_data[timestep]
+            
+            shape = [1] * data_t.ndim
+            shape[p_axis_idx] = -1
+            p_broadcast = p_axis.reshape(shape)
+            v_shape = list(data_t.shape)
+            v_shape[p_axis_idx] = 1
+            v_broadcast = velocity.reshape(v_shape)
+            
+            w = p_broadcast - v_broadcast
+            result = scipy.integrate.simpson(data_t * np.square(w), x=p_axis, axis=p_axis_idx) / density
         
         # Save to HDF5
         sim_path = Path(self.sim._simulation_folder)
@@ -324,116 +355,6 @@ class MagShockZRun:
         
         return result
     
-    def calculate_1st_moment(self, species: str, timestep: int, momentum_component: str = 'p1'):
-        """
-        Calculate mean velocity (1st moment / 0th moment) from phase space for a single timestep.
-        
-        Automatically calculates 0th moment if not already cached.
-        """
-        diag_name = f'{species}/v{momentum_component[1]}-from-{momentum_component}'
-        h5_name = diag_name.replace('/', '_')
-        
-        # Check if this specific timestep already exists on disk
-        if self._moment_h5_exists(diag_name, timestep):
-            sim_path = Path(self.sim._simulation_folder)
-            h5_file = sim_path / 'moments' / h5_name / f'{h5_name}-{timestep:06d}.h5'
-            
-            with h5py.File(h5_file, 'r') as f:
-                result = f['AXIS'][h5_name][()]
-            return result
-        
-        # Need to compute - first ensure 0th moment exists
-        density = self.calculate_0th_moment(species, timestep, momentum_component)
-        
-        # Get phase space diagnostic
-        pha_field = f'{species}/{momentum_component}x1x2'
-        pha_data = self._get_field(pha_field)
-        
-        # Find which axis is the momentum axis and get its coordinates
-        p_axis_idx = self._find_momentum_axis(pha_data, momentum_component)
-        p_min, p_max = pha_data.grid[p_axis_idx][0], pha_data.grid[p_axis_idx][-1]
-        n_points = pha_data.nx[p_axis_idx]
-        p_axis = np.linspace(p_min, p_max, n_points)
-        
-        # Get single timestep data
-        data_t = pha_data[timestep]
-        
-        # Compute: v = (∫p·f dp) / n
-        flux = self._moment(data_t, p_axis, order=1, axis=p_axis_idx)
-        result = flux / density
-        
-        # Save to HDF5
-        sim_path = Path(self.sim._simulation_folder)
-        moments_dir = sim_path / 'moments' / h5_name
-        moments_dir.mkdir(parents=True, exist_ok=True)
-        
-        h5_file = moments_dir / f'{h5_name}-{timestep:06d}.h5'
-        with h5py.File(h5_file, 'w') as f:
-            axis_group = f.create_group('AXIS')
-            axis_group.create_dataset(h5_name, data=result)
-        
-        return result
-    
-    def calculate_2nd_moment(self, species: str, timestep: int, momentum_component: str = 'p1'):
-        """
-        Calculate thermal velocity squared (temperature) from phase space for a single timestep.
-        
-        Automatically calculates 0th and 1st moments if not already cached.
-        """
-        diag_name = f'{species}/vth2-from-{momentum_component}'
-        h5_name = diag_name.replace('/', '_')
-        
-        # Check if this specific timestep already exists on disk
-        if self._moment_h5_exists(diag_name, timestep):
-            sim_path = Path(self.sim._simulation_folder)
-            h5_file = sim_path / 'moments' / h5_name / f'{h5_name}-{timestep:06d}.h5'
-            
-            with h5py.File(h5_file, 'r') as f:
-                result = f['AXIS'][h5_name][()]
-            return result
-        
-        # Need to compute - first ensure 0th and 1st moments exist
-        density = self.calculate_0th_moment(species, timestep, momentum_component)
-        velocity = self.calculate_1st_moment(species, timestep, momentum_component)
-        
-        # Get phase space diagnostic
-        pha_field = f'{species}/{momentum_component}x1x2'
-        pha_data = self._get_field(pha_field)
-        
-        # Find which axis is the momentum axis and get its coordinates
-        p_axis_idx = self._find_momentum_axis(pha_data, momentum_component)
-        p_min, p_max = pha_data.grid[p_axis_idx][0], pha_data.grid[p_axis_idx][-1]
-        n_points = pha_data.nx[p_axis_idx]
-        p_axis = np.linspace(p_min, p_max, n_points)
-        
-        # Get single timestep data
-        data_t = pha_data[timestep]
-        
-        # Compute: vth² = ∫(p - v)²·f dp / n
-        # Create the deviation (p - v) with proper broadcasting based on axis location
-        shape = [1] * data_t.ndim
-        shape[p_axis_idx] = -1
-        p_broadcast = p_axis.reshape(shape)
-        
-        # Broadcast velocity to match
-        v_shape = list(data_t.shape)
-        v_shape[p_axis_idx] = 1
-        v_broadcast = velocity.reshape(v_shape)
-        
-        w = p_broadcast - v_broadcast
-        result = scipy.integrate.simpson(data_t * np.square(w), x=p_axis, axis=p_axis_idx) / density
-        
-        # Save to HDF5
-        sim_path = Path(self.sim._simulation_folder)
-        moments_dir = sim_path / 'moments' / h5_name
-        moments_dir.mkdir(parents=True, exist_ok=True)
-        
-        h5_file = moments_dir / f'{h5_name}-{timestep:06d}.h5'
-        with h5py.File(h5_file, 'w') as f:
-            axis_group = f.create_group('AXIS')
-            axis_group.create_dataset(h5_name, data=result)
-        
-        return result
     
     def add_moment_diagnostic(self, species: str, momentum_component: str = 'p1', order: int = 0):
         """
@@ -883,7 +804,7 @@ class MagShockZRun:
                 return
             case "physical":
                 scale = self.electron_inertial_length_real()
-                return axes * scale, rf"${direction} {self.electron_inertial_length_real.units()}$"
+                return axes * scale, rf"${direction} {self.electron_inertial_length_real()}$"
             case _:
                 raise ValueError(
                     f"Unknown units '{units}'. Choose from {allowed_units}."

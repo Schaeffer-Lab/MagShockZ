@@ -108,9 +108,9 @@ udist
 {
   use_spatial_uth = .true.,
   use_spatial_ufl = .true.,
-  spatial_uth(1) = "{{ lineout.math_funcs['tele'] }}",
-  spatial_uth(2) = "{{ lineout.math_funcs['tele'] }}",
-  spatial_uth(3) = "{{ lineout.math_funcs['tele'] }}",
+  spatial_uth(1) = "{{ lineout.math_funcs['vthele'] }}",
+  spatial_uth(2) = "{{ lineout.math_funcs['vthele'] }}",
+  spatial_uth(3) = "{{ lineout.math_funcs['vthele'] }}",
 
   spatial_ufl(1) = "{{ lineout.math_funcs['v_ex'] }}",
   spatial_ufl(2) = "{{ lineout.math_funcs['v_ey'] }}",
@@ -130,8 +130,8 @@ profile
 spe_bound
 {
  type(1:2,2) = "{{ config["part_boundary_x2"][0] }}","{{ config["part_boundary_x2"][1] }}",
- uth_bnd(1:3,1,2) = {{ lineout._get_field_values('tele')[0] }},{{ lineout._get_field_values('tele')[0] }},{{ lineout._get_field_values('tele')[0] }},
- uth_bnd(1:3,2,2) = {{ lineout._get_field_values('tele')[1] }},{{ lineout._get_field_values('tele')[1] }},{{ lineout._get_field_values('tele')[1] }},
+ uth_bnd(1:3,1,2) = {{ lineout._get_field_values('vthele')[0] }},{{ lineout._get_field_values('vthele')[0] }},{{ lineout._get_field_values('vthele')[0] }},
+ uth_bnd(1:3,2,2) = {{ lineout._get_field_values('vthele')[1] }},{{ lineout._get_field_values('vthele')[1] }},{{ lineout._get_field_values('vthele')[1] }},
 }
 
 !----------diagnostic for electrons----------
@@ -162,9 +162,9 @@ udist
 {
   use_spatial_uth = .true.,
   use_spatial_ufl = .true.,
-  spatial_uth(1) = "{{ lineout.math_funcs['tion'] }}",
-  spatial_uth(2) = "{{ lineout.math_funcs['tion'] }}",
-  spatial_uth(3) = "{{ lineout.math_funcs['tion'] }}",
+  spatial_uth(1) = "{{ lineout.math_funcs['vthion'] }}",
+  spatial_uth(2) = "{{ lineout.math_funcs['vthion'] }}",
+  spatial_uth(3) = "{{ lineout.math_funcs['vthion'] }}",
 
   spatial_ufl(1) = "{{ lineout.math_funcs['v_ix'] }}",
   spatial_ufl(2) = "{{ lineout.math_funcs['v_iy'] }}",
@@ -184,8 +184,8 @@ profile
 spe_bound
 {
  type(1:2,2) = "thermal", "thermal",
- uth_bnd(1:3,1,2) = {{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},
- uth_bnd(1:3,2,2) = {{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},
+ uth_bnd(1:3,1,2) = {{ lineout._get_field_values('vthion')[0] }},{{ lineout._get_field_values('vthion')[0] }},{{ lineout._get_field_values('vthion')[0] }},
+ uth_bnd(1:3,2,2) = {{ lineout._get_field_values('vthion')[1] }},{{ lineout._get_field_values('vthion')[1] }},{{ lineout._get_field_values('vthion')[1] }},
 }
 
 !----------diagnostic for Aluminum ions----------
@@ -216,9 +216,9 @@ udist
 {
   use_spatial_uth = .true.,
   use_spatial_ufl = .true.,
-  spatial_uth(1) = "{{ lineout.math_funcs['tion'] }}",
-  spatial_uth(2) = "{{ lineout.math_funcs['tion'] }}",
-  spatial_uth(3) = "{{ lineout.math_funcs['tion'] }}",
+  spatial_uth(1) = "{{ lineout.math_funcs['vthion'] }}",
+  spatial_uth(2) = "{{ lineout.math_funcs['vthion'] }}",
+  spatial_uth(3) = "{{ lineout.math_funcs['vthion'] }}",
 
   spatial_ufl(1) = "{{ lineout.math_funcs['v_ix'] }}",
   spatial_ufl(2) = "{{ lineout.math_funcs['v_iy'] }}",
@@ -238,8 +238,8 @@ profile
 spe_bound
 {
  type(1:2,2) = "thermal","thermal",
- uth_bnd(1:3,1,2) = {{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},{{ lineout._get_field_values('tion')[0] }},
- uth_bnd(1:3,2,2) = {{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},{{ lineout._get_field_values('tion')[1] }},
+ uth_bnd(1:3,1,2) = {{ lineout._get_field_values('vthion')[0] }},{{ lineout._get_field_values('vthion')[0] }},{{ lineout._get_field_values('vthion')[0] }},
+ uth_bnd(1:3,2,2) = {{ lineout._get_field_values('vthion')[1] }},{{ lineout._get_field_values('vthion')[1] }},{{ lineout._get_field_values('vthion')[1] }},
 }
 
 !----------diagnostic for Silicon ions----------
