@@ -47,7 +47,7 @@ def get_template_config(lineout: Ray, template_type: str, dim = 2, **kwargs, ):
           'algorithm': "cuda",
           'xmax': [int(-1*np.sqrt(3800/lineout.rqm_factor)), int(1*np.sqrt(3800/lineout.rqm_factor))],
           "nx_p": None, # Get about the same resolution in x and y
-          "num_par_x": [16, 16],
+          "num_par_x": [100, 100],
           "ndump": None,
           "dx": 0.2,
           "dt": None,
@@ -59,7 +59,7 @@ def get_template_config(lineout: Ray, template_type: str, dim = 2, **kwargs, ):
           "vpml_bnd_size": 100,
           "vpml_diffuse": ".true.",
           "part_boundary_x2": ["thermal", "thermal"],
-          "reports": '"charge", "j1", "j2", "j3"',
+          "reports": '"charge, savg", "j1, savg", "j2, savg", "j3, savg"',
           "rep_udist": '', # I believe that this is broken for the gpu version
           'e_ps_pmin': [-1, -1, -0.5],
           'e_ps_pmax': [1, 1, 0.5],
@@ -101,11 +101,11 @@ def get_template_config(lineout: Ray, template_type: str, dim = 2, **kwargs, ):
     if dim == 1:
         # For 1D, only use the lineout direction
         config["nx_p"] = [int((lineout.osiris_length[-1] - lineout.osiris_length[0]) / config['dx'])]
-        config["dt"] = np.round(config['dx'] * 0.95, 3)  # CFL for 1D
+        config["dt"] = np.format_float_scientific(config['dx'] * 0.95, 3)  # CFL for 1D
         n_cells_tot = config["nx_p"][0]
     else:  # dim == 2
         config["nx_p"] = [int((config["xmax"][1] - config["xmax"][0]) / config['dx']), int((lineout.osiris_length[-1] - lineout.osiris_length[0]) / config['dx'])]
-        config["dt"] = np.round(config['dx'] * 0.95 / np.sqrt(2.0), 3) # CFL condition for 2D
+        config["dt"] = np.format_float_scientific(config['dx'] * 0.95 / np.sqrt(2.0), 3) # CFL condition for 2D
         n_cells_tot = config["nx_p"][0] * config["nx_p"][1]
     
     config["ndump"] = int(config["tmax"] / config['dt'] / 2048) # 512 dumps total
