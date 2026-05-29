@@ -108,15 +108,12 @@ class MagShockZRun:
         m_i : astropy.units.g, optional
             Ion mass. If provided, used as default in methods requiring m_i.
         """
-        self.sim = osiris_utils.Simulation(input_deck_path = input_deck) # I think that I want to avoid all calls being sim.sim, is there a better way to do this?
+        self.sim = osiris_utils.Simulation(input_deck_path = input_deck)
         self.deck = self.sim._input_deck
         self.norm_density = norm_density
         self.B0 = B0
         self.Z = Z
         self.m_i = m_i
-        self._lazy_moments = {}  # Store lazy-loading moment diagnostics
-    
-    # --- Helper methods ---
     
     def _resolve_params(self, B_real=None, Z=None, m_i=None):
         """
@@ -222,69 +219,6 @@ class MagShockZRun:
         Z, m_i = self._require(params, 'Z', 'm_i')
         return (np.sqrt(adiabatic_index * Z * T_e / m_i)).to("cm/s")
     
-    # --- Phase space moments ---
-    
-    @staticmethod
-    def _find_momentum_axis(pha_data, momentum_component):
-        """
-        Find which axis corresponds to the momentum dimension.
-        
-        Uses the .axis attribute metadata to identify the correct axis.
-        """
-        # Check each axis to find the one matching the momentum component
-        for i, axis_info in enumerate(pha_data.axis):
-            axis_name = axis_info.get('name', '').lower()
-            # Match p1, p2, or p3
-            if axis_name == momentum_component:
-                return i
-        
-        # Fallback: assume last axis is momentum (common convention)
-        return len(pha_data.axis) - 1
-    
-    @staticmethod
-    def _moment(data, p_axis, order=0, axis=0):
-        """Calculate a moment of the distribution function (based on user's implementation)."""
-        weights = p_axis**order
-        shape = [1] * data.ndim
-        shape[axis] = -1
-        weights = weights.reshape(shape)
-        return scipy.integrate.simpson(data * weights, x=p_axis, axis=axis)
-    
-    def _diagnostic_exists(self, diag_name: str) -> bool:
-        """Check if a diagnostic already exists in the simulation."""
-        try:
-            _ = self._get_field(diag_name)
-            return True
-        except (KeyError, AttributeError, ValueError):
-            return False
-    
-    def _moment_h5_exists(self, diag_name: str, timestep: int) -> bool:
-        """
-        Check if a specific moment timestep HDF5 file exists on disk.
-        
-        Parameters
-        ----------
-        diag_name : str
-            Diagnostic name (e.g., 'al/n-from-p1')
-        timestep : int
-            Timestep index
-            
-        Returns
-        -------
-        bool
-            True if H5 file for this timestep exists, False otherwise
-        """
-        # Convert diagnostic name to filename format
-        h5_name = diag_name.replace('/', '_')
-        
-        # Check in moments/<diagnostic_name>/ directory within simulation folder
-        sim_path = Path(self.sim._simulation_folder)
-        moments_dir = sim_path / 'moments' / h5_name
-        
-        # Look for the specific timestep file
-        h5_file = moments_dir / f'{h5_name}-{timestep:06d}.h5'
-        
-        return h5_file.exists()
     
     def calculate_moment(self, species: str, timestep: int, order: int, momentum_component: str = 'p1'):
         """
