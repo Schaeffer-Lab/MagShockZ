@@ -250,37 +250,6 @@ class MagShockZRun:
         pha_data = self._get_field(pha_field)
         
         # Find which axis is the momentum axis and get its coordinates
-        p_axis_idx = self._find_momentum_axis(pha_data, momentum_component)
-        p_min, p_max = pha_data.grid[p_axis_idx][0], pha_data.grid[p_axis_idx][-1]
-        n_points = pha_data.nx[p_axis_idx]
-        p_axis = np.linspace(p_min, p_max, n_points)
-
-        if order == 0:
-            # Get single timestep data and compute: n = ∫f dp
-            data_t = pha_data[timestep]
-            result = self._moment(data_t, p_axis, order=order, axis=p_axis_idx)
-        
-        elif order == 1:
-            # Compute velocity: v = (∫p·f dp) / n
-            density = self.calculate_moment(species, timestep, order=0, momentum_component=momentum_component)
-            data_t = pha_data[timestep]
-            flux = self._moment(data_t, p_axis, order=1, axis=p_axis_idx)
-            result = flux / density
-
-        elif order == 2:
-            density = self.calculate_moment(species, timestep, order=0, momentum_component=momentum_component)
-            velocity = self.calculate_moment(species, timestep, order=1, momentum_component=momentum_component)
-            data_t = pha_data[timestep]
-            
-            shape = [1] * data_t.ndim
-            shape[p_axis_idx] = -1
-            p_broadcast = p_axis.reshape(shape)
-            v_shape = list(data_t.shape)
-            v_shape[p_axis_idx] = 1
-            v_broadcast = velocity.reshape(v_shape)
-            
-            w = p_broadcast - v_broadcast
-            result = scipy.integrate.simpson(data_t * np.square(w), x=p_axis, axis=p_axis_idx) / density
         
         # Save to HDF5
         sim_path = Path(self.sim._simulation_folder)

@@ -12,18 +12,19 @@ class Ray:
     """
     Class to handle the lineouts and fitting from FLASH to OSIRIS.
     """
-    def __init__(self, ds, start_pt, end_pt, reference_density = 5e18 * yt.units.cm**-3, rqm_factor = 50):
+    def __init__(self, ds, start_pt, end_pt, rqm_factor, reference_density = 5e18 * yt.units.cm**-3):
         if isinstance(ds, str):
             yt.enable_plugins()
             self.ds = yt.load_for_osiris(ds, rqm_factor=rqm_factor)
         elif isinstance(ds, yt.frontends.flash.data_structures.FLASHDataset):
             self.ds = ds
-        self.rqm_factor = rqm_factor 
+        self.rqm_factor = rqm_factor
+
 
         # omega_pe = plasmapy.formulary.plasma_frequency(reference_density * u.cm**-3, particle="e-")
         # print(f"plasma frequency is {omega_pe:.2e} rad/s for reference density {reference_density:.2e} cm^-3")
         omega_pe = np.sqrt(reference_density * yt.units.electron_charge_mks**2 / (yt.units.eps_0 * yt.units.electron_mass)).to('1/s')
-        print(f"plasma frequency is {omega_pe:.2e} rad/s for reference density {reference_density:.2e} cm^-3")
+        print(f"plasma frequency is {omega_pe} rad/s for reference density {reference_density} cm^-3")
         B_norm = (omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge).to('Gauss')
         v_norm = (yt.units.speed_of_light / np.sqrt(rqm_factor)).to('cm/s')
         E_norm = (omega_pe * yt.units.electron_mass * yt.units.speed_of_light / yt.units.elementary_charge / np.sqrt(rqm_factor)).to('statV/cm')
@@ -42,6 +43,11 @@ class Ray:
 
         self.start_pt = start_pt
         self.end_pt = end_pt
+        self._ray = None
+        self._ray_sort = None
+        self._field_cache = {}
+        self._rotated_vector_cache = {}
+        self.lineout_basis = self._build_lineout_basis()
         self.length = self._get_distance_axis()
         self.osiris_length = self.length / (yt.units.speed_of_light / omega_pe)  # Normalize to OSIRIS units
         self.osiris_length = (self.osiris_length - self.osiris_length[0]).value  # Center the x values to start at 0
@@ -76,13 +82,49 @@ class Ray:
         }
 
 
+    def _build_lineout_basis(self):
+        """
+        Build a right-handed orthonormal basis for the lineout:
+        e1 points along the ray, e2/e3 span the transverse plane.
+        """
+        start = np.asarray(self.start_pt, dtype=float)
+        end = np.asarray(self.end_pt, dtype=float)
+        direction = end - start
+        norm = np.linalg.norm(direction)
+        if norm == 0:
+            raise ValueError("start_pt and end_pt cannot be identical")
+
+        e1 = direction / norm
+
+        # Pick a stable reference vector not parallel to e1.
+        reference = np.array([0.0, 0.0, 1.0])
+        if np.abs(np.dot(e1, reference)) > 0.95:
+            reference = np.array([1.0, 0.0, 0.0])
+
+        e2 = np.cross(reference, e1)
+        e2_norm = np.linalg.norm(e2)
+        if e2_norm == 0:
+            raise ValueError("Failed to construct transverse basis for lineout")
+        e2 = e2 / e2_norm
+        e3 = np.cross(e1, e2)
+
+        return np.vstack([e1, e2, e3])
+
+
     def _get_distance_axis(self):
         '''
         Helper function to get a distance axis for the ray on which you are taking a lineout in real units
         '''
+        ray, ray_sort = self._get_sorted_ray()
         euclidean_length_of_ray = np.sqrt((self.end_pt[0]-self.start_pt[0])**2 + (self.end_pt[1]-self.start_pt[1])**2 + (self.end_pt[2]-self.start_pt[2])**2)
         dist_from_origin = np.sqrt(self.start_pt[0]**2 + self.start_pt[1]**2 + self.start_pt[2]**2)
-        return np.array(self.ds.ray(self.start_pt, self.end_pt)['t']* euclidean_length_of_ray+dist_from_origin)
+        return np.array(ray['t'][ray_sort] * euclidean_length_of_ray + dist_from_origin)
+
+    def _get_sorted_ray(self):
+        if self._ray is None or self._ray_sort is None:
+            self._ray = self.ds.ray(self.start_pt, self.end_pt)
+            self._ray_sort = np.argsort(self._ray["t"])
+        return self._ray, self._ray_sort
 
     def _get_field_values(self, field: str):
         '''
@@ -91,12 +133,49 @@ class Ray:
 
         Takes the square root of temperature fields to convert them to thermal velocities.
         '''
-        ray = self.ds.ray(self.start_pt, self.end_pt)
-        # For some god forsaken reason, yt does not return the values in the order of the ray, so we have to sort them
-        ray_sort = np.argsort(ray["t"])
+        if field in self._field_cache:
+            return self._field_cache[field]
 
+        ray, ray_sort = self._get_sorted_ray()
         values = (ray[(field)][ray_sort] / self.normalizations[field]).value
+        self._field_cache[field] = values
         return values
+
+    def _get_rotated_vector_group(self, group: str):
+        if group in self._rotated_vector_cache:
+            return self._rotated_vector_cache[group]
+
+        vx = self._get_field_values(f"{group}x")
+        vy = self._get_field_values(f"{group}y")
+        vz = self._get_field_values(f"{group}z")
+        vectors_lab = np.column_stack([vx, vy, vz])
+        vectors_local = vectors_lab @ self.lineout_basis.T
+        self._rotated_vector_cache[group] = vectors_local
+        return vectors_local
+
+    def _get_rotated_vector_component(self, field: str):
+        """
+        Return a vector component expressed in the lineout-aligned basis.
+        Requested fields are still named with x/y/z suffixes, but those suffixes
+        map to (along-lineout, transverse-1, transverse-2) components.
+        """
+        vector_groups = ["mag", "E", "v_i", "v_e"]
+        component_map = {"x": 0, "y": 1, "z": 2}
+
+        group = None
+        for prefix in vector_groups:
+            if field.startswith(prefix):
+                group = prefix
+                break
+        if group is None:
+            raise ValueError(f"Field '{field}' is not a supported vector component")
+
+        axis_char = field[-1]
+        if axis_char not in component_map:
+            raise ValueError(f"Field '{field}' does not end in x/y/z")
+
+        vectors_local = self._get_rotated_vector_group(group)
+        return vectors_local[:, component_map[axis_char]]
 
     def show_ray(self, field: str):
         """ Show the ray in a slice plot with some specified field."""
@@ -111,7 +190,7 @@ class Ray:
         line.show()
 
 
-    def fit(self, field, degree=3, left_value=None, right_value=None, fit_func = "polynomial", plot=False, dim_var="x2"):
+    def fit(self, field, degree=3, left_value=None, right_value=None, fit_func = "polynomial", plot=False, dim_var="x1"):
         """
         Fit a polynomial to the lineout data.
         
@@ -136,9 +215,10 @@ class Ray:
             print("suggest using fit_density for initializing density fields")
 
         # TODO make this way better, way too hard-coded rn
-        vals = self._get_field_values(field)
-        if dim_var == "x1" and field in ["v_ix", "v_ex", "Ex", "Bx"]:
-            vals = -vals  # Account for coordinate rotation for x1 axis
+        if field in ["magx", "magy", "magz", "Ex", "Ey", "Ez", "v_ix", "v_iy", "v_iz", "v_ex", "v_ey", "v_ez"]:
+            vals = self._get_rotated_vector_component(field)
+        else:
+            vals = self._get_field_values(field)
         if fit_func == "polynomial":
             coefficients = np.polyfit(self.osiris_length, vals, degree)
             function = np.poly1d(coefficients)
@@ -255,28 +335,31 @@ class Ray:
         vals = self._get_field_values(field)
         return np.mean(vals[-10:-1])
 
-
-
-
-def main():
-    # Example usage:
-    yt.enable_plugins()
+def test_rotation():
+    # Test that the rotation is working correctly by checking a simple case where the ray is along the x-axis
     data_path = "/pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009"
-    ds = yt.load_for_osiris(data_path)
     start_point = (0, 0.01, 0)
     end_point = (0, 0.3, 0)
-    lineout = Ray(ds, start_point, end_point)
-    # lineout.show_ray("magx")
-    # lineout.show_lineout("magx")
-
-    fit_result = lineout.fit("sidens", degree=8, fit_func="piecewise", plot=True)
-    print(fit_result)
+    lineout = Ray(data_path, start_point, end_point, rqm_factor=1)
+    magx_rotated = lineout._get_rotated_vector_component("magx")
+    Ex_rotated = lineout._get_rotated_vector_component("Ex")
+    magy_original = lineout._get_field_values("magy")
+    assert np.allclose(magx_rotated, magy_original), "Rotation of magx failed for ray along x-axis"
+    assert np.allclose(Ex_rotated, lineout._get_field_values("Ey")), "Rotation of magx did not change the values for ray along x-axis"
+    assert np.allclose(lineout._get_rotated_vector_component("v_iy"), -1*lineout._get_field_values("v_ix")), "Rotation of magy did not match original magx for ray along x-axis"
 
 if __name__ == "__main__":
-    #TODO Fix this
-    # import sys
-    # parser = sys.argv(
-    #                     prog='fitting_functions.py',
-    #                     description='',
-    #                     epilog='Text at the bottom of help')
-    main()
+    # Example usage:
+    # yt.enable_plugins()
+    # data_path = "/pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009"
+    # ds = yt.load_for_osiris(data_path)
+    # start_point = (0, 0.01, 0)
+    # end_point = (0, 0.3, 0)
+    # lineout = Ray(ds, start_point, end_point)
+    # lineout.show_ray("magx")
+    # lineout.show_lineout("magx")
+    test_rotation()
+
+
+    # fit_result = lineout.fit("sidens", degree=8, fit_func="piecewise", plot=True)
+    # print(fit_result)

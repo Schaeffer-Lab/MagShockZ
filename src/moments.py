@@ -26,17 +26,24 @@ def moment(data: osh5def.H5Data, order: int, axis: str, debug: bool = False):
         return scipy.integrate.simpson(data, p_axis, axis = ax)
     elif order == 1:
         zeroth_moment = moment(data, order=0, axis=axis)
-        return scipy.integrate.simpson(data * weights, p_axis, axis = ax) / zeroth_moment
+        return np.divide(scipy.integrate.simpson(data * weights, p_axis, axis = ax),
+                        zeroth_moment, out=np.zeros_like(zeroth_moment), where=zeroth_moment!=0)
     elif order == 2:
         zeroth_moment = moment(data, order=0, axis=axis)
         first_moment = moment(data, order=1, axis=axis)
         first_moment_expanded = np.expand_dims(first_moment, axis=ax)
+        w = weights - first_moment_expanded
+
         if debug:
             print(f"zeroth_moment shape: {zeroth_moment.shape}, first_moment shape: {first_moment.shape}")
             print(f"weights shape: {weights.shape}, data shape: {data.shape}")
             print(f"first_moment_expanded shape: {first_moment_expanded.shape}")
-        return scipy.integrate.simpson(data * (weights - first_moment_expanded)**2, p_axis, axis = ax) / zeroth_moment
+            w = weights - first_moment_expanded
+        return np.divide(scipy.integrate.simpson(data * np.square(w), p_axis, axis = ax),
+                        zeroth_moment, out=np.zeros_like(zeroth_moment), where=zeroth_moment!=0)
 
+def write_moments_to_h5():
+    pass
 
 def test_zeroth_moment(file_path, axis = 'p1'):
     data = osh5io.read_h5(file_path)
@@ -54,11 +61,15 @@ def test_second_moment(file_path, axis = 'p1'):
     assert np.all(result >= 0), "Second moment (variance) should be non-negative"
     return result
 
+def test_write_moments_to_h5():
+    pass
+
 if __name__ == "__main__":
     filename = "/pscratch/sd/d/dschnei/perlmutter_1.1.1d/MS/PHA/p1x1/aluminum/p1x1-aluminum-000000.h5"
     test_zeroth_moment(filename)
     test_first_moment(filename)
     test_second_moment(filename)
+    test_write_moments_to_h5(test_zeroth_moment(filename), test_first_moment(filename), test_second_moment(filename))
 
     filename = "/pscratch/sd/d/dschnei/perlmutter_2.8.2d/MS/PHA/p2x1x2/al/p2x1x2-al-000001.h5"
     test_zeroth_moment(filename, axis = 'p2')
