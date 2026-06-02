@@ -1,0 +1,23 @@
+# Analysis config for the perlmutter_1.3.1d OSIRIS run.
+# Stores only parameters not derivable from the OSIRIS input deck.
+# All parameters in OSIRIS normalised units (lengths in c/ωpe, velocities in c)
+# unless noted otherwise.
+
+sim_dir: /pscratch/sd/d/dschnei/perlmutter_1.3.1d  # override with $MAGSHOCKZ_SIM_DIR
+input_deck: magshockz_gpu.1d
+
+# Physical normalisation density — not in OSIRIS deck; set by the experiment.
+norm_density_cm3: 5.0e18
+
+species: [al, e, si]
+
+# Dump indices to load (file suffix: p1x1-al-{t:06d}.h5).
+# NOT simulation time — extract run_attrs["TIME"] from HDF5 for physical time.
+times: [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+
+shock:
+  v_shock: 0.039        # shock velocity in c, from streak-plot linear fit
+  x_shock_0: 750.0      # shock position at t_sim=0 [c/ωpe]
+  x_downstream_start: 960.0  # left edge of downstream region [c/ωpe]
+
+field_mode: full  # "full": total B²; "delta": subtract upstream mean B first
