@@ -11,6 +11,7 @@ python simplified_magshockz.py \
 --num_par_x 100 \
 --ndump_tot 512 \
 --dx ion_debye \
+--vpml_bnd_size 50 \
 --emf_boundary pmc vpml \
 --part_boundary thermal thermal \
 --reports charge j1 j2 j3 \
@@ -20,7 +21,7 @@ python simplified_magshockz.py \
 --smooth_order 2 \
 --emf_reports e1 e2 e3 b1 b2 b3 \
 --ps_nx 4096 128 \
---ps_np 8000 64 128 \
+--ps_np 4096 4096 128 \
 --i_ps_pmin -0.1 -0.1 -0.05 \
 --i_ps_pmax 0.1 0.1 0.05 \
 --e_ps_pmin -1 -1 -0.5 \
@@ -32,3 +33,5 @@ python simplified_magshockz.py \
 --al_charge_state 13 \
 --inputfile_name magshockz_gpu.1d \
 --piecewise_degree 10 \
+--n_ave 50 \
+--restart True \

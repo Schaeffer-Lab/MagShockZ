@@ -11,8 +11,7 @@ import logging
 logging.basicConfig(level=logging.INFO, 
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-# import pydantic #TODO include
-# from ..src import analysis_utils
+
 
 def get_template_config(lineout: Ray, args, **kwargs):
     
@@ -33,12 +32,20 @@ def get_template_config(lineout: Ray, args, **kwargs):
     config['num_par_x'] = args.num_par_x
     config['ps_nx'] = args.ps_nx
     config['n_ave'] = args.n_ave
+    config['node_number'] = args.node_number
+    config['num_threads'] = args.num_threads
+    if args.restart:
+        config['restart'] = '.true.'
+    else:
+        config['restart'] = '.false.'
+
 
     config["ps_np"] = args.ps_np
     config["i_ps_pmin"] = args.i_ps_pmin
     config["i_ps_pmax"] = args.i_ps_pmax
     config["e_ps_pmin"] = args.e_ps_pmin
     config["e_ps_pmax"] = args.e_ps_pmax
+    config['vpml_bnd_size'] = args.vpml_bnd_size
 
     config["interpolation"] = args.interpolation
     config["smooth_type"] = args.smooth_type
@@ -116,21 +123,25 @@ def get_template_config(lineout: Ray, args, **kwargs):
     print("Recommended number of nodes:", np.ceil(n_bytes_particles/max_bytes_per_GPU/4))
 
     # prepare reports
-    config['reports'] = '"'
+    config['reports'] = ''
     for report in args.reports:
-        config['reports'] += report + ', savg"'
+        config['reports'] += '"' + report + ', savg", '
+    config['reports'] = config['reports'].rstrip(', ')
 
-    config['rep_udist'] = '"'
+    config['rep_udist'] = ''
     for udist in args.rep_udist:
-        config['rep_udist'] += udist + ', savg"'
+        config['rep_udist'] += '"' + udist + ', savg", '
+    config['rep_udist'] = config['rep_udist'].rstrip(', ')
 
-    config['emf_reports'] = '"'
+    config['emf_reports'] = ''
     for emf_report in args.emf_reports:
-        config['emf_reports'] += emf_report + ', savg"'
+        config['emf_reports'] += '"' + emf_report + ', savg", '
+    config['emf_reports'] = config['emf_reports'].rstrip(', ')
 
-    config['phasespaces'] = '"'
+    config['phasespaces'] = ''
     for ps in args.phasespaces:
-        config['phasespaces'] += ps + '",'
+        config['phasespaces'] += '"' + ps + '",'
+    config['phasespaces'] = config['phasespaces'].rstrip(', ')
 
     return config
 
@@ -242,6 +253,8 @@ if __name__ == "__main__":
     parser.add_argument('--B0_Gauss', type=float, help="Upstream magnetic field strength in Gauss")
     parser.add_argument('--al_charge_state', type=int, help="Charge state of aluminum ions")
     parser.add_argument('--piecewise_degree', type=int, help="Degree of piecewise polynomial fit to apply to lineout data input profiles")
+    parser.add_argument('--vpml_bnd_size', type=int, help="Size of vpml boundary layers if using vpml boundaries")
+    parser.add_argument('--restart', action='store_true', help="Whether to write input file for a restart simulation (only dumps fields and not particles)")
     args = parser.parse_args()
     print(args)
 
