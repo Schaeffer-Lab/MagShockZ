@@ -13,6 +13,7 @@ Two public objects:
       be passed directly to osh5vis.osplot().
 """
 
+import re
 from typing import List, Optional
 
 import astropy
@@ -200,6 +201,35 @@ class MagShockZRun:
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
+
+def parse_times(times) -> List[int]:
+    """Normalise the config ``times`` entry to a list of int dump indices.
+
+    YAML has no Python evaluation, so a ``range(...)`` written in the config
+    arrives as a plain string; this parses it (without ``eval``) so the config
+    can stay compact.  Accepted forms:
+
+      - YAML list            ``[0, 20, 40, ...]``
+      - range string         ``range(0, 361, 20)``  (Python semantics; stop exclusive)
+      - start/stop/step map   ``{start: 0, stop: 361, step: 20}``
+    """
+    if isinstance(times, str):
+        m = re.fullmatch(
+            r"\s*range\(\s*(-?\d+)\s*(?:,\s*(-?\d+)\s*)?(?:,\s*(-?\d+)\s*)?\)\s*", times
+        )
+        if not m:
+            raise ValueError(
+                f"Cannot parse times={times!r}; expected a list or 'range(start, stop[, step])'."
+            )
+        a, b, c = m.groups()
+        if b is None:                       # range(stop)
+            return list(range(int(a)))
+        step = int(c) if c is not None else 1
+        return list(range(int(a), int(b), step))
+    if isinstance(times, dict):
+        return list(range(int(times["start"]), int(times["stop"]), int(times.get("step", 1))))
+    return [int(t) for t in times]
+
 
 def resolve_dump_params(cfg: dict, t_val: int, t_sim: float) -> dict:
     """Return the resolved shock parameters for a specific dump.

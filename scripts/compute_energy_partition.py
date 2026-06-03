@@ -31,6 +31,8 @@ def load_config(path: str) -> dict:
     with open(path) as f:
         cfg = yaml.safe_load(f)
     cfg["sim_dir"] = os.environ.get("MAGSHOCKZ_SIM_DIR", cfg["sim_dir"])
+    if "times" in cfg:
+        cfg["times"] = analysis_utils.parse_times(cfg["times"])
     return cfg
 
 

@@ -63,6 +63,8 @@ def load_config(path: str) -> dict:
     with open(path) as f:
         cfg = yaml.safe_load(f)
     cfg["sim_dir"] = os.environ.get("MAGSHOCKZ_SIM_DIR", cfg["sim_dir"])
+    if "times" in cfg:
+        cfg["times"] = analysis_utils.parse_times(cfg["times"])
     return cfg
 
 
@@ -370,13 +372,15 @@ def main():
     axp.set_title("Density & magnetic compression")
     axp.grid(alpha=0.3)
 
-    # T_i, T_e (parallel) line-outs (phase grid).  Temperature is meaningless in
-    # the upstream vacuum ahead of the shock, so mask where n_e (interpolated onto
-    # the phase grid) drops below 5% of its peak.
+    # T_i, T_e (parallel) line-outs (phase grid), recomputed fresh at the snapshot
+    # dump (the T_i streak may be on a coarser cadence).  Temperature is meaningless
+    # in the upstream vacuum, so mask where n_e (interpolated onto the phase grid)
+    # drops below 5% of its peak.
+    Ti_snap = np.asarray(temperature_frame(sim_dir, "al", t_snap, rqm_i))
     Te_snap = np.asarray(temperature_frame(sim_dir, "e", t_snap, -1.0))
     ne_on_p = np.interp(x_p, x_f, ne_streak[i_snap])
     have_plasma = ne_on_p > 0.05 * np.nanmax(ne_streak[i_snap])
-    Ti_plot = np.where(have_plasma, Ti_streak[i_snap], np.nan)
+    Ti_plot = np.where(have_plasma, Ti_snap, np.nan)
     Te_plot = np.where(have_plasma, Te_snap, np.nan)
     axT = ax2[1, 1]
     axT.semilogy(x_p, Ti_plot, color="tab:red", label=r"$T_{i,\parallel}$ (Al)")
@@ -401,8 +405,8 @@ def main():
     npz_path = os.path.join(out_dir, f"overview_{tag}.npz")
     np.savez(
         npz_path,
-        dumps=np.asarray(dumps),
-        time=time_f, x_field=x_f, x_phase=x_p,
+        field_dumps=np.asarray(field_dumps), phase_dumps=np.asarray(phase_dumps),
+        time_field=time_f, time_phase=time_p, x_field=x_f, x_phase=x_p,
         B_streak=B_streak, ne_streak=ne_streak, Ti_streak=Ti_streak,
         x_shock_detected=x_det,
         v_shock_cfg=np.asarray(v_shock_cfg), x_shock_0=np.asarray(x_shock_0),
