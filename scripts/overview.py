@@ -43,34 +43,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import osh5def
 import osh5io
-import yaml
 from matplotlib.colors import LogNorm
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
-import moments as mom_module
-from analysis_utils import StreakBuilder
-
-# Fields are dumped on even indices (savg cadence); phase spaces on every index.
-_FIELD_TEMPLATE   = "{sd}/MS/FLD/{q}-savg/{q}-savg-{t:06d}.h5"
-_DENSITY_TEMPLATE = "{sd}/MS/DENSITY/{sp}/charge-savg/charge-savg-{sp}-{t:06d}.h5"
-_PHASE_TEMPLATE   = "{sd}/MS/PHA/{pha}/{sp}/{pha}-{sp}-{t:06d}.h5"
-
-
-def load_config(path: str) -> dict:
-    with open(path) as f:
-        cfg = yaml.safe_load(f)
-    cfg["sim_dir"] = os.environ.get("MAGSHOCKZ_SIM_DIR", cfg["sim_dir"])
-    if "times" in cfg:
-        cfg["times"] = analysis_utils.parse_times(cfg["times"])
-    return cfg
-
-
-def axis_values(h5data, ax_idx: int) -> np.ndarray:
-    ax = h5data.axes[ax_idx]
-    return np.linspace(ax.min, ax.max, ax.size)
+import temperature_anisotropy as ta
+from analysis_utils import StreakBuilder, axis_values, field_path, density_path, phase_path
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +59,7 @@ def axis_values(h5data, ax_idx: int) -> np.ndarray:
 
 def bmag_frame(sim_dir: str, t: int):
     """|B| = sqrt(b1^2 + b2^2 + b3^2) as an H5Data on the field grid [B_0]."""
-    b = {q: osh5io.read_h5(_FIELD_TEMPLATE.format(sd=sim_dir, q=q, t=t))
+    b = {q: osh5io.read_h5(field_path(sim_dir, q, t))
          for q in ("b1", "b2", "b3")}
     bmag = np.sqrt(b["b1"] ** 2 + b["b2"] ** 2 + b["b3"] ** 2)  # stays H5Data
     bmag.data_attrs = dict(bmag.data_attrs, NAME="|B|", LONG_NAME=r"$|B|$", UNITS="B_0")
@@ -88,7 +68,7 @@ def bmag_frame(sim_dir: str, t: int):
 
 def density_frame(sim_dir: str, sp: str, t: int):
     """Number density n = |charge| as an H5Data on the field grid [n_0]."""
-    ch = osh5io.read_h5(_DENSITY_TEMPLATE.format(sd=sim_dir, sp=sp, t=t))
+    ch = osh5io.read_h5(density_path(sim_dir, sp, t))
     n = np.abs(ch)
     n.data_attrs = dict(n.data_attrs, NAME=f"n_{sp}", LONG_NAME=fr"$n_\mathrm{{{sp}}}$", UNITS="n_0")
     return n
@@ -101,8 +81,8 @@ def temperature_frame(sim_dir: str, sp: str, t: int, rqm: float, pha: str = "p1x
     carrying the phase-space spatial axis and run_attrs (for the TIME StreakBuilder
     needs) so it can be stacked exactly like the field/density frames.
     """
-    ps = osh5io.read_h5(_PHASE_TEMPLATE.format(sd=sim_dir, pha=pha, sp=sp, t=t))
-    T = abs(rqm) * np.asarray(mom_module.moment(ps, order=2, axis=axis))
+    ps = osh5io.read_h5(phase_path(sim_dir, pha, sp, t))
+    T = np.asarray(ta.temperature_profile(ps, rqm, axis))
     x_axis = next(a for a in ps.axes if a.name != axis)  # the spatial axis
     return osh5def.H5Data(
         T,
@@ -223,16 +203,11 @@ def main():
     parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]
 
-    import astropy.units
-    norm_density = float(cfg["norm_density_cm3"]) * astropy.units.cm**-3
-    sim = analysis_utils.MagShockZRun(
-        os.path.join(sim_dir, cfg.get("input_deck", "magshockz_gpu.1d")),
-        norm_density=norm_density,
-    )
-    rqm_i = sim.rqm
+    sim = analysis_utils.run_from_config(cfg)
+    rqm_i = sim.rqm_of("al")
     v_shock_cfg = float(cfg["shock"]["v_shock"])
     x_shock_0 = float(cfg["shock"]["x_shock_0"])
 
@@ -252,11 +227,11 @@ def main():
         stride = stride + (stride % 2)  # keep even so field savg files exist
         out = []
         for t in range(args.t_start, t_stop + 1, stride):
-            if not os.path.exists(_FIELD_TEMPLATE.format(sd=sim_dir, q="b3", t=t)):
+            if not os.path.exists(field_path(sim_dir, "b3", t)):
                 continue
-            if not os.path.exists(_DENSITY_TEMPLATE.format(sd=sim_dir, sp="e", t=t)):
+            if not os.path.exists(density_path(sim_dir, "e", t)):
                 continue
-            if require_phase and not os.path.exists(_PHASE_TEMPLATE.format(sd=sim_dir, pha="p1x1", sp="al", t=t)):
+            if require_phase and not os.path.exists(phase_path(sim_dir, "p1x1", "al", t)):
                 continue
             out.append(t)
         return out
@@ -292,20 +267,36 @@ def main():
         detect_front(x_f, ne_streak[i], x_pred[i], args.search_hw)
         for i in range(len(field_dumps))
     ])
-    good = np.isfinite(x_det)
-    if good.sum() >= 2:
-        slope, intercept = np.polyfit(time_f[good], x_det[good], 1)
+
+    # The shock front is not magnetically organised until the upstream ions have
+    # completed at least one gyro-orbit, so the trajectory fit must skip the
+    # first ion gyroperiod.  In OSIRIS units the field value equals omega_ce
+    # [1/wpe], hence omega_ci = |B|/|rqm_i| and T_ci = 2*pi*|rqm_i|/|B|.  Use the
+    # ambient upstream |B| (median ahead of the t=0 predicted front) for |B|.
+    upstream0 = x_f > x_shock_0
+    B_upstream = float(np.median(B_streak[0][upstream0])) if upstream0.any() \
+        else float(np.median(B_streak[0]))
+    t_gyro = 2.0 * np.pi * abs(rqm_i) / B_upstream  # ion gyroperiod [1/wpe]
+
+    detected = np.isfinite(x_det)
+    fit_mask = detected & (time_f >= t_gyro)
+    if fit_mask.sum() >= 2:
+        slope, intercept = np.polyfit(time_f[fit_mask], x_det[fit_mask], 1)
         v_fit, x0_fit = float(slope), float(intercept)
     else:
         v_fit, x0_fit = float("nan"), float("nan")
 
     print("\n--- Shock front ---")
     print(f"  config fit   : v = {v_shock_cfg:.5f} c,  x0 = {x_shock_0:.1f} c/wpe")
-    print(f"  detected fit : v = {v_fit:.5f} c,  x0 = {x0_fit:.1f} c/wpe  ({good.sum()}/{len(field_dumps)} frames)")
+    print(f"  ion gyroperiod : T_ci = {t_gyro:.1f} /wpe  (|B|_up = {B_upstream:.4g}); "
+          f"fit skips t < T_ci")
+    print(f"  detected fit : v = {v_fit:.5f} c,  x0 = {x0_fit:.1f} c/wpe  "
+          f"({fit_mask.sum()}/{detected.sum()} fitted/detected frames)")
 
     cfg_line = (time_f, x_pred, dict(color="white", ls="-", lw=1.6), f"config fit (v={v_shock_cfg:.4f}c)")
-    det_pts  = (time_f[good], x_det[good], dict(color="lime", ls="none", marker=".", ms=6), "detected front")
-    fit_line = (time_f, x0_fit + v_fit * time_f, dict(color="lime", ls="--", lw=1.2), f"detected fit (v={v_fit:.4f}c)")
+    det_pts  = (time_f[detected], x_det[detected], dict(color="lime", ls="none", marker=".", ms=6), "detected front")
+    fit_line = (time_f[time_f >= t_gyro], x0_fit + v_fit * time_f[time_f >= t_gyro],
+                dict(color="lime", ls="--", lw=1.2), f"detected fit (v={v_fit:.4f}c, t≥T_ci)")
 
     out_dir = args.output_dir or os.path.join(_HERE, "..", "results", os.path.basename(sim_dir.rstrip("/")))
     os.makedirs(out_dir, exist_ok=True)
@@ -327,10 +318,12 @@ def main():
 
     axt = axes[1, 1]
     axt.plot(time_f, x_pred, color="tab:blue", lw=1.8, label=f"config fit (v={v_shock_cfg:.4f}c)")
-    axt.plot(time_f[good], x_det[good], "o", color="tab:green", ms=5, label="detected front")
+    axt.plot(time_f[detected], x_det[detected], "o", color="tab:green", ms=5, label="detected front")
     if np.isfinite(v_fit):
-        axt.plot(time_f, x0_fit + v_fit * time_f, "--", color="tab:green", lw=1.4,
-                 label=f"detected fit (v={v_fit:.4f}c)")
+        tf = time_f[time_f >= t_gyro]
+        axt.plot(tf, x0_fit + v_fit * tf, "--", color="tab:green", lw=1.4,
+                 label=f"detected fit (v={v_fit:.4f}c, t≥T_ci)")
+    axt.axvline(t_gyro, color="0.4", ls=":", lw=1.2, label=fr"$T_{{ci}}$ = {t_gyro:.0f}/$\omega_{{pe}}$")
     axt.set_xlabel(r"$t$ [$\omega_{pe}^{-1}$]")
     axt.set_ylabel(r"$x_\mathrm{shock}$ [$c/\omega_{pe}$]")
     axt.set_title("Shock-front trajectory")
@@ -351,8 +344,8 @@ def main():
     i_snap = args.snapshot_idx % len(field_dumps)
     x_shock_snap = x_det[i_snap] if np.isfinite(x_det[i_snap]) else x_pred[i_snap]
 
-    ps_al = osh5io.read_h5(_PHASE_TEMPLATE.format(sd=sim_dir, pha="p1x1", sp="al", t=t_snap))
-    ps_e  = osh5io.read_h5(_PHASE_TEMPLATE.format(sd=sim_dir, pha="p1x1", sp="e",  t=t_snap))
+    ps_al = osh5io.read_h5(phase_path(sim_dir, "p1x1", "al", t_snap))
+    ps_e  = osh5io.read_h5(phase_path(sim_dir, "p1x1", "e",  t_snap))
 
     fig2, ax2 = plt.subplots(2, 2, figsize=(16, 10))
     plot_phasespace(ax2[0, 0], ps_al, title=f"Ion $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})", x_shock=x_shock_snap)
@@ -411,6 +404,7 @@ def main():
         x_shock_detected=x_det,
         v_shock_cfg=np.asarray(v_shock_cfg), x_shock_0=np.asarray(x_shock_0),
         v_shock_fit=np.asarray(v_fit), x_shock_0_fit=np.asarray(x0_fit),
+        t_gyro=np.asarray(t_gyro), B_upstream=np.asarray(B_upstream),
         config_path=np.asarray(os.path.abspath(args.config)),
     )
     print(f"Saved → {npz_path}")

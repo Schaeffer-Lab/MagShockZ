@@ -4,16 +4,20 @@
 # unless noted otherwise.
 
 sim_dir: /pscratch/sd/d/dschnei/perlmutter_1.3.1d  # override with $MAGSHOCKZ_SIM_DIR
-input_deck: magshockz_gpu.1d
 
 # Physical normalisation density — not in OSIRIS deck; set by the experiment.
 norm_density_cm3: 5.0e18
 
-species: [al, e, si]
+# NOTE: the input-deck filename (runme --inputfile_name) and the species list
+# (deck `species` sections) are read from the run itself, not duplicated here.
 
 # Dump indices to load (file suffix: p1x1-al-{t:06d}.h5).
 # NOT simulation time — extract run_attrs["TIME"] from HDF5 for physical time.
-times: range(0, 361, 20)  # 0, 20, 40, ..., 360
+# Either a list, or a start/stop/step mapping (stop is inclusive).
+times:
+  start: 0
+  stop: 360   # inclusive -> 0, 20, 40, ..., 360
+  step: 20
 
 shock:
   v_shock: 0.0375       # shock velocity in c, from streak-plot linear fit
@@ -29,12 +33,10 @@ dump_params:
 
 field_mode: full  # "full": total B²; "delta": subtract upstream mean B first
 
-# Ion charge state (number of stripped electrons).  Al^13+ -> 13.
-# Used by compute_dimensionless_params.py to separate Z_i from |rqm_i|.
-al_charge_state: 13
-
 # Si charge state for FLASH/OSIRIS temperature comparison.
-# Al charge state and all other FLASH init params are read from runme_perlmutter.sh.
+# The Al charge state (al_charge_state), B0, line of sight and all other init
+# params are read directly from runme_*.sh in the sim directory — not here.
+# Si is not passed to the init script, so its charge state lives in this config.
 si_charge_state: 14
 
 # Averaging windows for compute_dimensionless_params.py.

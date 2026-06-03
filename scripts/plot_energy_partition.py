@@ -13,15 +13,15 @@ The script produces one figure with two panels:
 
 import argparse
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-def load_results(path: str) -> dict:
-    """Load .npz and unwrap 0-d arrays to plain scalars."""
-    d = np.load(path, allow_pickle=True)
-    return {k: (d[k].item() if d[k].ndim == 0 else d[k]) for k in d.files}
+from analysis_utils import load_results
 
 
 def plot_profiles(r: dict, ax: plt.Axes) -> None:

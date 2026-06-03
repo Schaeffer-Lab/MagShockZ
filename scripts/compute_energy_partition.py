@@ -18,27 +18,13 @@ import sys
 
 import numpy as np
 import osh5io
-import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+from analysis_utils import axis_values
 import energy_partition as ep
-
-
-def load_config(path: str) -> dict:
-    with open(path) as f:
-        cfg = yaml.safe_load(f)
-    cfg["sim_dir"] = os.environ.get("MAGSHOCKZ_SIM_DIR", cfg["sim_dir"])
-    if "times" in cfg:
-        cfg["times"] = analysis_utils.parse_times(cfg["times"])
-    return cfg
-
-
-def spatial_axis(h5data, ax_idx: int) -> np.ndarray:
-    ax = h5data.axes[ax_idx]
-    return np.linspace(ax.min, ax.max, ax.size)
 
 
 def main():
@@ -61,44 +47,35 @@ def main():
     )
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]
     times = cfg["times"]
     t_idx = args.timestep_idx
     t_val = times[t_idx]
 
     field_mode = cfg.get("field_mode", "full")
-    species_list = cfg.get("species", ["al", "e", "si"])
 
     print(f"Config  : {args.config}")
     print(f"sim_dir : {sim_dir}")
     print(f"Dump    : t={t_val}  (index {t_idx} of {len(times)} dumps)")
 
-    import astropy.units
-    norm_density = float(cfg["norm_density_cm3"]) * astropy.units.cm**-3
-    sim = analysis_utils.MagShockZRun(
-        os.path.join(sim_dir, cfg.get("input_deck", "magshockz_gpu.1d")),
-        norm_density=norm_density,
-    )
+    sim = analysis_utils.run_from_config(cfg)
+    species_list = list(sim.deck.species)  # species defined in the input deck
 
     # Load phase spaces and fields for this single dump
     print("Loading HDF5 files...")
     pha = {
-        sp: osh5io.read_h5(
-            f"{sim_dir}/MS/PHA/p1x1/{sp}/p1x1-{sp}-{t_val:06d}.h5"
-        )
+        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p1x1", sp, t_val))
         for sp in species_list
     }
     fld = {
-        name: osh5io.read_h5(
-            f"{sim_dir}/MS/FLD/{name}-savg/{name}-savg-{t_val:06d}.h5"
-        )
+        name: osh5io.read_h5(analysis_utils.field_path(sim_dir, name, t_val))
         for name in ["b1", "b2", "b3", "e1", "e2", "e3"]
     }
 
     # Spatial grids: phase space axes are [p1, x1]; field axes are [x1]
-    x_pha = spatial_axis(pha[species_list[0]], ax_idx=1)
-    x_field = spatial_axis(fld["b1"], ax_idx=0)
+    x_pha = axis_values(pha[species_list[0]], ax_idx=1)
+    x_field = axis_values(fld["b1"], ax_idx=0)
 
     t_sim = float(pha[species_list[0]].run_attrs["TIME"][0])
     dump = analysis_utils.resolve_dump_params(cfg, t_val, t_sim)
@@ -109,8 +86,7 @@ def main():
     print(f"t_sim   : {t_sim:.1f} [ωpe⁻¹]")
     print(f"x_shock : {x_shock:.1f} [c/ωpe]")
 
-    ion_rqm = sim.rqm
-    species_rqm = {sp: (-1.0 if sp == "e" else ion_rqm) for sp in species_list}
+    species_rqm = {sp: sim.rqm_of(sp) for sp in species_list}  # per-species rqm from deck
 
     # Sum energy profiles over all species
     u_ram_total = np.zeros(x_pha.size)
@@ -150,16 +126,9 @@ def main():
               f"{dn[k]:>18.3e} {100*dn[k]/total_dn:>6.1f}%")
 
     # Output path
-    if args.output is None:
-        run_name = os.path.basename(sim_dir.rstrip("/"))
-        out_dir = os.path.join(_HERE, "..", "results", run_name)
-        os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"energy_partition_t{t_val:06d}.npz")
-    else:
-        out_dir = os.path.dirname(args.output)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        out_path = args.output
+    out_path = analysis_utils.default_output_path(
+        args.output, sim_dir, "energy_partition", t_val
+    )
 
     np.savez(
         out_path,

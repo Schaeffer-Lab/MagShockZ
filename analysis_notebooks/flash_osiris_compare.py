@@ -18,11 +18,8 @@
 #   directly from runme_perlmutter.sh in the OSIRIS sim directory — not duplicated here.
 
 # %%
-import os
-import re
 import sys
 import glob
-import shlex
 import warnings
 from pathlib import Path
 
@@ -32,7 +29,6 @@ import h5py
 import osh5io
 import astropy.units as u
 import astropy.constants as const
-import yaml
 import yt
 
 warnings.filterwarnings("ignore")
@@ -42,57 +38,24 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.append(str(REPO / "src"))
 sys.path.append(str(REPO / "init_nopython"))
 
-from analysis_utils import MagShockZRun
-from moments import moment
+from analysis_utils import MagShockZRun, load_config, load_runme, find_runme, input_deck_path, axis_values
+from temperature_anisotropy import temperature_profile
 from fitting_functions import Ray
 
 
 # %%
-# ---- Parse runme_perlmutter.sh for FLASH initialisation parameters ----
-
-def parse_runme(path: str) -> dict:
-    """Extract --key value pairs from a python-invocation shell script.
-
-    Handles backslash line continuations and strips comments. Multi-value
-    flags (e.g. --start_point 0 0.07 0) are returned as lists.
-    """
-    with open(path) as f:
-        text = f.read()
-    text = re.sub(r'#[^\n]*', '', text)   # strip comments
-    text = text.replace('\\\n', ' ')       # join continuation lines
-    tokens = shlex.split(text)
-
-    # Advance past the 'python' call and script path to the first flag
-    i = 0
-    while i < len(tokens) and not tokens[i].startswith('--'):
-        i += 1
-
-    args = {}
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok.startswith('--'):
-            key = tok[2:]
-            vals = []
-            j = i + 1
-            while j < len(tokens) and not tokens[j].startswith('--'):
-                vals.append(tokens[j])
-                j += 1
-            args[key] = vals[0] if len(vals) == 1 else vals
-            i = j
-        else:
-            i += 1
-    return args
-
-
-# %%
 # ---- Load config ----
+# Run parameters come from three sources, never duplicated:
+#   - config YAML : analysis-only quantities (si_charge_state, norm_density, ...)
+#   - runme*.sh   : experiment/init choices (al_charge_state, B0_Gauss, line of sight)
+#   - input deck  : intrinsic simulation parameters (species rqm, grid, ...)
 
 CFG_PATH = REPO / "config" / "perlmutter_1.3.1d.yaml"
-with open(CFG_PATH) as _f:
-    cfg = yaml.safe_load(_f)
+cfg = load_config(str(CFG_PATH))
 
-OSIRIS_DIR = Path(os.environ.get("MAGSHOCKZ_SIM_DIR", cfg["sim_dir"]))
-runme      = parse_runme(OSIRIS_DIR / "runme_perlmutter.sh")
+OSIRIS_DIR = Path(cfg["sim_dir"])
+runme      = load_runme(str(OSIRIS_DIR))
+RUNME_PATH = find_runme(str(OSIRIS_DIR))
 
 # FLASH location and IC dump come from --data_path in the runme
 _data_path    = Path(runme["data_path"])
@@ -106,6 +69,7 @@ RQM_FACTOR  = float(runme["rqm_factor"])
 B0_GAUSS    = float(runme["B0_Gauss"])   # last occurrence wins (listed twice in runme)
 AL_CHARGE   = int(runme["al_charge_state"])
 SI_CHARGE   = int(cfg["si_charge_state"])
+AL_MASS_NUM = 27   # aluminium mass number (amu); ion mass = AL_MASS_NUM * m_p
 
 REF_DENSITY = float(cfg["norm_density_cm3"]) * u.cm**-3
 B0          = B0_GAUSS * u.G
@@ -115,11 +79,11 @@ B0          = B0_GAUSS * u.G
 # ---- Derive unit-conversion quantities from MagShockZRun ----
 
 run = MagShockZRun(
-    input_deck=str(OSIRIS_DIR / cfg.get("input_deck", "magshockz_gpu.1d")),
+    input_deck=input_deck_path(cfg),
     norm_density=REF_DENSITY,
     B0=B0,
     Z=AL_CHARGE,
-    m_i=AL_CHARGE * const.m_p,
+    m_i=AL_MASS_NUM * const.m_p,
 )
 
 omega_pe = run.omega_pe
@@ -129,7 +93,7 @@ me_c2_eV = (const.m_e * const.c**2).to("eV").value
 RQM = {"e": 1.0}
 for sp in ("al", "si"):
     if sp in run.deck.species:
-        RQM[sp] = run.deck.species[sp].rqm
+        RQM[sp] = run.rqm_of(sp)
 
 Z_CHARGE = {"e": 1, "al": AL_CHARGE, "si": SI_CHARGE}
 
@@ -139,12 +103,12 @@ Z_CHARGE = {"e": 1, "al": AL_CHARGE, "si": SI_CHARGE}
 TEMP_MASS_FACTOR = {sp: RQM[sp] * Z_CHARGE[sp] for sp in RQM}
 
 print(f"Config          : {CFG_PATH}")
-print(f"Runme           : {OSIRIS_DIR / 'runme_perlmutter.sh'}")
+print(f"Runme           : {RUNME_PATH}")
 print(f"OSIRIS dir      : {OSIRIS_DIR}")
 print(f"FLASH dir       : {FLASH_DIR}")
 print(f"FLASH IC dump   : {FLASH_IC_DUMP}  ({FILE_PREFIX}{FLASH_IC_DUMP:04d})")
 print(f"Line of sight   : {LINE_START}  ->  {LINE_END}  [cm]")
-print(f"n0              : {cfg['norm_density_cm3']:.2e} cm⁻³")
+print(f"n0              : {float(cfg['norm_density_cm3']):.2e} cm⁻³")
 print(f"B0              : {B0}")
 print(f"rqm_factor      : {RQM_FACTOR}")
 print(f"omega_pe        : {omega_pe:.3e}")
@@ -222,28 +186,28 @@ def flash_lineout(dump_index: int) -> dict:
 # %%
 # ---- OSIRIS side: read normalised diagnostics ----
 
-def _x_axis(d):
-    return np.linspace(d.axes[0].min, d.axes[0].max, d.axes[0].size)
-
-
 def osiris_density(path: str):
     d = osh5io.read_h5(path)
-    return _x_axis(d), np.abs(np.asarray(d)), d.run_attrs["TIME"][0]
+    return axis_values(d, 0), np.abs(np.asarray(d)), d.run_attrs["TIME"][0]
 
 
 def osiris_bz(path: str):
     d = osh5io.read_h5(path)
-    return _x_axis(d), np.asarray(d), d.run_attrs["TIME"][0]
+    return axis_values(d, 0), np.asarray(d), d.run_attrs["TIME"][0]
 
 
 def osiris_temperature(species: str, path: str):
-    """Temperature [eV] from the 2nd velocity moment of a p1x1 phase space."""
+    """Temperature [eV] from the 2nd velocity moment of a p1x1 phase space.
+
+    ``temperature_profile(d, 1.0, "p1")`` returns the raw velocity variance
+    (|rqm|=1); the species mass-and-charge weighting and the m_e c^2 -> eV
+    conversion are applied here via TEMP_MASS_FACTOR.
+    """
     d = osh5io.read_h5(path)
-    variance = moment(d, order=2, axis="p1")
-    x = np.linspace(d.axes[1].min, d.axes[1].max, d.axes[1].size)
+    variance = np.asarray(temperature_profile(d, 1.0, "p1"))
     T = TEMP_MASS_FACTOR[species] * me_c2_eV * variance
     T[variance <= 0] = np.nan
-    return x, T, d.run_attrs["TIME"][0]
+    return axis_values(d, 1), T, d.run_attrs["TIME"][0]
 
 
 def osiris_state(target_wpe: float) -> dict:

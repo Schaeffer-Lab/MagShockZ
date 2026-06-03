@@ -9,6 +9,7 @@ All energy densities are in OSIRIS simulation units (n_0 m_e c^2).
 import numpy as np
 
 import moments
+from analysis_utils import region_masks
 
 
 def species_energy_profiles(
@@ -114,8 +115,7 @@ def partition_by_region(
     dict with keys "upstream" and "downstream", each a dict of channel ->
     mean energy density (simulation units).
     """
-    downstream = (x_axis >= x_downstream_start) & (x_axis <= x_shock)
-    upstream = x_axis > x_shock
+    upstream, downstream = region_masks(x_axis, x_shock, x_downstream_start)
 
     if not downstream.any() or not upstream.any():
         raise ValueError(

@@ -15,6 +15,7 @@ Directions:
 import numpy as np
 
 import moments
+from analysis_utils import region_masks
 
 
 def temperature_profile(
@@ -56,6 +57,5 @@ def region_averages(
     x_downstream_start: float,
 ) -> tuple[float, float]:
     """Return (upstream_mean, downstream_mean) of arr across the shock."""
-    downstream = (x_axis >= x_downstream_start) & (x_axis <= x_shock)
-    upstream = x_axis > x_shock
+    upstream, downstream = region_masks(x_axis, x_shock, x_downstream_start)
     return float(np.nanmean(arr[upstream])), float(np.nanmean(arr[downstream]))

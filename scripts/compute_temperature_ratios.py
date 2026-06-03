@@ -19,27 +19,13 @@ import sys
 
 import numpy as np
 import osh5io
-import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+from analysis_utils import axis_values
 import temperature_anisotropy as ta
-
-
-def load_config(path: str) -> dict:
-    with open(path) as f:
-        cfg = yaml.safe_load(f)
-    cfg["sim_dir"] = os.environ.get("MAGSHOCKZ_SIM_DIR", cfg["sim_dir"])
-    if "times" in cfg:
-        cfg["times"] = analysis_utils.parse_times(cfg["times"])
-    return cfg
-
-
-def spatial_axis(h5data, ax_idx: int) -> np.ndarray:
-    ax = h5data.axes[ax_idx]
-    return np.linspace(ax.min, ax.max, ax.size)
 
 
 def main():
@@ -55,7 +41,7 @@ def main():
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]
     t_val = cfg["times"][args.timestep_idx]
 
@@ -63,25 +49,20 @@ def main():
     print(f"sim_dir : {sim_dir}")
     print(f"Dump    : t={t_val}  (index {args.timestep_idx} of {len(cfg['times'])} dumps)")
 
-    import astropy.units
-    norm_density = float(cfg["norm_density_cm3"]) * astropy.units.cm**-3
-    sim = analysis_utils.MagShockZRun(
-        os.path.join(sim_dir, cfg.get("input_deck", "magshockz_gpu.1d")),
-        norm_density=norm_density,
-    )
-    species_rqm = {"al": sim.rqm, "e": -1.0}
+    sim = analysis_utils.run_from_config(cfg)
+    species_rqm = {sp: sim.rqm_of(sp) for sp in ["al", "e"]}  # per-species rqm from deck
 
     print("Loading HDF5 files...")
     pha_p1 = {
-        sp: osh5io.read_h5(f"{sim_dir}/MS/PHA/p1x1/{sp}/p1x1-{sp}-{t_val:06d}.h5")
+        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p1x1", sp, t_val))
         for sp in ["al", "e"]
     }
     pha_p2 = {
-        sp: osh5io.read_h5(f"{sim_dir}/MS/PHA/p2x1/{sp}/p2x1-{sp}-{t_val:06d}.h5")
+        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p2x1", sp, t_val))
         for sp in ["al", "e"]
     }
 
-    x_axis = spatial_axis(pha_p1["al"], ax_idx=1)
+    x_axis = axis_values(pha_p1["al"], ax_idx=1)
     t_sim = float(pha_p1["al"].run_attrs["TIME"][0])
     dump = analysis_utils.resolve_dump_params(cfg, t_val, t_sim)
     x_shock = dump["x_shock"]
@@ -135,16 +116,9 @@ def main():
         print(f"  {label}: upstream={up:.3f}  downstream={dn:.3f}")
 
     # Output path
-    if args.output is None:
-        run_name = os.path.basename(sim_dir.rstrip("/"))
-        out_dir = os.path.join(_HERE, "..", "results", run_name)
-        os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"temperature_ratios_t{t_val:06d}.npz")
-    else:
-        out_dir = os.path.dirname(args.output)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        out_path = args.output
+    out_path = analysis_utils.default_output_path(
+        args.output, sim_dir, "temperature_ratios", t_val
+    )
 
     # Flatten region averages for savez (one scalar per key+region)
     save_dict = {
