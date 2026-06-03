@@ -34,14 +34,38 @@ def _xlim(r):
     return r["x_downstream_start"], r["x_shock"] + 150
 
 
+def _roi_mask(r):
+    x = r["x_axis"]
+    xlo, xhi = _xlim(r)
+    return (x >= xlo) & (x <= xhi)
+
+
+def _set_semilogy_ylim(ax, arrs, mask, pad=3.0):
+    vals = np.concatenate([a[mask] for a in arrs])
+    vals = vals[np.isfinite(vals) & (vals > 0)]
+    if vals.size:
+        ax.set_ylim(vals.min() / pad, vals.max() * pad)
+
+
+def _set_linear_ylim(ax, arrs, mask, pad=0.15):
+    vals = np.concatenate([a[mask] for a in arrs])
+    vals = vals[np.isfinite(vals)]
+    if vals.size:
+        lo, hi = vals.min(), vals.max()
+        margin = pad * (hi - lo) if hi > lo else abs(lo) * pad + 0.1
+        ax.set_ylim(lo - margin, hi + margin)
+
+
 def plot_T_parallel(r, ax):
     x = r["x_axis"]
+    mask = _roi_mask(r)
     ax.semilogy(x, r["T_par_e"], label="electrons", color="tab:blue")
     ax.semilogy(x, r["T_par_al"], label="Al ions", color="tab:orange")
     _region_spans(ax, r)
     ax.set_xlim(*_xlim(r))
+    _set_semilogy_ylim(ax, [r["T_par_e"], r["T_par_al"]], mask)
     ax.set_xlabel("x [c/ωpe]")
-    ax.set_ylabel("T [eV]")
+    ax.set_ylabel(r"T [$m_e c^2$]")
     ax.set_title(r"$T_\parallel$ (along shock normal, p1)")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3, which="both")
@@ -49,12 +73,14 @@ def plot_T_parallel(r, ax):
 
 def plot_T_perp(r, ax):
     x = r["x_axis"]
+    mask = _roi_mask(r)
     ax.semilogy(x, r["T_perp_e"], label="electrons", color="tab:blue")
     ax.semilogy(x, r["T_perp_al"], label="Al ions", color="tab:orange")
     _region_spans(ax, r)
     ax.set_xlim(*_xlim(r))
+    _set_semilogy_ylim(ax, [r["T_perp_e"], r["T_perp_al"]], mask)
     ax.set_xlabel("x [c/ωpe]")
-    ax.set_ylabel("T [eV]")
+    ax.set_ylabel(r"T [$m_e c^2$]")
     ax.set_title(r"$T_\perp$ (transverse, p2)")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3, which="both")
@@ -62,6 +88,7 @@ def plot_T_perp(r, ax):
 
 def plot_Te_Tal_ratio(r, ax):
     x = r["x_axis"]
+    mask = _roi_mask(r)
     ax.semilogy(x, r["T_e_al_par"], label=r"$T_{\parallel,e}/T_{\parallel,\mathrm{Al}}$",
                 color="tab:purple")
     ax.semilogy(x, r["T_e_al_perp"], label=r"$T_{\perp,e}/T_{\perp,\mathrm{Al}}$",
@@ -69,6 +96,7 @@ def plot_Te_Tal_ratio(r, ax):
     ax.axhline(1, color="k", ls=":", lw=0.8)
     _region_spans(ax, r)
     ax.set_xlim(*_xlim(r))
+    _set_semilogy_ylim(ax, [r["T_e_al_par"], r["T_e_al_perp"]], mask)
     ax.set_xlabel("x [c/ωpe]")
     ax.set_ylabel(r"$T_e / T_\mathrm{Al}$")
     ax.set_title(r"Electron-to-ion temperature ratio")
@@ -78,10 +106,12 @@ def plot_Te_Tal_ratio(r, ax):
 
 def plot_anisotropy_e(r, ax):
     x = r["x_axis"]
+    mask = _roi_mask(r)
     ax.plot(x, r["anis_e"], color="tab:blue")
     ax.axhline(1, color="k", ls=":", lw=0.8)
     _region_spans(ax, r)
     ax.set_xlim(*_xlim(r))
+    _set_linear_ylim(ax, [r["anis_e"]], mask)
     ax.set_xlabel("x [c/ωpe]")
     ax.set_ylabel(r"$T_\parallel / T_\perp$")
     ax.set_title(r"Electron anisotropy $T_\parallel/T_\perp$")
@@ -90,10 +120,12 @@ def plot_anisotropy_e(r, ax):
 
 def plot_anisotropy_al(r, ax):
     x = r["x_axis"]
+    mask = _roi_mask(r)
     ax.plot(x, r["anis_al"], color="tab:orange")
     ax.axhline(1, color="k", ls=":", lw=0.8)
     _region_spans(ax, r)
     ax.set_xlim(*_xlim(r))
+    _set_linear_ylim(ax, [r["anis_al"]], mask)
     ax.set_xlabel("x [c/ωpe]")
     ax.set_ylabel(r"$T_\parallel / T_\perp$")
     ax.set_title(r"Al ion anisotropy $T_\parallel/T_\perp$")

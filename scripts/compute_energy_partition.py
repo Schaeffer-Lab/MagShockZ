@@ -16,8 +16,6 @@ import argparse
 import os
 import sys
 
-import astropy.constants
-import astropy.units
 import numpy as np
 import osh5io
 import yaml
@@ -67,10 +65,6 @@ def main():
     t_idx = args.timestep_idx
     t_val = times[t_idx]
 
-    shock_cfg = cfg["shock"]
-    v_shock = shock_cfg["v_shock"]
-    x_shock_0 = shock_cfg["x_shock_0"]
-    x_downstream_start = shock_cfg["x_downstream_start"]
     field_mode = cfg.get("field_mode", "full")
     species_list = cfg.get("species", ["al", "e", "si"])
 
@@ -78,6 +72,7 @@ def main():
     print(f"sim_dir : {sim_dir}")
     print(f"Dump    : t={t_val}  (index {t_idx} of {len(times)} dumps)")
 
+    import astropy.units
     norm_density = float(cfg["norm_density_cm3"]) * astropy.units.cm**-3
     sim = analysis_utils.MagShockZRun(
         os.path.join(sim_dir, cfg.get("input_deck", "magshockz_gpu.1d")),
@@ -104,24 +99,23 @@ def main():
     x_field = spatial_axis(fld["b1"], ax_idx=0)
 
     t_sim = float(pha[species_list[0]].run_attrs["TIME"][0])
-    x_shock = x_shock_0 + v_shock * t_sim
+    dump = analysis_utils.resolve_dump_params(cfg, t_val, t_sim)
+    v_shock = dump["v_shock"]
+    x_shock = dump["x_shock"]
+    x_downstream_start = dump["x_downstream_start"]
 
     print(f"t_sim   : {t_sim:.1f} [ωpe⁻¹]")
     print(f"x_shock : {x_shock:.1f} [c/ωpe]")
 
-    norm = ep.field_normalization(sim.omega_pe)
-    n0_si = sim.norm_density.to(astropy.units.m**-3)
-    m_e = astropy.constants.m_e
-    m_ion = abs(sim.rqm) * m_e
-
-    species_mass = {sp: (m_e if sp == "e" else m_ion) for sp in species_list}
+    ion_rqm = sim.rqm
+    species_rqm = {sp: (-1.0 if sp == "e" else ion_rqm) for sp in species_list}
 
     # Sum energy profiles over all species
     u_ram_total = np.zeros(x_pha.size)
     u_th_total = np.zeros(x_pha.size)
     for sp in species_list:
         u_ram_sp, u_th_sp = ep.species_energy_profiles(
-            pha[sp], species_mass[sp], v_shock, n0_si
+            pha[sp], species_rqm[sp], v_shock
         )
         u_ram_total += u_ram_sp
         u_th_total += u_th_sp
@@ -129,7 +123,7 @@ def main():
     b_arrs = [np.asarray(fld[f"b{i}"]) for i in range(1, 4)]
     e_arrs = [np.asarray(fld[f"e{i}"]) for i in range(1, 4)]
     u_B_fld, u_E_fld = ep.field_energy_profiles(
-        *b_arrs, *e_arrs, norm, x_field, x_shock, field_mode=field_mode
+        *b_arrs, *e_arrs, x_field, x_shock, field_mode=field_mode
     )
 
     # Interpolate field profiles onto phase-space grid for consistent masks
@@ -146,8 +140,8 @@ def main():
     total_up = sum(up.values())
     total_dn = sum(dn.values())
     print("\n--- Energy partition ---")
-    print(f"{'Channel':<12} {'Upstream [J/m³]':>18} {'(%)':>7}  "
-          f"{'Downstream [J/m³]':>18} {'(%)':>7}")
+    print(f"{'Channel':<12} {'Upstream [sim]':>18} {'(%)':>7}  "
+          f"{'Downstream [sim]':>18} {'(%)':>7}")
     for k in ("ram", "thermal", "B_field", "E_field"):
         label = k.replace("_", " ").capitalize()
         print(f"{label:<12} {up[k]:>18.3e} {100*up[k]/total_up:>6.1f}%  "

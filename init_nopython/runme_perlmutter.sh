@@ -2,7 +2,7 @@ conda activate osiris2
 python simplified_magshockz.py \
 --data_path /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009 \
 --dim 1 \
---node_number 16 \
+--node_number 32 \
 --num_threads 2 \
 --rqm_factor 100 \
 --start_point 0 0.07 0 \
@@ -27,11 +27,11 @@ python simplified_magshockz.py \
 --e_ps_pmin -1 -1 -0.5 \
 --e_ps_pmax 1 1 0.5 \
 --rep_udist ufl1 ufl2 uth1 uth2 \
---phasespaces p1x1 p2x1 \
+--phasespaces p1x1 p3x1 \
 --tmax 10 \
 --B0_Gauss 100000 \
 --al_charge_state 13 \
 --inputfile_name magshockz_gpu.1d \
---piecewise_degree 10 \
+--piecewise_degree 13 \
 --n_ave 50 \
 --restart True \

@@ -93,7 +93,7 @@ class MagShockZRun:
 
     @property
     def rqm(self):
-        """Ion |q/m| ratio relative to the electron (from input deck)."""
+        """Ion rqm = m/q (mass-per-charge) relative to the electron (from input deck)."""
         for species_name in ("al", "aluminum", "si", "silicon", "ion"):
             if species_name in self.deck.species:
                 return self.deck.species[species_name].rqm
@@ -196,6 +196,52 @@ class MagShockZRun:
         ).to(astropy.units.Gauss)
         return (B / B_unit).to(astropy.units.dimensionless_unscaled)
 
+
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
+
+def resolve_dump_params(cfg: dict, t_val: int, t_sim: float) -> dict:
+    """Return the resolved shock parameters for a specific dump.
+
+    Global values from cfg["shock"] are used as the base; per-dump entries in
+    cfg["dump_params"][t_val] are merged on top.  x_shock defaults to the
+    formula x_shock_0 + v_shock * t_sim unless overridden in dump_params.
+    x_downstream_start has no global default and must be present in dump_params.
+
+    Parameters
+    ----------
+    cfg : dict
+        Parsed YAML config.
+    t_val : int
+        Dump file suffix (key into dump_params).
+    t_sim : float
+        Simulation time read from HDF5 run_attrs, used for the x_shock formula.
+
+    Raises
+    ------
+    KeyError
+        If dump_params has no entry for t_val, or if x_downstream_start is
+        missing from that entry.
+    """
+    shock = cfg["shock"]
+    per_dump = cfg.get("dump_params", {}).get(t_val)
+    if per_dump is None:
+        raise KeyError(
+            f"No dump_params entry for t_val={t_val}. "
+            f"Add it to the config with at least x_downstream_start."
+        )
+    if "x_downstream_start" not in per_dump:
+        raise KeyError(
+            f"dump_params[{t_val}] is missing required key 'x_downstream_start'."
+        )
+    params = {
+        "v_shock": shock["v_shock"],
+        "x_shock_0": shock["x_shock_0"],
+        "x_shock": shock["x_shock_0"] + shock["v_shock"] * t_sim,
+    }
+    params.update(per_dump)
+    return params
 
 
 # ---------------------------------------------------------------------------

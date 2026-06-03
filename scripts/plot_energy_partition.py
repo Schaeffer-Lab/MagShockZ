@@ -29,16 +29,18 @@ def plot_profiles(r: dict, ax: plt.Axes) -> None:
     x_shock = r["x_shock"]
     x_ds = r["x_downstream_start"]
 
-    ax.plot(x, r["u_ram"], label="Ram")
-    ax.plot(x, r["u_th"], label="Thermal")
-    ax.plot(x, r["u_B"], label=f"B field ({r['field_mode']})")
-    ax.plot(x, r["u_E"], label="E field")
+    u_total = r["u_ram"] + r["u_th"] + r["u_B"] + r["u_E"]
+    ax.semilogy(x, r["u_ram"], label="Ram")
+    ax.semilogy(x, r["u_th"], label="Thermal")
+    ax.semilogy(x, r["u_B"], label=f"B field ({r['field_mode']})")
+    ax.semilogy(x, r["u_E"], label="E field")
+    ax.semilogy(x, u_total, color="k", ls="--", lw=1.5, label="Total")
     ax.axvline(x_ds, color="gray", ls="--", lw=1, label=f"downstream start {x_ds:.0f}")
     ax.axvline(x_shock, color="k", ls="--", lw=1, label=f"shock {x_shock:.1f}")
     ax.axvspan(x.min(), x_ds, color="gray", alpha=0.12, label="piston")
 
     ax.set_xlabel("x [c/ωpe]")
-    ax.set_ylabel("Energy density [J m⁻³]")
+    ax.set_ylabel("Energy density [n₀ mₑ c²]")
     ax.set_title(f"Energy density profiles, t={r['t_val']}")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
@@ -46,7 +48,7 @@ def plot_profiles(r: dict, ax: plt.Axes) -> None:
 
     downstream = (x >= x_ds) & (x <= x_shock)
     if downstream.any():
-        ax.set_ylim(0, np.nanmax(r["u_ram"][downstream]) * 1.2)
+        ax.set_ylim(0, np.nanmax(u_total[downstream]) * 1.2)
 
 
 def plot_partition_bars(r: dict, ax: plt.Axes) -> None:
@@ -61,7 +63,7 @@ def plot_partition_bars(r: dict, ax: plt.Axes) -> None:
     ax.bar(x + w / 2, dn_vals, w, label="Downstream")
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
-    ax.set_ylabel("Mean energy density [J m⁻³]")
+    ax.set_ylabel("Mean energy density [n₀ mₑ c²]")
     ax.set_title(f"Energy partition ({r['field_mode']} B), t={r['t_val']}")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)

@@ -13,11 +13,33 @@ species: [al, e, si]
 
 # Dump indices to load (file suffix: p1x1-al-{t:06d}.h5).
 # NOT simulation time — extract run_attrs["TIME"] from HDF5 for physical time.
-times: [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+times: range(0, 361, 20)  # 0, 20, 40, ..., 360
 
 shock:
-  v_shock: 0.039        # shock velocity in c, from streak-plot linear fit
+  v_shock: 0.0375       # shock velocity in c, from streak-plot linear fit
   x_shock_0: 750.0      # shock position at t_sim=0 [c/ωpe]
-  x_downstream_start: 960.0  # left edge of downstream region [c/ωpe]
+
+# Per-dump manually inspected values, keyed by t_val (dump file suffix).
+# Both fields are required for any dump you intend to analyse.
+#   x_downstream_start : left edge of the downstream region [c/ωpe]
+#   x_shock            : if set, overrides the formula x_shock_0 + v_shock * t_sim
+dump_params:
+  360:
+    x_downstream_start: 1100.0
 
 field_mode: full  # "full": total B²; "delta": subtract upstream mean B first
+
+# Ion charge state (number of stripped electrons).  Al^13+ -> 13.
+# Used by compute_dimensionless_params.py to separate Z_i from |rqm_i|.
+al_charge_state: 13
+
+# Si charge state for FLASH/OSIRIS temperature comparison.
+# Al charge state and all other FLASH init params are read from runme_perlmutter.sh.
+si_charge_state: 14
+
+# Averaging windows for compute_dimensionless_params.py.
+# Both values are in units of grid cells, measured from x_shock:
+#   upstream   : (x_shock,            x_shock + upstream_window_ncells * dx]
+#   downstream : [x_shock - downstream_window_ncells * dx,  x_shock)
+upstream_window_ncells: 200
+downstream_window_ncells: 200

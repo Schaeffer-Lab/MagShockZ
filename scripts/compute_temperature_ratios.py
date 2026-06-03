@@ -17,8 +17,6 @@ import argparse
 import os
 import sys
 
-import astropy.constants
-import astropy.units
 import numpy as np
 import osh5io
 import yaml
@@ -58,22 +56,18 @@ def main():
     cfg = load_config(args.config)
     sim_dir = cfg["sim_dir"]
     t_val = cfg["times"][args.timestep_idx]
-    v_shock = cfg["shock"]["v_shock"]
-    x_shock_0 = cfg["shock"]["x_shock_0"]
-    x_downstream_start = cfg["shock"]["x_downstream_start"]
 
     print(f"Config  : {args.config}")
     print(f"sim_dir : {sim_dir}")
     print(f"Dump    : t={t_val}  (index {args.timestep_idx} of {len(cfg['times'])} dumps)")
 
+    import astropy.units
     norm_density = float(cfg["norm_density_cm3"]) * astropy.units.cm**-3
     sim = analysis_utils.MagShockZRun(
         os.path.join(sim_dir, cfg.get("input_deck", "magshockz_gpu.1d")),
         norm_density=norm_density,
     )
-    m_e = astropy.constants.m_e
-    m_ion = abs(sim.rqm) * m_e
-    masses = {"al": m_ion, "e": m_e}
+    species_rqm = {"al": sim.rqm, "e": -1.0}
 
     print("Loading HDF5 files...")
     pha_p1 = {
@@ -87,14 +81,16 @@ def main():
 
     x_axis = spatial_axis(pha_p1["al"], ax_idx=1)
     t_sim = float(pha_p1["al"].run_attrs["TIME"][0])
-    x_shock = x_shock_0 + v_shock * t_sim
+    dump = analysis_utils.resolve_dump_params(cfg, t_val, t_sim)
+    x_shock = dump["x_shock"]
+    x_downstream_start = dump["x_downstream_start"]
 
     print(f"t_sim   : {t_sim:.1f} [ωpe⁻¹]")
     print(f"x_shock : {x_shock:.1f} [c/ωpe]")
 
-    # Temperature profiles in eV
-    T_par = {sp: ta.temperature_profile(pha_p1[sp], masses[sp], "p1") for sp in ["al", "e"]}
-    T_perp = {sp: ta.temperature_profile(pha_p2[sp], masses[sp], "p2") for sp in ["al", "e"]}
+    # Temperature profiles in simulation units (m_e c^2)
+    T_par = {sp: ta.temperature_profile(pha_p1[sp], species_rqm[sp], "p1") for sp in ["al", "e"]}
+    T_perp = {sp: ta.temperature_profile(pha_p2[sp], species_rqm[sp], "p2") for sp in ["al", "e"]}
 
     # Ratios
     T_e_al_par = ta.safe_ratio(T_par["e"], T_par["al"])
@@ -118,7 +114,7 @@ def main():
     }
 
     # Print summary table
-    print("\n--- Temperature summary [eV] ---")
+    print("\n--- Temperature summary [m_e c^2] ---")
     header = f"{'':12s} {'T_par up':>10} {'T_par dn':>10} {'T_perp up':>10} {'T_perp dn':>10}"
     print(header)
     for sp in ["e", "al"]:
