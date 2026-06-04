@@ -1,6 +1,6 @@
-from logging import config
-import numpy as np
+import argparse
 import logging
+import sys
 from pathlib import Path
 from typing import Dict, List
 
@@ -11,7 +11,7 @@ from jinja2 import Environment, FileSystemLoader
 
 yt.enable_plugins()
 
-logging.basicConfig(level=logging.INFO, 
+logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -28,48 +28,28 @@ class FLASH_OSIRIS_Base:
                  xmax: float,
                  ymin: float,
                  ymax: float,
-                 theta: float = None,
-                 distance: float = None,
-                 rqm_normalization_factor: int = 10,
-                 species_rqms: Dict[str, int] = {"al": 7257, "si": 3899}, # Defaults for MagShockZ
-                 tmax_gyroperiods: int = 10,
-                 algorithm: str = "cpu",
+                 rqm_normalization_factor: float,
+                 tmax_gyroperiods: float,
+                 algorithm: str,
+                 deck_options: Dict,
+                 theta: float = None,        # 1D only (set by FLASH_OSIRIS_1D)
+                 distance: float = None,     # 1D only (set by FLASH_OSIRIS_1D)
                  normalizations_override: Dict[str, float] = {}):
-
-        if algorithm not in ["cpu", "cuda", "tiles"]:
-            raise ValueError("algorithm must be either 'cpu', 'cuda', or 'tiles'")
-        
-        if not isinstance(ppc, int) or ppc <= 0:
-            raise ValueError("ppc must be a positive integer")
-        
-        if not isinstance(dx, (int, float)) or dx <= 0:
-            raise ValueError("dx must be a positive number")
-        
-        if not isinstance(rqm_normalization_factor, (int, float)) or rqm_normalization_factor <= 0:
-            raise ValueError("rqm_normalization_factor must be a positive number")
-        
-        if not isinstance(tmax_gyroperiods, (int, float)) or tmax_gyroperiods <= 0:
-            raise ValueError("tmax_gyroperiods must be a positive number")
-
-        if not isinstance(reference_density_cc, (int, float)):
-            raise TypeError("reference_density must be a number")
-
-        if not path_to_FLASH_data.exists():
-            raise FileNotFoundError(f"FLASH data file not found: {path_to_FLASH_data}")
-        
-        if osiris_dims not in [1, 2]:
-            raise ValueError("osiris_dims must be either 1 or 2")
- 
+        # No validation here: this interface is driven only from the terminal, so
+        # argument types/choices/required-ness are enforced once by argparse, plus a
+        # couple of checks in main() (file existence, dim-specific geometry).
 
         self.osiris_dims = osiris_dims
         self.FLASH_data = Path(path_to_FLASH_data)
         self.inputfile_name = OSIRIS_inputfile_name + f".{self.osiris_dims}d"
         self.n0 = reference_density_cc * yt.units.cm**-3
         self.ppc = ppc
-        self.interpolation = 'cubic'
-        self.dx = dx 
+        self.deck = deck_options          # complete dict built from the CLI (no defaults)
+        self.interpolation = self.deck['interpolation']
+        self.dx = dx
         self.rqm_factor = rqm_normalization_factor
-        self.species_rqms = species_rqms
+        # species_rqms is derived from FLASH (mean 1836/ye over each species' mask,
+        # restricted to the OSIRIS domain) once the covering grid + coords exist.
         self.tmax_gyroperiods = tmax_gyroperiods
         self.algorithm = algorithm
         self.dt = self.dx * 0.95 / np.sqrt(self.osiris_dims) # CFL condition
@@ -114,6 +94,12 @@ class FLASH_OSIRIS_Base:
         logger.info(f"x bounds: {np.round(self.x[[0, -1]], 2)} c/w_pe")
         logger.info(f"y bounds: {np.round(self.y[[0, -1]], 2)} c/w_pe")
         logger.info(f"z bounds: {np.round(self.z[[0, -1]], 2)} c/w_pe")
+
+        # Per-species OSIRIS rqm (mass-per-charge) straight from FLASH: rqm = 1836/ye,
+        # averaged over the OSIRIS domain (the lineout for 1D / the box for 2D) within
+        # each species' mask. No charge state is specified by the user.
+        self.species_rqms = self._compute_species_rqms()
+        logger.info(f"FLASH-derived species rqms (mean 1836/ye over domain): {self.species_rqms}")
 
 
         debye_osiris = np.sqrt(
@@ -173,7 +159,9 @@ class FLASH_OSIRIS_Base:
         # print(f"Normalizations: {self.normalizations}")
         n_species = 3
         if self.osiris_dims == 1:
-            n_particles = (self.xmax-self.xmin) / self.dx  * n_species * self.ppc
+            # 1D domain length is the lineout distance (xmax-xmin is ~0 for a
+            # theta=pi/2 lineout).
+            n_particles = self.distance / self.dx  * n_species * self.ppc
         elif self.osiris_dims == 2:
             n_particles = (self.xmax-self.xmin) * (self.ymax - self.ymin) / self.dx**2  * n_species * self.ppc**2
         n_bytes_particles = n_particles* 2 * 70 # maria says ~70 bytes per particle. I don't know if this is single or double precision, we also need to allocate for twice as many particles
@@ -185,9 +173,45 @@ class FLASH_OSIRIS_Base:
         logger.info(f"Recommended number of GPUs: {np.ceil(n_bytes_particles/max_bytes_per_GPU)}")
         logger.info(f"Recommended number of nodes: {np.ceil(n_bytes_particles/max_bytes_per_GPU/4)}")
 
- 
+        # __init__ materialized several covering-grid fields (x/y/z, tele, ye, magz);
+        # coordinate arrays are already copied out, so drop the cache before slicing.
+        self.all_data.clear_data()
 
-    
+
+    def _compute_species_rqms(self):
+        """Per-species OSIRIS rqm (mass-per-charge) straight from FLASH: rqm = 1836/ye,
+        averaged over the OSIRIS domain (lineout for 1D, box for 2D) within each
+        species' mask. al -> species_mask 1, si -> 2 (MagShockZ plugin convention)."""
+        from scipy.interpolate import RegularGridInterpolator
+        mid = self.dims[2] // 2
+        if self.osiris_dims == 1:
+            pts = np.column_stack([np.linspace(self.xmin, self.xmax, 4000),
+                                   np.linspace(self.ymin, self.ymax, 4000)])
+        else:
+            gx, gy = np.meshgrid(np.linspace(self.xmin, self.xmax, 128),
+                                 np.linspace(self.ymin, self.ymax, 128))
+            pts = np.column_stack([gx.ravel(), gy.ravel()])
+
+        ye = np.asarray(self.all_data['flash', 'ye'][:, :, mid])
+        self.all_data.clear_data()
+        mask = np.asarray(self.all_data['flash', 'species_mask'][:, :, mid])
+        self.all_data.clear_data()
+        ye_line = RegularGridInterpolator((self.x, self.y), ye, bounds_error=True)(pts)
+        mask_line = RegularGridInterpolator((self.x, self.y), mask,
+                                            method='nearest', bounds_error=True)(pts)
+        rqm_line = PROTON_ELECTRON_MASS_RATIO / ye_line
+
+        rqms = {}
+        for name, mval in (('al', 1), ('si', 2)):
+            sel = np.round(mask_line) == mval
+            if sel.any():
+                rqms[name] = float(np.mean(rqm_line[sel]))
+            else:
+                rqms[name] = float(np.mean(rqm_line))  # species absent in domain
+                logger.warning(f"Species '{name}' (mask {mval}) absent in the OSIRIS "
+                               f"domain; using domain-mean rqm {rqms[name]:.1f} as placeholder.")
+        return rqms
+
     def save_slices(self, normal_axis="z"):
         """
         Process and save field data slices for OSIRIS.
@@ -221,21 +245,23 @@ class FLASH_OSIRIS_Base:
                 logger.info(f"{field} is normalized by additional factor of {np.format_float_scientific(self.normalizations_override[field],3)}")
             logger.info(f"Processing {field} with normalization {np.format_float_scientific(normalization, 3)}")
             self._save_field(field, normalization, middle_index, chunk_size, interp_dir)
-            
+            # The covering grid caches every field it materializes (~1 GB each at
+            # level 3). Drop the cache after each field so peak memory stays ~1 field
+            # instead of growing to ~N_fields GB (which trips the login-node limit).
+            self.all_data.clear_data()
+
     def _save_field(self, field, normalization, middle_index, chunk_size, interp_dir):
         """Save regular field data."""
         import pickle
         from scipy.interpolate import RegularGridInterpolator
-        
-        # Initialize field data array
-            
+
         field_data = np.zeros(self.all_data['flash', field][:, :, middle_index].shape)
-        
+
         # Process data in chunks to save memory
         for i in range(0, self.all_data['flash', field].shape[0], chunk_size):
             end = min(i + chunk_size, self.all_data['flash', field].shape[0])
-            field_data_chunk = self.all_data['flash', field][i:end, :, middle_index] / normalization
-            field_data[i:end, :] = field_data_chunk
+            chunk = self.all_data['flash', field][i:end, :, middle_index]
+            field_data[i:end, :] = chunk / normalization
 
         # Special handling for density fields
         if field.endswith('dens'):
@@ -279,15 +305,13 @@ class FLASH_OSIRIS_Base:
         
         species_list = self._prepare_species_list(thermal_bounds) # Type: List[Dictionary]
 
-        # preset params. Feel free to modify.
-        n_dump_total = 512
-        vpml_bnd_size = 100
+        d = self.deck  # tunable deck options (defaults merged + resolved in __init__)
 
         if self.osiris_dims == 1:
             num_par_max = int(self.ppc*nx/n_tiles_x/4) # Factor of 4 is random. Otherwise it's way too large idk
         else:
             num_par_max = int(nx*ny/(n_tiles_x*n_tiles_y)*self.ppc**2/4)
-        
+
         context = {
             'dims': self.osiris_dims,
             'inputfile_name': self.inputfile_name,
@@ -302,23 +326,37 @@ class FLASH_OSIRIS_Base:
             'ppc': self.ppc,
             'num_par_max': num_par_max,
             'dt': np.format_float_scientific(self.dt, 4),
-            'ndump': int(self.tmax / (n_dump_total * self.dt)),
+            'ndump': int(self.tmax / (d['n_dump_total'] * self.dt)),
             'tmax': self.tmax,
             'tile_numbers': [n_tiles_x, n_tiles_y],
             'num_species': len(self.species_rqms) + 1,
             'species_list': species_list,
-            'vpml_bnd_size': vpml_bnd_size,
-            'e_ps_pmin': [-1, -1, -0.5],
-            'e_ps_pmax': [1, 1, 0.5],
-            'i_ps_pmin': [-0.1, -0.1, -0.05],
-            'i_ps_pmax': [0.1, 0.1, 0.05],
-            'ps_np': [6000, 6000, 64],
-            'ps_ngamma': 128,
-            'ps_gammamax': 3.0,
-            'ps_nx': 16,
-            'ps_ny': 512,
-            'smooth_type': 'binomial',
-            'smooth_order': 2,
+            # parallel / node configuration
+            'node_number': d['node_number'],
+            'num_threads': d['num_threads'],
+            # restart
+            'if_restart': '.true.' if d['restart'] else '.false.',
+            # field solver / boundaries
+            'vpml_bnd_size': d['vpml_bnd_size'],
+            'emf_boundary': d['emf_boundary'],
+            'part_boundary': d['part_boundary'],
+            'smooth_type': d['smooth_type'],
+            'smooth_order': d['smooth_order'],
+            # diagnostics
+            'n_ave': d['n_ave'],
+            'emf_reports': d['emf_reports'],
+            'reports': d['reports'],
+            'rep_udist': d['rep_udist'],
+            'phasespaces': d['phasespaces'],
+            'e_ps_pmin': d['e_ps_pmin'],
+            'e_ps_pmax': d['e_ps_pmax'],
+            'i_ps_pmin': d['i_ps_pmin'],
+            'i_ps_pmax': d['i_ps_pmax'],
+            'ps_np': d['ps_np'],
+            'ps_ngamma': d['ps_ngamma'],
+            'ps_gammamax': d['ps_gammamax'],
+            'ps_nx': d['ps_nx'],
+            'ps_ny': d['ps_ny'],
         }
 
         # Load and render template
@@ -357,13 +395,17 @@ class FLASH_OSIRIS_Base:
         max_tile_size = int((shmemsize/(2*3*precision))**(1/self.osiris_dims) - (2 * interp - 1))
         print("Max tile size per dimension: ", max_tile_size)
         if self.osiris_dims == 1:
+            # 1D domain length is the lineout distance (xmax-xmin is ~0 for a
+            # theta=pi/2 lineout). n_tiles_y is unused in 1D but returned for a
+            # consistent signature.
             i = 0
             n_tiles_x = 2**i
-            tile_size_x = (self.xmax - self.xmin) / self.dx / n_tiles_x
+            n_tiles_y = 1
+            tile_size_x = self.distance / self.dx / n_tiles_x
             while tile_size_x > max_tile_size:
                 i += 1
                 n_tiles_x = 2**i
-                tile_size_x = (self.xmax - self.xmin) / self.dx / n_tiles_x
+                tile_size_x = self.distance / self.dx / n_tiles_x
         if self.osiris_dims == 2:
             i, j = 0, 0
             n_tiles_x, n_tiles_y = 2**i, 2**j
@@ -397,11 +439,11 @@ class FLASH_OSIRIS_Base:
     
     def _get_species_config(self, species_name, thermal_bounds, is_electron=False):
         """Get configuration dictionary for a single species."""
+        # Phase-space momentum bounds come from the deck options (e_ps_*/i_ps_*),
+        # rendered at the template's diag_species level -- not per species here.
         config = {
             'name': species_name,
             'rqm': -1.0 if is_electron else int(self.species_rqms[species_name] / self.rqm_factor),
-            'ps_pmin': [-0.1, -0.1, -0.02] if is_electron else [-0.05, -0.05, -0.02],
-            'ps_pmax': [0.1, 0.1, 0.02] if is_electron else [0.05, 0.05, 0.02],
         }
         
         # Thermal velocity bounds (dimension-dependent)
@@ -541,6 +583,57 @@ class FLASH_OSIRIS_Base:
         
         logger.info(f"OSIRIS python initialization file written successfully")
     
+    def write_manifest(self, cli_args=None):
+        """
+        Write run_manifest.yaml into the output directory so a scratch directory is
+        self-describing even when the folder name is ambiguous. To avoid redundancy
+        with the runme, it records only provenance (git commit, UTC timestamp, the
+        exact CLI command) and quantities derived here that are NOT in the runme
+        (omega_pe, c/omega_pe, gyrotime, tmax, and the normalized-unit geometry).
+        """
+        import subprocess
+        import datetime
+        import yaml
+
+        try:
+            git_hash = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=str(self.proj_dir),
+                stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            git_hash = "unknown"
+
+        c_over_wpe_cm = float((yt.units.speed_of_light / self.omega_pe).to('cm').value)
+
+        # The runme/CLI command is the full record of *inputs*; the manifest stores
+        # only provenance plus quantities *derived* here (not present in the runme),
+        # to avoid duplicating values that already live in the runme.
+        manifest = {
+            "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "git_commit": git_hash,
+            "cli_command": cli_args,
+            "derived": {
+                "omega_pe_rad_s": float(self.omega_pe.to('1/s').value),
+                "c_over_wpe_cm": c_over_wpe_cm,
+                "c_over_wpe_um": c_over_wpe_cm * 1e4,
+                "gyrotime_wpe_inv": float(self.gyrotime),
+                "tmax_wpe_inv": float(self.tmax),
+                # 1D lineout endpoints are given in cm in the runme; record the
+                # normalized-unit geometry the deck actually uses.
+                "xmin": float(self.xmin), "xmax": float(self.xmax),
+                "ymin": float(self.ymin), "ymax": float(self.ymax),
+                "theta_rad": (None if self.theta is None else float(self.theta)),
+                "distance_c_over_wpe": (None if self.distance is None else float(self.distance)),
+            },
+        }
+
+        out_path = self.output_dir / "run_manifest.yaml"
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True)
+        with open(out_path, "w") as f:
+            yaml.safe_dump(manifest, f, default_flow_style=False, sort_keys=False)
+        logger.info(f"Run manifest written to {out_path}")
+        return out_path
+
     def plot1D(self, fields):
         import matplotlib.pyplot as plt
         from scipy.interpolate import RegularGridInterpolator
@@ -566,9 +659,12 @@ class FLASH_OSIRIS_Base:
             # Create figure with two subplots side by side
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-            # Left subplot: 2D plane with lineout
+            # Left subplot: 2D plane with lineout.
+            # Density arrays are stored (nx, ny); transpose to (ny, nx) so imshow's
+            # (rows=y, cols=x) convention matches the extent. The non-density arrays
+            # come from meshgrid(self.x, self.y) and are already (ny, nx).
             if field.endswith('dens'):
-                im = ax1.imshow(np.log(data), origin='lower',
+                im = ax1.imshow(np.log(data).T, origin='lower',
                         extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
             else:
                 im = ax1.imshow(data, origin='lower',
@@ -597,6 +693,225 @@ class FLASH_OSIRIS_Base:
             plt.tight_layout()
             plt.savefig(f'{self.output_dir}/{field}_1D.png', dpi=150)
             plt.close()
+
+    def _sample_conservation(self, pts):
+        """Compute the FLASH (physical) and OSIRIS-init (normalized) dimensionless
+        conservation quantities at sample points pts (N x 2, in c/wpe). Returns
+        (flash, osiris) dicts keyed by quantity. Shared by the 1D (lineout) and 2D
+        (box-grid) diagnostics. FLASH side: physical covering-grid fields (formulas
+        from flash_utils.mach_numbers). OSIRIS side: the saved normalized interp
+        slices (formulas from scripts/compute_dimensionless_params.py). Requires
+        save_slices() to have run first."""
+        import pickle
+        from scipy.interpolate import RegularGridInterpolator
+
+        kB = 1.380649e-16        # erg/K
+        c_cgs = 2.99792458e10    # cm/s
+        mid = self.dims[2] // 2
+
+        def fl(field, unit=None, ftype='flash'):
+            sl = self.all_data[ftype, field][:, :, mid]
+            arr = np.asarray(sl if unit is None else sl.to(unit))
+            self.all_data.clear_data()  # cap covering-grid memory (one field at a time)
+            return RegularGridInterpolator((self.x, self.y), arr,
+                                           method='linear', bounds_error=True)(pts)
+
+        def osa(field):
+            if field.endswith('dens'):
+                data = np.load(self.output_dir / f'interp/{field}.npy')
+                return RegularGridInterpolator((self.x, self.y), data,
+                                               method='linear', bounds_error=True)(pts)
+            with open(self.output_dir / f'interp/{field}.pkl', "rb") as f:
+                return pickle.load(f)(pts)
+
+        # ---- FLASH physical (CGS) ----
+        B = np.sqrt(sum(fl(f, 'G')**2 for f in ('magx', 'magy', 'magz')))
+        rho = fl('dens', 'g/cm**3')
+        ne = fl('El_number_density', 'cm**-3', ftype='gas')
+        nion = fl('ion_number_density', 'cm**-3', ftype='gas')
+        Te = fl('tele', 'K'); Ti = fl('tion', 'K')
+        vmag = np.sqrt(sum(fl(f, 'cm/s')**2 for f in ('v_ix', 'v_iy', 'v_iz')))
+        vA_f = B / np.sqrt(4.0 * np.pi * rho)
+        PB_f = B**2 / (8.0 * np.pi)
+        flash = {
+            'pressure_ratio':    (ne * kB * Te) / (nion * kB * Ti),  # P_e/P_i
+            'mach_alfven':       vmag / vA_f,
+            'beta_e':            ne * kB * Te / PB_f,
+            'beta_i':            nion * kB * Ti / PB_f,
+            'magnetization':     (vA_f / c_cgs)**2,
+        }
+
+        # ---- OSIRIS-init normalized ----
+        # Everything in OSIRIS-normalized units: density in n0, velocity in c, B in
+        # B_norm = sqrt(4 pi n0 m_e c^2).  Hence the magnetic pressure B^2/8pi -> B2/2 and
+        # all pressures/energies are in n0 m_e c^2.  edens/aldens/sidens are CHARGE
+        # densities [n0 e]; species rqm = m_i/(Z m_e) (mass-per-charge), so rqm*charge
+        # density is the ion MASS density -- Z folds in implicitly via FLASH ye/sumy, so no
+        # explicit charge state is needed (only rqm_factor).
+        B2 = sum(osa(f)**2 for f in ('magx', 'magy', 'magz'))
+        edens_s = osa('edens'); aldens_s = osa('aldens'); sidens_s = osa('sidens')
+        rqm_al = self.species_rqms['al'] / self.rqm_factor
+        rqm_si = self.species_rqms['si'] / self.rqm_factor
+        rho_sim = rqm_al * aldens_s + rqm_si * sidens_s          # ion mass density [n0 m_e]
+        # vthal/vthsi use the FULL ion mass m_i = m_p/sumy (see my_plugins.py), so the ions
+        # are loaded at the real ion thermal speed and the ion pressure
+        #   P_i = rho_sim * vth_i^2 = n_i k T_ion   (physical, Z implicit)
+        # is conserved.  We therefore conserve the electron/ion PRESSURE ratio, not the
+        # per-particle T_e/T_i (which reads ~Z x: each macro-ion carries 1/Z of a real
+        # ion's thermal energy).  Magnetic pressure B^2/8pi -> B2/2 in these units.
+        P_e = edens_s * osa('vthele')**2                                    # [n0 m_e c^2]
+        P_i = rqm_al * aldens_s * osa('vthal')**2 + rqm_si * sidens_s * osa('vthsi')**2
+        PB  = B2 / 2.0                                                      # B^2/8pi
+        vmag_s = np.sqrt(sum(osa(f)**2 for f in ('v_ix', 'v_iy', 'v_iz')))
+        osiris = {
+            'pressure_ratio': P_e / P_i,
+            'mach_alfven':    vmag_s / np.sqrt(B2 / rho_sim),   # v_A = sqrt(sigma)
+            'beta_e':         P_e / PB,
+            'beta_i':         P_i / PB,
+            'magnetization':  B2 / rho_sim,
+        }
+        return flash, osiris
+
+    def _overlay_plot(self, fname, dist, flash_y, osiris_y, ylabel, title,
+                      flash_label, osiris_label, annotation=None, logy=False):
+        """Overlay a FLASH (physical) and OSIRIS-init (normalized) profile along the
+        lineout, with a relative-deviation panel below (temperature-ratio style)."""
+        import matplotlib.pyplot as plt
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rel_dev = np.where(flash_y != 0,
+                               np.abs(osiris_y - flash_y) / np.abs(flash_y), np.nan)
+        max_dev = np.nanmax(rel_dev)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True,
+                                       gridspec_kw={'height_ratios': [3, 1]})
+        ax1.plot(dist, flash_y, color='k', lw=2, label=flash_label)
+        ax1.plot(dist, osiris_y, color='r', lw=2, ls='--', label=osiris_label)
+        if logy:
+            ax1.set_yscale('log')
+        ax1.set_ylabel(ylabel)
+        ax1.set_title(title)
+        ax1.legend()
+        ax1.grid(True)
+        if annotation:
+            ax1.text(0.02, 0.97, annotation, transform=ax1.transAxes, va='top',
+                     bbox=dict(boxstyle='round', fc='w', alpha=0.85))
+        ax2.plot(dist, rel_dev, color='b', lw=1.5)
+        ax2.set_xlabel(r'Distance along lineout [$c/\omega_{pe}$]')
+        ax2.set_ylabel('rel. dev.')
+        ax2.grid(True)
+
+        plt.tight_layout()
+        plt.savefig(self.output_dir / fname, dpi=150)
+        plt.close()
+        logger.info(f"{title}: max relative deviation {max_dev:.3e} -> {self.output_dir / fname}")
+        return max_dev
+
+    def _overlay_plot_2d(self, fname, extent, flash2d, osiris2d, title, label,
+                         log=False, annotation=None):
+        """Three-panel 2D comparison over the OSIRIS box: FLASH | OSIRIS-init |
+        relative residual (OSIRIS-FLASH)/|FLASH|. flash2d/osiris2d are (ny, nx)."""
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            resid = np.where(flash2d != 0, (osiris2d - flash2d) / np.abs(flash2d), np.nan)
+        max_dev = np.nanmax(np.abs(resid))
+
+        both = np.concatenate([flash2d[np.isfinite(flash2d)], osiris2d[np.isfinite(osiris2d)]])
+        if log:
+            pos = both[both > 0]
+            norm = LogNorm(vmin=np.percentile(pos, 1), vmax=np.percentile(pos, 99)) if pos.size else None
+            kw = dict(norm=norm)
+        else:
+            kw = dict(vmin=np.percentile(both, 1), vmax=np.percentile(both, 99))
+
+        fig, axes = plt.subplots(1, 3, figsize=(19, 5.5))
+        for ax, data, sub in ((axes[0], flash2d, 'FLASH'), (axes[1], osiris2d, 'OSIRIS-init')):
+            im = ax.imshow(data, origin='lower', extent=extent, aspect='auto', **kw)
+            ax.set_title(f'{sub}  {label}')
+            ax.set_xlabel(r'x [$c/\omega_{pe}$]')
+            fig.colorbar(im, ax=ax)
+        axes[0].set_ylabel(r'y [$c/\omega_{pe}$]')
+        vlim = np.nanpercentile(np.abs(resid), 99) or 1.0
+        im = axes[2].imshow(resid, origin='lower', extent=extent, aspect='auto',
+                            cmap='RdBu_r', vmin=-vlim, vmax=vlim)
+        axes[2].set_title('relative residual (OSIRIS-FLASH)/|FLASH|')
+        axes[2].set_xlabel(r'x [$c/\omega_{pe}$]')
+        fig.colorbar(im, ax=axes[2])
+        if annotation:
+            axes[1].text(0.02, 0.97, annotation, transform=axes[1].transAxes, va='top',
+                         color='w', bbox=dict(boxstyle='round', fc='k', alpha=0.4))
+        fig.suptitle(title)
+        plt.tight_layout()
+        plt.savefig(self.output_dir / fname, dpi=150)
+        plt.close()
+        logger.info(f"{title}: max |relative residual| {max_dev:.3e} -> {self.output_dir / fname}")
+        return max_dev
+
+    def plot_conservation_diagnostics(self, n_points=10000):
+        """FLASH-vs-OSIRIS-init conservation check for the dimensionless parameters
+        (P_e/P_i, Alfvenic Mach number, electron beta, ion beta, magnetization).
+
+        1D: line overlay + relative-deviation panel along the lineout.
+        2D: three-panel imshow (FLASH | OSIRIS | relative residual) over the box.
+
+        plot+warn: always writes the figures and logs the max deviation. Ions are loaded
+        charge-equivalently (density = n_e, charge q=+1) with mass-per-charge rqm =
+        m_i/(Z m_e), and vthal/vthsi use the FULL ion mass m_i = m_p/sumy (see
+        my_plugins.py), so the macro-ions move at the real ion thermal speed. The charge
+        state Z = ye/sumy enters only implicitly through the FLASH fields -- no explicit Z
+        is needed, only rqm_factor. Conservation (at t=0):
+          - P_e/P_i, M_A, beta_e, beta_i : conserved. beta_i works because the ion
+                          pressure rho_sim*vth_i^2 = n_i k T_ion is physical (mass-per-
+                          charge rqm gives the right mass density; full-mass vth gives the
+                          right thermal speed).
+          - sigma    : ~rqm_factor x physical (sim ions lighter); converges at
+                          rqm_factor = 1.
+        NB: the per-particle T_e/T_i is NOT conserved (reads ~Z x) -- each macro-ion
+        carries 1/Z of a real ion's thermal energy -- so we conserve the *pressure* ratio
+        instead.
+        """
+        # key -> (ylabel, title, FLASH label, OSIRIS label, log)
+        specs = [
+            ('pressure_ratio', r'$P_e/P_i$', 'Electron/ion pressure ratio at t=0',
+             r'FLASH  $n_e T_e/(n_i T_i)$', r'OSIRIS  $P_e/P_i$', False),
+            ('mach_alfven', r'$M_A$', 'Alfvenic Mach number at t=0',
+             r'FLASH  $|v|/v_A$', r'OSIRIS  $|v|/\sqrt{\sigma}$', False),
+            ('beta_e', r'$\beta_e$', 'Electron beta at t=0',
+             r'FLASH  $n_e k_B T_e/(B^2/8\pi)$', r'OSIRIS  $n_e T_e/(B^2/2)$', True),
+            ('beta_i', r'$\beta_i$', 'Ion beta at t=0',
+             r'FLASH  $n_i k_B T_i/(B^2/8\pi)$', r'OSIRIS  $\rho_{sim}\,v_{th,i}^2/(B^2/2)$', True),
+            ('magnetization', r'$\sigma$', 'Magnetization at t=0',
+             r'FLASH  $B^2/(4\pi\rho c^2)$', r'OSIRIS  $B^2/(\mathrm{rqm}_i n_e)$', True),
+        ]
+        if self.rqm_factor == 1:
+            sigma_note = 'rqm_factor=1: $\\sigma$ converges to physical'
+        else:
+            sigma_note = f'sim ions rqm_factor={self.rqm_factor:g}x lighter:\n$\\sigma_{{sim}}\\approx$ rqm_factor$\\,\\sigma_{{phys}}$'
+        notes = {'magnetization': sigma_note}
+
+        if self.osiris_dims == 1:
+            pts = np.column_stack([np.linspace(self.xmin, self.xmax, n_points),
+                                   np.linspace(self.ymin, self.ymax, n_points)])
+            dist = np.linspace(0, self.distance, n_points)
+            flash, osiris = self._sample_conservation(pts)
+            for key, ylabel, title, fl_lbl, os_lbl, logy in specs:
+                self._overlay_plot(f'{key}_1D.png', dist, flash[key], osiris[key],
+                                   ylabel, title, fl_lbl, os_lbl, logy=logy,
+                                   annotation=notes.get(key))
+        else:
+            nx = min(400, max(64, int((self.xmax - self.xmin) / self.dx)))
+            ny = min(400, max(64, int((self.ymax - self.ymin) / self.dx)))
+            XX, YY = np.meshgrid(np.linspace(self.xmin, self.xmax, nx),
+                                 np.linspace(self.ymin, self.ymax, ny))   # (ny, nx)
+            pts = np.column_stack([XX.ravel(), YY.ravel()])
+            flash, osiris = self._sample_conservation(pts)
+            extent = [self.xmin, self.xmax, self.ymin, self.ymax]
+            for key, ylabel, title, fl_lbl, os_lbl, logy in specs:
+                self._overlay_plot_2d(f'{key}_2D.png', extent,
+                                      flash[key].reshape(ny, nx), osiris[key].reshape(ny, nx),
+                                      title, ylabel, log=logy, annotation=notes.get(key))
 
     def plot2D(self, fields):
         import matplotlib.pyplot as plt
@@ -696,19 +1011,8 @@ class FLASH_OSIRIS_1D(FLASH_OSIRIS_Base):
     def __init__(self,
                  start_point: List[float],
                  distance: float,
-                 theta: float = np.pi/2,
+                 theta: float,
                  **kwargs):
-        
-        if not isinstance(distance, (int, float)) or distance <= 0:
-            raise TypeError("distance must be a positive number for 1D simulations")
-        
-        if not isinstance(start_point, (list, tuple)) or len(start_point) != 2:
-            raise ValueError("start_point must be a list or tuple of two numbers for 1D simulations")
-
-        if not isinstance(theta, (int, float)):
-            raise TypeError("theta must be a number for 1D simulations")
-        
-
         xmax = distance * np.cos(theta) + start_point[0] # Have it match the form of 2D setup
         ymax = distance * np.sin(theta) + start_point[1]
          # CFL condition
@@ -749,16 +1053,7 @@ class FLASH_OSIRIS_2D(FLASH_OSIRIS_Base):
                  ymin: float,
                  ymax: float,
                  **kwargs):
-        for param_name, param_value in [('xmin', xmin), ('xmax', xmax), ('ymin', ymin), ('ymax', ymax)]:
-            if not isinstance(param_value, (int, float)):
-                raise TypeError(f"{param_name} must be a number for 2D simulations")
-
-        super().__init__(osiris_dims=2,xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, **kwargs)
-        self.xmin = xmin
-        self.xmax = xmax
-        self.ymin = ymin
-        self.ymax = ymax
-        self.dt = self.dx * 0.95 / np.sqrt(self.osiris_dims) # CFL condition
+        super().__init__(osiris_dims=2, xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, **kwargs)
         logger.info("\n" + str(self))
 
     def __str__(self):
@@ -780,57 +1075,163 @@ class FLASH_OSIRIS_2D(FLASH_OSIRIS_Base):
         return "\n".join(lines)
     
 
-if __name__ == "__main__":
-    # test_1d = FLASH_OSIRIS_1D(
-    #     path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
-    #     OSIRIS_inputfile_name="test_1d",
-    #     reference_density_cc=5e18,
-    #     ppc=20,
-    #     dx=0.3,
-    #     start_point=[0, 300],
-    #     distance=2000,
-    #     theta=np.pi/2,
-    #     rqm_normalization_factor=500,
-    #     tmax_gyroperiods=20,
-    #     algorithm="cuda"
-    # )
+# Fields plotted as lineouts (1D) or edge profiles (2D) after the slices are saved.
+PLOT_FIELDS = ['edens', 'aldens', 'sidens', 'magx', 'magy', 'magz',
+               'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'vthsi',
+               'v_ix', 'v_iy', 'v_ey']
 
-    # test_1d.save_slices()
-    # test_1d.write_input_file()
-    # test_1d.plot1D(['edens', 'aldens','sidens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'v_ix', 'v_iy','v_ey'])
-    # test_1d.write_python_file()
+# Proton/electron mass ratio, used with the FLASH ionization fields to form the
+# OSIRIS rqm = 1836/ye (mass-per-charge) and the ion mass m_i/m_e = 1836/sumy.
+PROTON_ELECTRON_MASS_RATIO = 1836
 
-    # test_2d = FLASH_OSIRIS_2D(
-    #     path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
-    #     OSIRIS_inputfile_name="test_2d",
-    #     reference_density_cc=5e18,
-    #     ppc=2,
-    #     dx=0.6,
-    #     xmin=-700,
-    #     xmax=700,
-    #     ymin=300,
-    #     ymax=2000,
-    #     rqm_normalization_factor=500,
-    #     tmax_gyroperiods=10,
-    #     algorithm="cuda"
-    # )
-    test_2d = FLASH_OSIRIS_2D(
-        path_to_FLASH_data=Path("/pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0007"),
-        # path_to_FLASH_data=Path("/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2024-06/MAGON/MagShockZ_hdf5_chk_0005"),
-        OSIRIS_inputfile_name="perlmutter_2d",
-        reference_density_cc=5e18,
-        ppc=5,
-        dx=0.3,
-        xmin=-2000,
-        xmax=2000,
-        ymin=350,
-        ymax=4000,
-        rqm_normalization_factor=100,
-        tmax_gyroperiods=50,
-        algorithm="cuda"
+
+def _str2bool(v):
+    if v.lower() in ("true", "t", "1", "yes"):
+        return True
+    if v.lower() in ("false", "f", "0", "no"):
+        return False
+    raise argparse.ArgumentTypeError("expected true/false")
+
+
+def main(args):
+    # The only checks argparse can't express (types/choices/required are handled
+    # by the parser); dim-specific geometry is asserted in the branches below.
+    assert Path(args.data_path).exists(), f"FLASH data not found: {args.data_path}"
+
+    # species rqm (mass-per-charge) is derived from FLASH inside the class (1836/ye
+    # averaged over the OSIRIS domain per species); no charge state is specified.
+
+    # All deck options come from the CLI -- nothing is defaulted here.
+    deck_options = {
+        "node_number": args.node_number,
+        "num_threads": args.num_threads,
+        "n_dump_total": args.n_dump_total,
+        "restart": args.restart,
+        "vpml_bnd_size": args.vpml_bnd_size,
+        "emf_boundary": args.emf_boundary,
+        "part_boundary": args.part_boundary,
+        "interpolation": args.interpolation,
+        "smooth_type": args.smooth_type,
+        "smooth_order": args.smooth_order,
+        "n_ave": args.n_ave,
+        "emf_reports": args.emf_reports,
+        "reports": args.reports,
+        "rep_udist": args.rep_udist,
+        "phasespaces": args.phasespaces,
+        "e_ps_pmin": args.e_ps_pmin,
+        "e_ps_pmax": args.e_ps_pmax,
+        "i_ps_pmin": args.i_ps_pmin,
+        "i_ps_pmax": args.i_ps_pmax,
+        "ps_np": args.ps_np,
+        "ps_ngamma": args.ps_ngamma,
+        "ps_gammamax": args.ps_gammamax,
+        "ps_nx": args.ps_nx,
+        "ps_ny": args.ps_ny,
+    }
+
+    common = dict(
+        path_to_FLASH_data=Path(args.data_path),
+        OSIRIS_inputfile_name=args.inputfile_name,
+        reference_density_cc=args.reference_density,
+        ppc=args.ppc,
+        dx=args.dx,
+        rqm_normalization_factor=args.rqm_factor,
+        tmax_gyroperiods=args.tmax_gyroperiods,
+        algorithm=args.algorithm,
+        deck_options=deck_options,
     )
 
-    test_2d.save_slices()
-    test_2d.write_input_file()
-    test_2d.plot2D(['edens', 'aldens','sidens', 'magx', 'magy', 'magz', 'Ex', 'Ey', 'Ez', 'vthele', 'vthal', 'vthsi', 'v_ix', 'v_iy','v_ey'])
-    test_2d.write_python_file()
+    if args.dim == 1:
+        assert args.start_point is not None and args.end_point is not None, \
+            "--start_point and --end_point (cm, x y z) are required for --dim 1"
+        # Convert the cm lineout endpoints (x, y of the z-midplane) to c/omega_pe.
+        # c/omega_pe is the electron inertial length (plasmapy).
+        import astropy.units as u
+        from plasmapy.formulary.lengths import inertial_length
+        cwpe = inertial_length(args.reference_density * u.cm**-3, 'e-').to('cm').value
+        x0, y0 = args.start_point[0] / cwpe, args.start_point[1] / cwpe
+        x1, y1 = args.end_point[0] / cwpe, args.end_point[1] / cwpe
+        distance = float(np.hypot(x1 - x0, y1 - y0))
+        theta = float(np.arctan2(y1 - y0, x1 - x0))
+        logger.info(f"c/omega_pe = {cwpe*1e4:.3f} um; lineout start=({x0:.1f},{y0:.1f}) "
+                    f"c/wpe, distance={distance:.1f} c/wpe, theta={theta:.4f} rad")
+
+        sim = FLASH_OSIRIS_1D(start_point=[x0, y0], distance=distance, theta=theta, **common)
+        sim.save_slices()
+        sim.write_input_file()
+        sim.write_python_file()
+        sim.plot1D(PLOT_FIELDS)
+    else:
+        for name in ("xmin", "xmax", "ymin", "ymax"):
+            assert getattr(args, name) is not None, f"--{name} (c/wpe) is required for --dim 2"
+        sim = FLASH_OSIRIS_2D(xmin=args.xmin, xmax=args.xmax,
+                              ymin=args.ymin, ymax=args.ymax, **common)
+        sim.save_slices()
+        sim.write_input_file()
+        sim.write_python_file()
+        sim.plot2D(PLOT_FIELDS)
+
+    sim.plot_conservation_diagnostics()   # 1D line overlays / 2D imshow comparisons
+    sim.write_manifest(cli_args=" ".join(sys.argv))
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(
+        description="Generate a python-init OSIRIS deck + py-script + interp slices + "
+                    "lineout plots from a FLASH dump. Every parameter is required: the "
+                    "runme file is the single source of truth (no hidden defaults).")
+
+    # --- physics / core (all required) ---
+    p.add_argument('--data_path', type=str, required=True, help="Path to the FLASH dump")
+    p.add_argument('--dim', type=int, choices=[1, 2], required=True, help="OSIRIS dimensionality")
+    p.add_argument('--inputfile_name', type=str, required=True,
+                   help="OSIRIS input file / output folder name (a '.<dim>d' suffix is appended)")
+    p.add_argument('--reference_density', type=float, required=True, help="Normalization density [cm^-3]")
+    p.add_argument('--rqm_factor', type=float, required=True, help="rqm reduction factor")
+    p.add_argument('--dx', type=float, required=True, help="Cell size [c/omega_pe]")
+    p.add_argument('--ppc', type=int, required=True, help="Particles per cell (per dimension)")
+    p.add_argument('--tmax_gyroperiods', type=float, required=True, help="Run length [ion gyroperiods]")
+    p.add_argument('--algorithm', type=str, choices=["cpu", "cuda", "tiles"], required=True)
+    # NOTE: species rqm is derived from FLASH (1836/ye); no charge state is specified.
+
+    # --- geometry: 1D lineout (cm) OR 2D box (c/omega_pe) ---
+    p.add_argument('--start_point', type=float, nargs=3, help="[1D] lineout start (x y z) [cm]")
+    p.add_argument('--end_point', type=float, nargs=3, help="[1D] lineout end (x y z) [cm]")
+    p.add_argument('--xmin', type=float, help="[2D] box xmin [c/omega_pe]")
+    p.add_argument('--xmax', type=float, help="[2D] box xmax [c/omega_pe]")
+    p.add_argument('--ymin', type=float, help="[2D] box ymin [c/omega_pe]")
+    p.add_argument('--ymax', type=float, help="[2D] box ymax [c/omega_pe]")
+
+    # --- parallel / time / dumps (all required) ---
+    p.add_argument('--node_number', type=int, nargs='+', required=True, help="Nodes (1 val 1D, 2 vals 2D)")
+    p.add_argument('--num_threads', type=int, required=True, help="OpenMP threads per node")
+    p.add_argument('--n_dump_total', type=int, required=True, help="Total dumps over the run (sets ndump)")
+    p.add_argument('--restart', type=_str2bool, required=True, help="if_restart (true/false)")
+
+    # --- field solver / boundaries / smoothing (all required) ---
+    p.add_argument('--vpml_bnd_size', type=int, required=True)
+    p.add_argument('--emf_boundary', type=str, nargs=2, required=True, help="EMF boundary (lower upper)")
+    p.add_argument('--part_boundary', type=str, nargs=2, required=True, help="Particle boundary (lower upper)")
+    p.add_argument('--interpolation', type=str, choices=["linear", "quadratic", "cubic", "quartic"], required=True)
+    p.add_argument('--smooth_type', type=str, required=True)
+    p.add_argument('--smooth_order', type=int, required=True)
+
+    # --- diagnostics (all required) ---
+    p.add_argument('--n_ave', type=int, required=True, help="Cells averaged per dim in diagnostics")
+    p.add_argument('--emf_reports', type=str, nargs='+', required=True)
+    p.add_argument('--reports', type=str, nargs='+', required=True, help="Per-species reports")
+    p.add_argument('--rep_udist', type=str, nargs='+', required=True)
+    p.add_argument('--phasespaces', type=str, nargs='+', required=True)
+    p.add_argument('--e_ps_pmin', type=float, nargs=3, required=True)
+    p.add_argument('--e_ps_pmax', type=float, nargs=3, required=True)
+    p.add_argument('--i_ps_pmin', type=float, nargs=3, required=True)
+    p.add_argument('--i_ps_pmax', type=float, nargs=3, required=True)
+    p.add_argument('--ps_np', type=int, nargs=3, required=True, help="Momentum bins (px py pz)")
+    p.add_argument('--ps_ngamma', type=int, required=True)
+    p.add_argument('--ps_gammamax', type=float, required=True)
+    p.add_argument('--ps_nx', type=int, required=True, help="Spatial bins along x1 for phase space")
+    p.add_argument('--ps_ny', type=int, required=True, help="Spatial bins along x2 (2D only, still required)")
+
+    args = p.parse_args()
+    logger.info(args)
+    main(args)

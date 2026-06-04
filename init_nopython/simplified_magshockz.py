@@ -20,8 +20,7 @@ def get_template_config(lineout: Ray, args, **kwargs):
     silicon_mass_number = 28
     al_charge_state = args.al_charge_state
     si_charge_state = 13
-    B0 = args.B0_Gauss  # Gauss #TODO user input
-    
+    B0 = args.B0_Gauss
     config = {}
 
     config["upstream_gyrotime"] = int(mass_proton * aluminum_mass_number / al_charge_state / lineout.rqm_factor / (B0 / lineout.normalizations['magx']))
@@ -54,12 +53,12 @@ def get_template_config(lineout: Ray, args, **kwargs):
     config["part_boundary"] = args.part_boundary
 
 
-    # Enforce that we are resolving the ion debye length
-    # lambda_di = sqrt(epsilon_0 k_B T_i / n_i q^2) = sqrt(epsilon_0 k_B T_i / n_i q^2)
-    # lambda_ci/(c/omega_pe) = sqrt(rqm) vthion_osiris
     upstream_vthion = lineout.get_upstream_value('vthion')
     print(f"Upstream vthion: {upstream_vthion}")
     if args.dx == "ion_debye":
+        # Enforce that we are resolving the ion debye length
+        # lambda_di = sqrt(epsilon_0 k_B T_i / n_i q^2) = sqrt(epsilon_0 k_B T_i / n_i q^2)
+        # lambda_ci/(c/omega_pe) = sqrt(rqm) vthion_osiris
         config["dx"] = np.sqrt(config["rqm_al"]) * upstream_vthion
     else:
         config["dx"] = float(args.dx)

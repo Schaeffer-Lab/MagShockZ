@@ -115,21 +115,24 @@ def load_for_osiris(filename:str, rqm_factor:float = 1):
         
         ds.add_field(('flash', 'vthele'), function=make_vthele, units='code_velocity', sampling_type='cell', force_override=False)
 
-        # Ion thermal velocity uses the mass-PER-CHARGE m_i/Z = m_p/ye, not the full ion
-        # mass m_i = m_p/sumy.  OSIRIS rqm = m/q folds the charge state Z into the species
-        # "mass", so loading uth with the full mass leaves the sim ion a factor sqrt(Z) too
-        # cold (T_i low by Z).  m_p/ye = (A m_p)/Z is exactly the mass-per-charge, and uses
-        # the local ionization ye*A rather than a fixed Z.
+        # Ion thermal velocity uses the FULL ion mass m_i = m_p/sumy (sumy = ions per
+        # baryon = 1/A), NOT the mass-per-charge m_p/ye.  This loads the macro-ions at the
+        # real ion thermal speed sqrt(k T_ion/m_i), so the ion pressure rho*vth^2 = n_i k
+        # T_ion is physical and the electron/ion PRESSURE ratio (and beta_i) is conserved.
+        # The charge state Z = ye/sumy enters only implicitly through the FLASH fields, so
+        # no explicit Z is needed.  (Trade-off: each macro-ion is charge-equivalent and
+        # carries 1/Z of a real ion's thermal energy, so the per-particle T_e/T_i reads
+        # ~Z x -- we deliberately conserve the pressure ratio, not the temperature ratio.)
         def make_vthion(field, data):
-               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'ye']))
+               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'sumy']))
                return vthion.to('code_velocity')
 
         def make_vthal(field, data):
-               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'ye']))
+               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'sumy']))
                return vthion.to('code_velocity')
 
         def make_vthsi(field, data):
-               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'ye']))
+               vthion = np.sqrt(data['flash','tion'] * units.boltzmann_constant / (units.proton_mass/data['flash', 'sumy']))
                return vthion.to('code_velocity')
         
         ds.add_field(('flash', 'vthion'), function=make_vthion, units='code_velocity', sampling_type='cell', force_override=False)

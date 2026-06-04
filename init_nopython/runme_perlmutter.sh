@@ -27,7 +27,7 @@ python simplified_magshockz.py \
 --e_ps_pmin -1 -1 -0.5 \
 --e_ps_pmax 1 1 0.5 \
 --rep_udist ufl1 ufl2 uth1 uth2 \
---phasespaces p1x1 p3x1 \
+--phasespaces p1x1 p2x1 p3x1 \
 --tmax 10 \
 --B0_Gauss 100000 \
 --al_charge_state 13 \
