@@ -45,3 +45,13 @@ si_charge_state: 14
 #   downstream : [x_shock - downstream_window_ncells * dx,  x_shock)
 upstream_window_ncells: 200
 downstream_window_ncells: 200
+
+# FLASH-specific analysis parameters (physical units).
+# v_shock_est_cms : first-guess shock velocity [cm/s] used to seed the
+#                   per-frame detection window before the linear fit.
+# x_shock_0_cm   : shock position along the LOS at the IC dump time [cm].
+#                   Together these define the initial prediction:
+#                   x_pred = x_shock_0_cm + v_shock_est_cms * (t - t_IC)
+flash:
+  v_shock_est_cms: 9.16e7   # cm/s  
+  x_shock_0_cm:   0.19      # position at IC dump [cm]; update after first run
