@@ -106,6 +106,11 @@ ulimit -s unlimited
 
 cd ${dir}
 
+# OSIRIS's embedded Python imports py-script-1d.py (init_type="python") -- it must be on
+# PYTHONPATH; srun exports this to all ranks. The deck + binary are sbcast to /tmp, but
+# the py-script stays here on shared scratch.
+export PYTHONPATH=${dir}:\${PYTHONPATH:-}
+
 echo "Before sbcast"
 sbcast -f /global/common/software/m5032/osiris/bin/osiris-1D-dev.e /tmp/osiris-1D-dev.e
 sbcast -f ${name}.1d /tmp/os-stdin.1d

@@ -179,10 +179,8 @@ spe_bound
     {% if dims == 1 %}type(1:2,1) = "{{ part_boundary[0] }}","{{ part_boundary[1] }}",
     uth_bnd(1:3,1,1) = {{ species['vth_start'] }}, {{ species['vth_start'] }}, {{ species['vth_start'] }},
     uth_bnd(1:3,2,1) = {{ species['vth_end'] }}, {{ species['vth_end'] }}, {{ species['vth_end'] }},{% else %}
-    type(1:2,1) = "{{ part_boundary[0] }}","{{ part_boundary[1] }}",
+    ! direction 1 (x) is periodic (see node_conf if_periodic); only direction 2 (y) is set
     type(1:2,2) = "{{ part_boundary[0] }}","{{ part_boundary[1] }}",
-    uth_bnd(1:3,1,1) = {{ species['vth_x_start'] }}, {{ species['vth_x_start'] }}, {{ species['vth_x_start'] }},
-    uth_bnd(1:3,2,1) = {{ species['vth_x_end'] }}, {{ species['vth_x_end'] }}, {{ species['vth_x_end'] }},
     uth_bnd(1:3,1,2) = {{ species['vth_y_start'] }}, {{ species['vth_y_start'] }}, {{ species['vth_y_start'] }},
     uth_bnd(1:3,2,2) = {{ species['vth_y_end'] }}, {{ species['vth_y_end'] }}, {{ species['vth_y_end']}}, {% endif %}
 }

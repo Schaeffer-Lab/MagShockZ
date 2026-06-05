@@ -189,6 +189,7 @@ def set_uth_al( STATE ):
 
     
     # Assign velocities in chunks, this saves memory in 2D. In 1D the difference is negligible
+    chunk_size = 1024
     for start in range(0, len(STATE["u"][:,0]), chunk_size):
         end = min(start + chunk_size, len(STATE["u"][:,0]))
         x_positions = start_point[0] + np.cos(theta) * STATE["x"][start:end, 0]

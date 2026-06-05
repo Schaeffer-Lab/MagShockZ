@@ -99,7 +99,7 @@ diag_emf
     ndump_fac_ene_int = 10,
     !ndump_fac_charge_cons = 10,
     
-    n_ave(1:1) = 6,
+    n_ave(1:1) = 12,
     
 }
 
@@ -156,7 +156,7 @@ diag_species
     !ndump_fac_temp = 1,
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
-    n_ave(1:1) = 6,
+    n_ave(1:1) = 12,
     reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg", 
 
     rep_udist = "uth1", "uth2", "ufl1", "ufl2", 
@@ -225,7 +225,7 @@ diag_species
     !ndump_fac_temp = 1,
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
-    n_ave(1:1) = 6,
+    n_ave(1:1) = 12,
     reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg", 
 
     rep_udist = "uth1", "uth2", "ufl1", "ufl2", 
@@ -294,7 +294,7 @@ diag_species
     !ndump_fac_temp = 1,
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
-    n_ave(1:1) = 6,
+    n_ave(1:1) = 12,
     reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg", 
 
     rep_udist = "uth1", "uth2", "ufl1", "ufl2", 

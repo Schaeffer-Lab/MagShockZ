@@ -50,38 +50,47 @@ sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
 import temperature_anisotropy as ta
-from analysis_utils import StreakBuilder, axis_values, field_path, density_path, phase_path
+from analysis_utils import (
+    StreakBuilder, axis_values, field_path, density_path, phase_path,
+    transverse_profile,
+)
 
 
 # ---------------------------------------------------------------------------
 # Per-dump 1D profile frames (H5Data, so StreakBuilder can stack them)
+#
+# Fields and density are full spatial maps (1D, or 2D for a 2D run); each is
+# reduced to a 1D profile along the shock-normal axis by transverse_profile
+# (a no-op in 1D).  Phase spaces already carry a single spatial axis, so the
+# momentum moment collapses them straight to a 1D profile.
 # ---------------------------------------------------------------------------
 
-def bmag_frame(sim_dir: str, t: int):
-    """|B| = sqrt(b1^2 + b2^2 + b3^2) as an H5Data on the field grid [B_0]."""
+def bmag_frame(sim_dir: str, t: int, layout, hw: float):
+    """|B| = sqrt(b1^2 + b2^2 + b3^2), reduced to a 1D profile [B_0]."""
     b = {q: osh5io.read_h5(field_path(sim_dir, q, t))
          for q in ("b1", "b2", "b3")}
     bmag = np.sqrt(b["b1"] ** 2 + b["b2"] ** 2 + b["b3"] ** 2)  # stays H5Data
     bmag.data_attrs = dict(bmag.data_attrs, NAME="|B|", LONG_NAME=r"$|B|$", UNITS="B_0")
-    return bmag
+    return transverse_profile(bmag, layout.normal_axis, hw)
 
 
-def density_frame(sim_dir: str, sp: str, t: int):
-    """Number density n = |charge| as an H5Data on the field grid [n_0]."""
-    ch = osh5io.read_h5(density_path(sim_dir, sp, t))
+def density_frame(sim_dir: str, sp: str, t: int, layout, hw: float):
+    """Number density n = |charge|, reduced to a 1D profile [n_0]."""
+    ch = osh5io.read_h5(density_path(sim_dir, sp, t, savg=layout.density_savg))
     n = np.abs(ch)
     n.data_attrs = dict(n.data_attrs, NAME=f"n_{sp}", LONG_NAME=fr"$n_\mathrm{{{sp}}}$", UNITS="n_0")
-    return n
+    return transverse_profile(n, layout.normal_axis, hw)
 
 
-def temperature_frame(sim_dir: str, sp: str, t: int, rqm: float, pha: str = "p1x1", axis: str = "p1"):
+def temperature_frame(sim_dir: str, sp: str, t: int, rqm: float, layout, axis: str = "p1"):
     """Parallel temperature T = |rqm| * <(p - <p>)^2> as an H5Data on the phase grid.
 
     The moment collapses f(p, x) -> T(x); the result is re-wrapped as an H5Data
     carrying the phase-space spatial axis and run_attrs (for the TIME StreakBuilder
-    needs) so it can be stacked exactly like the field/density frames.
+    needs) so it can be stacked exactly like the field/density frames.  The
+    phase-space name (p1x1 vs p1x2) comes from the run layout.
     """
-    ps = osh5io.read_h5(phase_path(sim_dir, pha, sp, t))
+    ps = osh5io.read_h5(phase_path(sim_dir, layout.pha_name(int(axis[1:])), sp, t))
     T = np.asarray(ta.temperature_profile(ps, rqm, axis))
     x_axis = next(a for a in ps.axes if a.name != axis)  # the spatial axis
     return osh5def.H5Data(
@@ -158,15 +167,16 @@ def plot_streak(ax, time, x, Z, *, label, cmap, log, shock_lines):
     ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
 
 
-def plot_phasespace(ax, ps, *, title, x_shock=None):
+def plot_phasespace(ax, ps, *, title, normal_axis="x1", x_shock=None):
     """imshow a p-x phase space (x horizontal, p vertical) on a log color scale.
 
     OSIRIS phase spaces are charge-weighted, so electron f is stored negative;
-    take |f| so both species share one positive log color scale.
+    take |f| so both species share one positive log color scale.  ``normal_axis``
+    names the spatial axis ("x1" in 1D, "x2" in the 2D run).
     """
     data = np.abs(np.asarray(ps))
-    p_ax = next(a for a in ps.axes if a.name != "x1")
-    x_ax = next(a for a in ps.axes if a.name == "x1")
+    p_ax = next(a for a in ps.axes if a.name != normal_axis)
+    x_ax = next(a for a in ps.axes if a.name == normal_axis)
     # axes order is [p, x]; data is f(p, x) so origin='lower' with extent below
     vmax = np.percentile(data[data > 0], 99.7) if (data > 0).any() else 1.0
     vmin = vmax * 1e-4
@@ -200,11 +210,18 @@ def main():
                         help="Index into the field-dump list for the phase-space snapshot (default -1).")
     parser.add_argument("--search-halfwidth", type=float, default=400.0, dest="search_hw",
                         help="Half-width [c/wpe] of the shock-detection window around the config fit.")
+    parser.add_argument("--transverse-halfwidth", type=float, default=5.0, dest="transverse_hw",
+                        help="Half-width [c/wpe] of the central transverse band averaged when "
+                             "reducing 2D field/density maps to a 1D shock-normal profile "
+                             "(default 5 = 5 electron inertial lengths; ignored for 1D runs).")
     parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
 
     cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]
+
+    layout = analysis_utils.detect_layout(sim_dir)
+    hw = args.transverse_hw
 
     sim = analysis_utils.run_from_config(cfg)
     rqm_i = sim.rqm_of("al")
@@ -229,9 +246,9 @@ def main():
         for t in range(args.t_start, t_stop + 1, stride):
             if not os.path.exists(field_path(sim_dir, "b3", t)):
                 continue
-            if not os.path.exists(density_path(sim_dir, "e", t)):
+            if not os.path.exists(density_path(sim_dir, "e", t, savg=layout.density_savg)):
                 continue
-            if require_phase and not os.path.exists(phase_path(sim_dir, "p1x1", "al", t)):
+            if require_phase and not os.path.exists(phase_path(sim_dir, layout.pha_name(1), "al", t)):
                 continue
             out.append(t)
         return out
@@ -246,6 +263,7 @@ def main():
 
     print(f"Config  : {args.config}")
     print(f"sim_dir : {sim_dir}")
+    print(f"layout  : {layout}  (transverse band ±{hw:g} c/wpe about center)")
     print(f"|B|,n_e : {len(field_dumps)} frames, {field_dumps[0]}..{field_dumps[-1]} (stride {field_dumps[1]-field_dumps[0]})")
     print(f"T_i     : {len(phase_dumps)} frames, {phase_dumps[0]}..{phase_dumps[-1]} (stride {phase_dumps[1]-phase_dumps[0]})")
     print(f"|rqm_i| : {abs(rqm_i):.4f}   v_shock(cfg) : {v_shock_cfg:.5f} c   x_shock_0 : {x_shock_0:.1f}")
@@ -253,18 +271,22 @@ def main():
     # ------------------------------------------------------------------
     # Load frames and assemble streaks
     # ------------------------------------------------------------------
+    # |B| (field grid) and n_e (density grid) can live on different normal-axis
+    # grids — in the 2D run the fields are time-averaged (savg) but the density
+    # is not, so they have different cell counts.  Each streak therefore keeps
+    # its own spatial axis; combine via interpolation, never by shared indexing.
     print("Loading |B|, n_e frames...")
-    B_streak,  time_f, x_f = assemble_streak([bmag_frame(sim_dir, t) for t in field_dumps])
-    ne_streak, _,      _   = assemble_streak([density_frame(sim_dir, "e", t) for t in field_dumps])
+    B_streak,  time_f, x_f  = assemble_streak([bmag_frame(sim_dir, t, layout, hw) for t in field_dumps])
+    ne_streak, _,      x_ne = assemble_streak([density_frame(sim_dir, "e", t, layout, hw) for t in field_dumps])
     print("Loading T_i frames (phase space)...")
-    Ti_streak, time_p, x_p = assemble_streak([temperature_frame(sim_dir, "al", t, rqm_i) for t in phase_dumps])
+    Ti_streak, time_p, x_p = assemble_streak([temperature_frame(sim_dir, "al", t, rqm_i, layout) for t in phase_dumps])
 
     # ------------------------------------------------------------------
     # Per-frame shock-front detection (from the fine density streak) + fit
     # ------------------------------------------------------------------
     x_pred = x_shock_0 + v_shock_cfg * time_f
     x_det = np.array([
-        detect_front(x_f, ne_streak[i], x_pred[i], args.search_hw)
+        detect_front(x_ne, ne_streak[i], x_pred[i], args.search_hw)
         for i in range(len(field_dumps))
     ])
 
@@ -309,7 +331,7 @@ def main():
     plot_streak(axes[0, 0], time_f, x_f, B_streak,
                 label=r"$|B|$ [$B_0$]", cmap="viridis", log=False,
                 shock_lines=[cfg_line, det_pts, fit_line])
-    plot_streak(axes[0, 1], time_f, x_f, ne_streak,
+    plot_streak(axes[0, 1], time_f, x_ne, ne_streak,
                 label=r"$n_e$ [$n_0$]", cmap="magma", log=True,
                 shock_lines=[cfg_line, det_pts, fit_line])
     plot_streak(axes[1, 0], time_p, x_p, Ti_streak,
@@ -344,16 +366,18 @@ def main():
     i_snap = args.snapshot_idx % len(field_dumps)
     x_shock_snap = x_det[i_snap] if np.isfinite(x_det[i_snap]) else x_pred[i_snap]
 
-    ps_al = osh5io.read_h5(phase_path(sim_dir, "p1x1", "al", t_snap))
-    ps_e  = osh5io.read_h5(phase_path(sim_dir, "p1x1", "e",  t_snap))
+    ps_al = osh5io.read_h5(phase_path(sim_dir, layout.pha_name(1), "al", t_snap))
+    ps_e  = osh5io.read_h5(phase_path(sim_dir, layout.pha_name(1), "e",  t_snap))
 
     fig2, ax2 = plt.subplots(2, 2, figsize=(16, 10))
-    plot_phasespace(ax2[0, 0], ps_al, title=f"Ion $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})", x_shock=x_shock_snap)
-    plot_phasespace(ax2[0, 1], ps_e,  title=f"Electron $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})", x_shock=x_shock_snap)
+    plot_phasespace(ax2[0, 0], ps_al, title=f"Ion $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})",
+                    normal_axis=layout.normal_axis, x_shock=x_shock_snap)
+    plot_phasespace(ax2[0, 1], ps_e,  title=f"Electron $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})",
+                    normal_axis=layout.normal_axis, x_shock=x_shock_snap)
 
     # n_e and |B| line-outs (field grid)
     axp = ax2[1, 0]
-    axp.plot(x_f, ne_streak[i_snap], color="tab:purple", label=r"$n_e$ [$n_0$]")
+    axp.plot(x_ne, ne_streak[i_snap], color="tab:purple", label=r"$n_e$ [$n_0$]")
     axp.set_xlabel(r"$x$ [$c/\omega_{pe}$]")
     axp.set_ylabel(r"$n_e$ [$n_0$]", color="tab:purple")
     axp.tick_params(axis="y", labelcolor="tab:purple")
@@ -369,9 +393,9 @@ def main():
     # dump (the T_i streak may be on a coarser cadence).  Temperature is meaningless
     # in the upstream vacuum, so mask where n_e (interpolated onto the phase grid)
     # drops below 5% of its peak.
-    Ti_snap = np.asarray(temperature_frame(sim_dir, "al", t_snap, rqm_i))
-    Te_snap = np.asarray(temperature_frame(sim_dir, "e", t_snap, -1.0))
-    ne_on_p = np.interp(x_p, x_f, ne_streak[i_snap])
+    Ti_snap = np.asarray(temperature_frame(sim_dir, "al", t_snap, rqm_i, layout))
+    Te_snap = np.asarray(temperature_frame(sim_dir, "e", t_snap, -1.0, layout))
+    ne_on_p = np.interp(x_p, x_ne, ne_streak[i_snap])
     have_plasma = ne_on_p > 0.05 * np.nanmax(ne_streak[i_snap])
     Ti_plot = np.where(have_plasma, Ti_snap, np.nan)
     Te_plot = np.where(have_plasma, Te_snap, np.nan)
@@ -399,7 +423,7 @@ def main():
     np.savez(
         npz_path,
         field_dumps=np.asarray(field_dumps), phase_dumps=np.asarray(phase_dumps),
-        time_field=time_f, time_phase=time_p, x_field=x_f, x_phase=x_p,
+        time_field=time_f, time_phase=time_p, x_field=x_f, x_density=x_ne, x_phase=x_p,
         B_streak=B_streak, ne_streak=ne_streak, Ti_streak=Ti_streak,
         x_shock_detected=x_det,
         v_shock_cfg=np.asarray(v_shock_cfg), x_shock_0=np.asarray(x_shock_0),

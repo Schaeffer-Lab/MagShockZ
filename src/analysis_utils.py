@@ -25,6 +25,7 @@ import astropy.units
 import numpy as np
 import osiris_utils
 import osh5def
+import osh5io
 import plasmapy
 import plasmapy.formulary
 import plasmapy.particles.particle_class
@@ -245,15 +246,146 @@ def field_path(sim_dir: str, q: str, t: int) -> str:
     return f"{sim_dir}/MS/FLD/{q}-savg/{q}-savg-{t:06d}.h5"
 
 
-def density_path(sim_dir: str, sp: str, t: int) -> str:
-    """Path to a species charge-density dump (savg)."""
-    return f"{sim_dir}/MS/DENSITY/{sp}/charge-savg/charge-savg-{sp}-{t:06d}.h5"
+def density_path(sim_dir: str, sp: str, t: int, savg: bool = True) -> str:
+    """Path to a species charge-density dump.
+
+    With ``savg=True`` (the time-averaged diagnostic, the default and the only
+    form produced by the 1D runs) the layout is
+    ``MS/DENSITY/{sp}/charge-savg/charge-savg-{sp}-{t}.h5``; with ``savg=False``
+    (un-averaged, as in the 2D test run) it is
+    ``MS/DENSITY/{sp}/charge/charge-{sp}-{t}.h5``.  Use
+    :func:`detect_layout` to pick the right form for a given run.
+    """
+    if savg:
+        return f"{sim_dir}/MS/DENSITY/{sp}/charge-savg/charge-savg-{sp}-{t:06d}.h5"
+    return f"{sim_dir}/MS/DENSITY/{sp}/charge/charge-{sp}-{t:06d}.h5"
 
 
 def axis_values(h5data, ax_idx: int) -> np.ndarray:
     """Return the coordinate values of axis ``ax_idx`` as a 1D linspace."""
     ax = h5data.axes[ax_idx]
     return np.linspace(ax.min, ax.max, ax.size)
+
+
+# ---------------------------------------------------------------------------
+# Run layout — bridge the on-disk differences between 1D and 2D runs
+# ---------------------------------------------------------------------------
+
+class RunLayout:
+    """Per-run layout: dimensionality, shock-normal axis, diagnostic naming.
+
+    The 1D and 2D OSIRIS runs differ in three ways that the analysis scripts
+    would otherwise have to hardcode:
+
+      - the shock-normal spatial axis is ``x1`` in 1D but ``x2`` in the 2D run
+        (the phase spaces are binned against, and the shock propagates along,
+        that axis);
+      - phase spaces are named ``p{c}x1`` (1D) vs ``p{c}x2`` (2D);
+      - species charge density is time-averaged (``charge-savg``) in 1D but not
+        in the 2D test run (``charge``).
+
+    Build with :func:`detect_layout`; pass the instance to the path helpers and
+    to :func:`transverse_profile` so a script stays dimension-agnostic.
+    """
+
+    def __init__(self, ndim: int, normal_axis: str, momenta: List[int], density_savg: bool):
+        self.ndim = ndim
+        self.normal_axis = normal_axis          # "x1" or "x2"
+        self.momenta = momenta                  # available momentum components, e.g. [1, 2, 3]
+        self.density_savg = density_savg
+
+    def pha_name(self, component: int) -> str:
+        """OSIRIS phase-space name for momentum ``component`` vs the normal axis.
+
+        e.g. ``pha_name(1)`` -> ``"p1x1"`` (1D) or ``"p1x2"`` (2D).
+        """
+        if component not in self.momenta:
+            raise KeyError(
+                f"Momentum component p{component} not in this run "
+                f"(available: {self.momenta})."
+            )
+        return f"p{component}{self.normal_axis}"
+
+    def __repr__(self):
+        return (f"RunLayout(ndim={self.ndim}, normal_axis={self.normal_axis!r}, "
+                f"momenta={self.momenta}, density_savg={self.density_savg})")
+
+
+def detect_layout(sim_dir: str) -> RunLayout:
+    """Inspect a run's MS/ tree and return its :class:`RunLayout`.
+
+    Detection is data-driven (no config needed):
+      - shock-normal axis + available momenta from the ``MS/PHA/p?x?`` dir names;
+      - ``density_savg`` from whether ``MS/DENSITY/<sp>/charge-savg`` exists;
+      - ``ndim`` from the number of spatial axes in a sample field dump.
+    """
+    pha_root = os.path.join(sim_dir, "MS", "PHA")
+    names = [d for d in os.listdir(pha_root)
+             if os.path.isdir(os.path.join(pha_root, d))]
+    parsed = [re.match(r"p(\d)x(\d)$", n) for n in names]
+    parsed = [m for m in parsed if m]
+    if not parsed:
+        raise RuntimeError(f"No 'p<c>x<d>' phase-space dirs found under {pha_root}.")
+    normal_digits = {m.group(2) for m in parsed}
+    if len(normal_digits) != 1:
+        raise RuntimeError(
+            f"Phase spaces bin against more than one spatial axis "
+            f"({sorted('x'+d for d in normal_digits)}); cannot pick a single "
+            f"shock-normal axis automatically."
+        )
+    normal_axis = "x" + normal_digits.pop()
+    momenta = sorted({int(m.group(1)) for m in parsed})
+
+    dens_root = os.path.join(sim_dir, "MS", "DENSITY")
+    sp0 = next(d for d in sorted(os.listdir(dens_root))
+               if os.path.isdir(os.path.join(dens_root, d)))
+    density_savg = os.path.isdir(os.path.join(dens_root, sp0, "charge-savg"))
+
+    fld_files = sorted(glob.glob(os.path.join(sim_dir, "MS", "FLD", "*-savg", "*.h5")))
+    if not fld_files:
+        raise RuntimeError(f"No averaged field dumps under {sim_dir}/MS/FLD/*-savg/.")
+    sample = osh5io.read_h5(fld_files[0])
+    ndim = sum(1 for a in sample.axes if a.name.startswith("x"))
+
+    return RunLayout(ndim=ndim, normal_axis=normal_axis, momenta=momenta,
+                     density_savg=density_savg)
+
+
+def transverse_profile(frame, normal_axis: str, half_width: float = 5.0,
+                       center: Optional[float] = None):
+    """Collapse a 2D map to a 1D profile along ``normal_axis``.
+
+    Averages the transverse spatial axis over a band of ``±half_width`` about
+    ``center`` (default: the transverse axis' geometric center).  ``half_width``
+    is in the data's spatial units — in OSIRIS normalised units c/ωpe, so the
+    default 5.0 is five electron inertial lengths either side of center.
+
+    A frame with a single spatial axis (any 1D profile, or a phase space already
+    reduced over momentum) is returned unchanged, so callers can apply this
+    uniformly to 1D and 2D runs.
+
+    Returns an ``osh5def.H5Data`` carrying only the normal axis, with the input's
+    ``data_attrs`` and ``run_attrs`` preserved (so it stacks in StreakBuilder).
+    """
+    spatial = [a for a in frame.axes if a.name.startswith("x")]
+    if len(spatial) <= 1:
+        return frame
+    normal = next(a for a in frame.axes if a.name == normal_axis)
+    trans = next(a for a in spatial if a.name != normal_axis)
+    ti = next(i for i, a in enumerate(frame.axes) if a.name == trans.name)
+    coords = np.linspace(trans.min, trans.max, trans.size)
+    c = center if center is not None else 0.5 * (trans.min + trans.max)
+    band = (coords >= c - half_width) & (coords <= c + half_width)
+    if not band.any():  # window narrower than a cell -> nearest single cell
+        band = np.zeros(trans.size, dtype=bool)
+        band[int(np.argmin(np.abs(coords - c)))] = True
+    reduced = np.asarray(frame).take(np.nonzero(band)[0], axis=ti).mean(axis=ti)
+    return osh5def.H5Data(
+        reduced,
+        data_attrs=dict(frame.data_attrs),
+        run_attrs=frame.run_attrs,
+        axes=[normal],
+    )
 
 
 # ---------------------------------------------------------------------------

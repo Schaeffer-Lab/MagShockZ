@@ -22,6 +22,10 @@ ulimit -s unlimited
 
 cd /pscratch/sd/d/dschnei/MagShockZ/input_files/magshockz_rqm100_dx0.004_ppc500_g20.1d
 
+# OSIRIS embedded Python imports py-script-1d.py (init_type="python"); put the run
+# dir on PYTHONPATH so all ranks can import it (srun exports this).
+export PYTHONPATH=$PWD:${PYTHONPATH:-}
+
 echo "Before sbcast"
 sbcast -f /global/common/software/m5032/osiris/bin/osiris-1D-dev.e /tmp/osiris-1D-dev.e
 sbcast -f magshockz_rqm100_dx0.004_ppc500_g20.1d /tmp/os-stdin.1d

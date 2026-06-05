@@ -1,5 +1,5 @@
-created_utc: '2026-06-05T00:38:06.927037+00:00'
-git_commit: 947dc082ea031b099301926554438687188ee182
+created_utc: '2026-06-05T02:29:21.922090+00:00'
+git_commit: 7cca46882a1f6c06cf105c5a9fd1f7d35653c663
 cli_command: FLASH_OSIRIS_define.py --inputfile_name magshockz_rqm100_dx0.3_ppc500_g20
   --dx 0.3 --node_number 4 --n_ave 6 --data_path /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009
   --dim 1 --reference_density 5e18 --rqm_factor 100 --ppc 500 --tmax_gyroperiods 20

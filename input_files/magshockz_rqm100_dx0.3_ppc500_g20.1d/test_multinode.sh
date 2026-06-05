@@ -30,6 +30,10 @@ ulimit -s unlimited
 
 # Run
 cd ${SCRATCH}/MagShockZ/input_files/magshockz_rqm100_dx0.3_ppc500_g20.1d
+
+# OSIRIS's embedded Python imports py-script-1d.py for the init_type="python" fields/
+# density/uth -- it must be on PYTHONPATH (srun exports this to all ranks).
+export PYTHONPATH=$PWD:${PYTHONPATH:-}
 conda activate osiris2
 
 #run the application:

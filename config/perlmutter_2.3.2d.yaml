@@ -1,0 +1,44 @@
+# Analysis config for the perlmutter_2.3.2d OSIRIS run (2D test data).
+# Stores only parameters not derivable from the OSIRIS input deck.
+# All parameters in OSIRIS normalised units (lengths in c/ωpe, velocities in c)
+# unless noted otherwise.
+#
+# 2D layout (auto-detected by analysis_utils.detect_layout, recorded here for
+# reference): shock-normal axis = x2 (x2 in [350, 3000]); transverse axis = x1
+# (x1 in [-1500, 1500]); phase spaces p1x2/p2x2/p3x2 = f(p, x2); species charge
+# density is NOT time-averaged (MS/DENSITY/<sp>/charge/, no -savg).
+
+sim_dir: /pscratch/sd/d/dschnei/perlmutter_2.3.2d  # override with $MAGSHOCKZ_SIM_DIR
+
+# Physical normalisation density — not in OSIRIS deck; set by the experiment.
+norm_density_cm3: 5.0e18
+
+# No runme*.sh in this run dir, so name the input deck explicitly.
+input_deck: perlmutter_2d.2d
+
+# Dump indices to load (file suffix: p1x2-al-{t:06d}.h5). NOT simulation time.
+# 257 dumps available (0..256), saved every index.
+times:
+  start: 0
+  stop: 256   # inclusive
+  step: 16
+
+# PLACEHOLDER shock fit — update after inspecting the overview streaks.
+# Shock propagates along x2 (in [350, 3000]); x_shock_0 is the front at t_sim=0.
+shock:
+  v_shock: 0.05         # shock velocity in c (GUESS — fit from streak plot)
+  x_shock_0: 400.0      # shock position at t_sim=0 [c/ωpe] (GUESS)
+
+# Per-dump manually inspected values, keyed by t_val (dump file suffix).
+dump_params:
+  256:
+    x_downstream_start: 1000.0   # GUESS — left edge of downstream region [c/ωpe]
+
+field_mode: full  # "full": total B²; "delta": subtract upstream mean B first
+
+# Si charge state for FLASH/OSIRIS temperature comparison.
+si_charge_state: 14
+
+# Averaging windows (grid cells from x_shock) for compute_dimensionless_params.py.
+upstream_window_ncells: 200
+downstream_window_ncells: 200

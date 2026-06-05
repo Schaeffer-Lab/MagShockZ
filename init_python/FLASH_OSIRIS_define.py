@@ -452,8 +452,8 @@ class FLASH_OSIRIS_Base:
             config['vth_start'] = np.format_float_scientific(vth_start, 4)
             config['vth_end'] = np.format_float_scientific(vth_end, 4)
         else:
-            config['vth_x_start'] = np.format_float_scientific(thermal_bounds['x'][0], 4)
-            config['vth_x_end'] = np.format_float_scientific(thermal_bounds['x'][1], 4)
+            # x (direction 1) is periodic in 2D, so only the y-face thermal bounds are
+            # used by the deck (spe_bound uth_bnd(...,2)).
             config['vth_y_start'] = np.format_float_scientific(thermal_bounds['y'][0], 4)
             config['vth_y_end'] = np.format_float_scientific(thermal_bounds['y'][1], 4)
         
@@ -504,45 +504,32 @@ class FLASH_OSIRIS_Base:
                 'electron': {},
                 'ions': {}
             }
+            # x (direction 1) is periodic in 2D, so only the y-face thermal bounds are
+            # needed (sampled across x at the ymin/ymax faces).
             num_samples = 16  # Number of points to sample
             x_samples = np.linspace(self.xmin, self.xmax, num_samples)
-            y_samples = np.linspace(self.ymin, self.ymax, num_samples)
             with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
                     vthele = pickle.load(f)
-                    x_lower_bound = np.mean([vthele((self.xmin, y)) for y in y_samples])
-                    x_upper_bound = np.mean([vthele((self.xmax, y)) for y in y_samples])
-
                     y_lower_bound = np.mean([vthele((x, self.ymin)) for x in x_samples])
                     y_upper_bound = np.mean([vthele((x, self.ymax)) for x in x_samples])
-                    bounds['electron']['x'] = [
-                        x_lower_bound,
-                        x_upper_bound
-                    ]
                     bounds['electron']['y'] = [
                         y_lower_bound,
                         y_upper_bound
                     ]
                     logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
-                
+
                 # Read ion thermal velocity bounds for each species
             for ion in self.species_rqms.keys():
                 bounds['ions'][ion] = {}
                 with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
                     vthion = pickle.load(f)
-                    x_lower_bound = np.mean([vthion((self.xmin, y)) for y in y_samples])
-                    x_upper_bound = np.mean([vthion((self.xmax, y)) for y in y_samples])
-
                     y_lower_bound = np.mean([vthion((x, self.ymin)) for x in x_samples])
                     y_upper_bound = np.mean([vthion((x, self.ymax)) for x in x_samples])
-                    bounds['ions'][ion]['x'] = [
-                        x_lower_bound,
-                        x_upper_bound
-                    ]
                     bounds['ions'][ion]['y'] = [
                         y_lower_bound,
                         y_upper_bound
                     ]
-                    logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")        
+                    logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")
         return bounds
     
     def write_python_file(self):
