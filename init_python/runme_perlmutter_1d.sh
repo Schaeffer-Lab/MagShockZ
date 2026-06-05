@@ -18,7 +18,7 @@ python FLASH_OSIRIS_define.py \
 --algorithm cuda \
 --start_point 0 0.07 0 \
 --end_point 0 0.70 0 \
---node_number 64 \
+--node_number 4 \
 --num_threads 1 \
 --n_dump_total 512 \
 --restart false \
