@@ -7,7 +7,7 @@
 #SBATCH --mail-user=dschneidinger@g.ucla.edu
 #SBATCH --mail-type=ALL
 #SBATCH -A m5032
-#SBATCH -t 01:00:00
+#SBATCH -t 24:00:00
 
 # Disable GPU-direct RDMA (fixes cxil_map write errors)
 export MPICH_GPU_SUPPORT_ENABLED=0

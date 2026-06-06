@@ -4,21 +4,13 @@
 # Scans dx from 0.3 c/wpe down to the ion Debye length (~0.004 c/wpe,
 # min along the lineout), 5 points, ~3x refinement per step.
 #
-# GPU count is MEMORY-bounded, not cell-bounded: ~11-13k cells/GPU (vs the
-# old 2209). The particle COUNT is ~uniform along the box (uniform ppc, full
-# occupancy), so the load is well balanced -- only the charge WEIGHT is
-# concentrated at the dense target, and weight doesn't drive flops/memory.
-# With balanced load, wall ~ 1/GPUs at ~constant node-hours, so using fewer
-# GPUs just trades wall time for far smaller, more schedulable jobs. Node
-# counts are the fewest that (a) fit ~11k cells/GPU in 40GB and (b) divide nx
-# exactly. NOTE: 1D cost ~ 1/dx^2, so the fine runs are long even so -- expect
-# multi-day wall at dx<=0.03, spanning several 24h jobs via restart
-# (restart{} writes hourly checkpoints; resubmit with if_restart=.true.).
-# node counts divide nx exactly for dx>=0.03; for dx 0.01/0.004 nx is not
-# cleanly divisible (it wasn't for the old 120/300 either), so OSIRIS just
-# spreads the <1-cell-per-rank remainder -- harmless. The lineout length isn't
-# round so the actual dx differs from the nominal label in the 4th-5th sig
-# fig. cells/GPU per point: 8836 / 13254 / 11045 / 11045 / 11045.
+# GPUs are scaled in proportion to the cell count (constant 2209
+# cells/GPU, matching the dx=0.3 run), so per-GPU memory and per-step
+# cost stay fixed. NOTE: 1D cost ~ 1/dx^2, so wall time still grows ~1/dx
+# even with this scaling -- the finest run (dx=0.004) needs 75 nodes and
+# several hours. dx is pinned so nx = node_number * 2209 exactly (clean
+# GPU decomposition); the lineout length isn't round so the actual dx
+# differs from the nominal label in the 4th-5th sig fig.
 #
 # Usage:  bash run_dx_scan.sh           # generate ALL 5 decks + sbatch
 #         bash run_dx_scan.sh 0.01      # generate only the dx=0.01 point
@@ -41,11 +33,11 @@ PROJ=/pscratch/sd/d/dschnei/MagShockZ
 # bit more diagnostic averaging without the window collapsing or n_ave blowing up.
 # nominal_dx  exact_dx     node_number(=GPUs)   n_ave   walltime
 CONFIGS=(
-  "0.3    0.3         1     6     12:00:00"
-  "0.1    0.1000033   2     9     24:00:00"
-  "0.03   0.0300012   8     12    24:00:00"
-  "0.01   0.0100004   24    18    24:00:00"
-  "0.004  0.0040002   60    24    24:00:00"
+  "0.3    0.3         4     6     00:30:00"
+  "0.1    0.1000033   12    9     00:30:00"
+  "0.03   0.0300012   40    12    01:00:00"
+  "0.01   0.0100004   120   18    24:00:00"
+  "0.004  0.0040002   300   24    24:00:00"
 )
 
 ONLY="${1:-}"   # optional single nominal dx to (re)generate

@@ -7,7 +7,7 @@
 #SBATCH --mail-user=dschneidinger@g.ucla.edu
 #SBATCH --mail-type=ALL
 #SBATCH -A m5032
-#SBATCH -t 03:00:00
+#SBATCH -t 24:00:00
 
 # Disable GPU-direct RDMA (fixes cxil_map write errors)
 export MPICH_GPU_SUPPORT_ENABLED=0
@@ -22,9 +22,10 @@ ulimit -s unlimited
 
 cd /pscratch/sd/d/dschnei/MagShockZ/input_files/magshockz_rqm100_dx0.01_ppc500_g20.1d
 
-# OSIRIS embedded Python imports py-script-1d.py (init_type="python"); put the run
-# dir on PYTHONPATH so all ranks can import it (srun exports this).
-export PYTHONPATH=$PWD:${PYTHONPATH:-}
+# OSIRIS's embedded Python imports py-script-1d.py (init_type="python") -- it must be on
+# PYTHONPATH; srun exports this to all ranks. The deck + binary are sbcast to /tmp, but
+# the py-script stays here on shared scratch.
+export PYTHONPATH=/pscratch/sd/d/dschnei/MagShockZ/input_files/magshockz_rqm100_dx0.01_ppc500_g20.1d:${PYTHONPATH:-}
 
 echo "Before sbcast"
 sbcast -f /global/common/software/m5032/osiris/bin/osiris-1D-dev.e /tmp/osiris-1D-dev.e

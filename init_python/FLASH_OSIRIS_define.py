@@ -65,6 +65,7 @@ class FLASH_OSIRIS_Base:
         logger.info(f"Project directory: {self.proj_dir}")
         self.output_dir = self.proj_dir / "input_files" / self.inputfile_name
         logger.info(f"Output directory: {self.output_dir}")
+        self.fig_dir = self.output_dir / "figures"
 
         self.omega_pe = np.sqrt(self.n0 * yt.units.electron_charge_mks**2 / (yt.units.eps_0 * yt.units.electron_mass)).to('1/s')
         logger.info(f"Plasma frequency omega_pe: {np.format_float_scientific(self.omega_pe.to('1/s'), 2)} 1/s")
@@ -167,7 +168,7 @@ class FLASH_OSIRIS_Base:
         n_bytes_particles = n_particles* 2 * 70 # maria says ~70 bytes per particle. I don't know if this is single or double precision, we also need to allocate for twice as many particles
 
         mem_per_GPU = 40e9
-        max_bytes_per_GPU = mem_per_GPU * .8 # 80% of 16GB
+        max_bytes_per_GPU = mem_per_GPU * .8 # 80% of 40GB (A100)
         print("Number of particles: ", np.format_float_scientific(n_particles,3))
 
         logger.info(f"Recommended number of GPUs: {np.ceil(n_bytes_particles/max_bytes_per_GPU)}")
@@ -626,6 +627,7 @@ class FLASH_OSIRIS_Base:
         from scipy.interpolate import RegularGridInterpolator
         import pickle
 
+        self.fig_dir.mkdir(parents=True, exist_ok=True)
         if isinstance(fields, str):
             fields = [fields]  # Convert to a list with a single element
         else:
@@ -678,7 +680,7 @@ class FLASH_OSIRIS_Base:
             ax2.grid(True)
             
             plt.tight_layout()
-            plt.savefig(f'{self.output_dir}/{field}_1D.png', dpi=150)
+            plt.savefig(f'{self.fig_dir}/{field}_1D.png', dpi=150)
             plt.close()
 
     def _sample_conservation(self, pts):
@@ -789,9 +791,9 @@ class FLASH_OSIRIS_Base:
         ax2.grid(True)
 
         plt.tight_layout()
-        plt.savefig(self.output_dir / fname, dpi=150)
+        plt.savefig(self.fig_dir / fname, dpi=150)
         plt.close()
-        logger.info(f"{title}: max relative deviation {max_dev:.3e} -> {self.output_dir / fname}")
+        logger.info(f"{title}: max relative deviation {max_dev:.3e} -> {self.fig_dir / fname}")
         return max_dev
 
     def _overlay_plot_2d(self, fname, extent, flash2d, osiris2d, title, label,
@@ -831,9 +833,9 @@ class FLASH_OSIRIS_Base:
                          color='w', bbox=dict(boxstyle='round', fc='k', alpha=0.4))
         fig.suptitle(title)
         plt.tight_layout()
-        plt.savefig(self.output_dir / fname, dpi=150)
+        plt.savefig(self.fig_dir / fname, dpi=150)
         plt.close()
-        logger.info(f"{title}: max |relative residual| {max_dev:.3e} -> {self.output_dir / fname}")
+        logger.info(f"{title}: max |relative residual| {max_dev:.3e} -> {self.fig_dir / fname}")
         return max_dev
 
     def plot_conservation_diagnostics(self, n_points=10000):
@@ -859,6 +861,7 @@ class FLASH_OSIRIS_Base:
         carries 1/Z of a real ion's thermal energy -- so we conserve the *pressure* ratio
         instead.
         """
+        self.fig_dir.mkdir(parents=True, exist_ok=True)
         # key -> (ylabel, title, FLASH label, OSIRIS label, log)
         specs = [
             ('pressure_ratio', r'$P_e/P_i$', 'Electron/ion pressure ratio at t=0',
@@ -904,6 +907,7 @@ class FLASH_OSIRIS_Base:
         import matplotlib.pyplot as plt
         from scipy.interpolate import RegularGridInterpolator
         import pickle
+        self.fig_dir.mkdir(parents=True, exist_ok=True)
         output = {}
         if isinstance(fields, str):
             fields = [fields]  # Convert to a list with a single element
@@ -986,7 +990,7 @@ class FLASH_OSIRIS_Base:
             ax2.legend()
             
             plt.tight_layout()
-            plt.savefig(f'{self.output_dir}/{field}_2D.png', dpi=150)
+            plt.savefig(f'{self.fig_dir}/{field}_2D.png', dpi=150)
             plt.close()
 
             output[field] = [bottom_data, top_data, left_data, right_data]

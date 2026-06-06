@@ -157,7 +157,7 @@ diag_species
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
     n_ave(1:1) = 24,
-    reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg", 
+    reports = "charge, savg", 
 
     rep_udist = "uth1", "uth2", "ufl1", "ufl2", 
 
@@ -226,7 +226,7 @@ diag_species
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
     n_ave(1:1) = 24,
-    reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg", 
+    reports = "charge, savg", 
 
     rep_udist = "uth1", "uth2", "ufl1", "ufl2", 
 
@@ -295,7 +295,7 @@ diag_species
     ndump_fac_ene = 10,
     ndump_fac_pha = 1,
     n_ave(1:1) = 24,
-    reports = "charge, savg", "j1, savg", "j2, savg", "j3, savg", "q1, savg", "q2, savg", "q3, savg", 
+    reports = "charge, savg", 
 
     rep_udist = "uth1", "uth2", "ufl1", "ufl2", 
 
