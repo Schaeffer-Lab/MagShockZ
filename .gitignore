@@ -71,3 +71,5 @@ results/
 */tmp/
 *.mp4
 *.png
+# Generated OSIRIS input files (regenerate with init_python/FLASH_OSIRIS_define.py)
+input_files/
