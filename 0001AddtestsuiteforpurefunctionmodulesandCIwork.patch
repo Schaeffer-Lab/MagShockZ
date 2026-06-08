@@ -1,0 +1,923 @@
+From 0d62d81496da03ced5cf4caac931a6d640dd2e67 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 7 Jun 2026 06:36:37 +0000
+Subject: [PATCH 1/2] Add test suite for pure-function modules and CI workflow
+
+Introduces pytest infrastructure and 59 unit tests covering:
+- moments.py: Gaussian moment orders 0/1/2, zero-distribution safety, error handling
+- temperature_anisotropy.py: safe_ratio edge cases, temperature_profile scaling, region_averages
+- energy_partition.py (OSIRIS): species/field energy profiles, partition_by_region
+- flash_energy_partition.py: energy_densities (all channels, unit correctness), partition_by_region, partition_summary
+
+Includes lightweight stubs for osh5def and analysis_utils so tests run
+without the full OSIRIS/astropy stack. Adds pyproject.toml for pytest
+config and a GitHub Actions workflow to run tests on every push/PR.
+
+https://claude.ai/code/session_01CFAMSz1ZBtzwcKKPadPWAV
+---
+ .github/workflows/test.yml           |  25 +++
+ pyproject.toml                       |  23 +++
+ tests/analysis_utils.py              |  16 ++
+ tests/conftest.py                    |  65 ++++++++
+ tests/osh5def.py                     |  24 +++
+ tests/test_energy_partition.py       | 174 ++++++++++++++++++++
+ tests/test_flash_energy_partition.py | 231 +++++++++++++++++++++++++++
+ tests/test_moments.py                | 137 ++++++++++++++++
+ tests/test_temperature_anisotropy.py | 134 ++++++++++++++++
+ 9 files changed, 829 insertions(+)
+ create mode 100644 .github/workflows/test.yml
+ create mode 100644 pyproject.toml
+ create mode 100644 tests/analysis_utils.py
+ create mode 100644 tests/conftest.py
+ create mode 100644 tests/osh5def.py
+ create mode 100644 tests/test_energy_partition.py
+ create mode 100644 tests/test_flash_energy_partition.py
+ create mode 100644 tests/test_moments.py
+ create mode 100644 tests/test_temperature_anisotropy.py
+
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+new file mode 100644
+index 0000000..4ca139a
+--- /dev/null
++++ b/.github/workflows/test.yml
+@@ -0,0 +1,25 @@
++name: Tests
++
++on:
++  push:
++    branches: ["**"]
++  pull_request:
++
++jobs:
++  test:
++    runs-on: ubuntu-latest
++
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Set up Python
++        uses: actions/setup-python@v5
++        with:
++          python-version: "3.11"
++          cache: "pip"
++
++      - name: Install dependencies
++        run: pip install numpy scipy unyt pytest pytest-cov
++
++      - name: Run tests
++        run: pytest --cov=src --cov-report=term-missing
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..cec44f0
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,23 @@
++[build-system]
++requires = ["setuptools>=61"]
++build-backend = "setuptools.backends.legacy:build"
++
++[project]
++name = "magshockz"
++version = "0.1.0"
++requires-python = ">=3.10"
++dependencies = [
++    "numpy",
++    "scipy",
++    "unyt",
++]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++addopts = "--tb=short -q"
++
++[tool.coverage.run]
++source = ["src"]
++
++[tool.coverage.report]
++show_missing = true
+diff --git a/tests/analysis_utils.py b/tests/analysis_utils.py
+new file mode 100644
+index 0000000..d72e84b
+--- /dev/null
++++ b/tests/analysis_utils.py
+@@ -0,0 +1,16 @@
++"""Minimal analysis_utils stub for test environments.
++
++Provides only the symbols imported by the pure-function modules under test
++(energy_partition.py, temperature_anisotropy.py) so the full OSIRIS/astropy
++stack is not required in CI.
++"""
++
++import numpy as np
++
++
++def region_masks(x, x_shock: float, x_downstream_start: float):
++    """Boolean (upstream, downstream) masks — mirrors the real implementation."""
++    x = np.asarray(x)
++    upstream = x > x_shock
++    downstream = (x >= x_downstream_start) & (x <= x_shock)
++    return upstream, downstream
+diff --git a/tests/conftest.py b/tests/conftest.py
+new file mode 100644
+index 0000000..a3fb59e
+--- /dev/null
++++ b/tests/conftest.py
+@@ -0,0 +1,65 @@
++"""Shared fixtures and lightweight H5Data stub for tests."""
++
++import sys
++import os
++
++import numpy as np
++import pytest
++
++# Put tests/ before src/ so stub modules (osh5def, analysis_utils) shadow the
++# real ones that pull in heavy optional dependencies (astropy, osiris, etc.).
++_TESTS_DIR = os.path.dirname(__file__)
++_SRC_DIR = os.path.join(_TESTS_DIR, "..", "src")
++for _p in (_SRC_DIR, _TESTS_DIR):
++    if _p not in sys.path:
++        sys.path.insert(0, _p)
++# Ensure tests/ is first so stubs win.
++sys.path.remove(_TESTS_DIR)
++sys.path.insert(0, _TESTS_DIR)
++
++
++class FakeAxis:
++    """Minimal axis descriptor matching the osh5def.DataAxis interface."""
++
++    def __init__(self, name: str, arr: np.ndarray):
++        self.name = name
++        self.min = float(arr[0])
++        self.max = float(arr[-1])
++        self.size = len(arr)
++
++
++class FakeH5Data(np.ndarray):
++    """numpy ndarray subclass that mimics the osh5def.H5Data used by moments.py."""
++
++    def __new__(cls, array, axes):
++        obj = np.asarray(array).view(cls)
++        obj.axes = axes
++        return obj
++
++    def __array_finalize__(self, obj):
++        if obj is None:
++            return
++        self.axes = getattr(obj, "axes", [])
++
++    def has_axis(self, name: str) -> bool:
++        return any(ax.name == name for ax in self.axes)
++
++
++def make_phase_space(p_arr: np.ndarray, x_arr: np.ndarray, values: np.ndarray) -> FakeH5Data:
++    """Build a 2-D (p, x) FakeH5Data from pre-computed values."""
++    axes = [FakeAxis("p1", p_arr), FakeAxis("x1", x_arr)]
++    return FakeH5Data(values, axes)
++
++
++# ---------------------------------------------------------------------------
++# Common grids
++# ---------------------------------------------------------------------------
++
++@pytest.fixture
++def p_grid():
++    return np.linspace(-5.0, 5.0, 401)
++
++
++@pytest.fixture
++def x_grid():
++    return np.linspace(0.0, 100.0, 50)
+diff --git a/tests/osh5def.py b/tests/osh5def.py
+new file mode 100644
+index 0000000..3435a31
+--- /dev/null
++++ b/tests/osh5def.py
+@@ -0,0 +1,24 @@
++"""Minimal osh5def stub for test environments that lack the full OSIRIS library.
++
++Only the symbols used by src/moments.py are defined here.  The real H5Data
++is a numpy subclass; our FakeH5Data in conftest.py replaces it for all tests.
++"""
++
++import numpy as np
++
++
++class H5Data(np.ndarray):
++    """Bare-minimum H5Data so ``isinstance(x, osh5def.H5Data)`` passes if needed."""
++
++    def __new__(cls, array, axes=None):
++        obj = np.asarray(array).view(cls)
++        obj.axes = axes or []
++        return obj
++
++    def __array_finalize__(self, obj):
++        if obj is None:
++            return
++        self.axes = getattr(obj, "axes", [])
++
++    def has_axis(self, name: str) -> bool:
++        return any(ax.name == name for ax in self.axes)
+diff --git a/tests/test_energy_partition.py b/tests/test_energy_partition.py
+new file mode 100644
+index 0000000..e01624b
+--- /dev/null
++++ b/tests/test_energy_partition.py
+@@ -0,0 +1,174 @@
++"""Tests for src/energy_partition.py (OSIRIS pure-function module)."""
++
++import numpy as np
++import pytest
++
++from conftest import make_phase_space
++import energy_partition as ep
++
++
++def gaussian_phase_space(mu, sigma, p_arr, x_arr):
++    f_p = np.exp(-0.5 * ((p_arr - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
++    values = np.outer(f_p, np.ones(len(x_arr)))
++    return make_phase_space(p_arr, x_arr, values)
++
++
++# ---------------------------------------------------------------------------
++# species_energy_profiles
++# ---------------------------------------------------------------------------
++
++class TestSpeciesEnergyProfiles:
++    p_arr = np.linspace(-10.0, 10.0, 2001)
++    x_arr = np.linspace(0.0, 50.0, 20)
++
++    def test_output_shapes(self):
++        ps = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
++        u_ram, u_th = ep.species_energy_profiles(ps, rqm=1.0, v_shock=0.0)
++        assert u_ram.shape == (len(self.x_arr),)
++        assert u_th.shape == (len(self.x_arr),)
++
++    def test_ram_zero_when_bulk_equals_shock_velocity(self):
++        """If the bulk velocity equals v_shock the ram energy should be ~0."""
++        mu = 0.3  # bulk velocity
++        ps = gaussian_phase_space(mu, 0.5, self.p_arr, self.x_arr)
++        u_ram, _ = ep.species_energy_profiles(ps, rqm=1.0, v_shock=mu)
++        np.testing.assert_allclose(u_ram, 0.0, atol=1e-6)
++
++    def test_thermal_energy_positive(self):
++        ps = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
++        _, u_th = ep.species_energy_profiles(ps, rqm=1.0, v_shock=0.0)
++        assert np.all(u_th >= 0.0)
++
++    def test_rqm_scales_both_channels(self):
++        """Doubling |rqm| should double both ram and thermal energy densities."""
++        ps = gaussian_phase_space(1.0, 1.0, self.p_arr, self.x_arr)
++        u_ram_1, u_th_1 = ep.species_energy_profiles(ps, rqm=1.0, v_shock=0.0)
++        u_ram_2, u_th_2 = ep.species_energy_profiles(ps, rqm=2.0, v_shock=0.0)
++        np.testing.assert_allclose(u_ram_2, 2.0 * u_ram_1, rtol=1e-6)
++        np.testing.assert_allclose(u_th_2, 2.0 * u_th_1, rtol=1e-6)
++
++    def test_negative_rqm_same_as_positive(self):
++        ps = gaussian_phase_space(0.5, 1.0, self.p_arr, self.x_arr)
++        u_ram_p, u_th_p = ep.species_energy_profiles(ps, rqm=+50.0, v_shock=0.0)
++        u_ram_n, u_th_n = ep.species_energy_profiles(ps, rqm=-50.0, v_shock=0.0)
++        np.testing.assert_allclose(u_ram_p, u_ram_n, rtol=1e-10)
++        np.testing.assert_allclose(u_th_p, u_th_n, rtol=1e-10)
++
++
++# ---------------------------------------------------------------------------
++# field_energy_profiles
++# ---------------------------------------------------------------------------
++
++class TestFieldEnergyProfiles:
++    N = 100
++    x = np.linspace(0.0, 100.0, N)
++
++    def _uniform_fields(self, val=1.0):
++        return (np.full(self.N, val),) * 6  # b1,b2,b3,e1,e2,e3
++
++    def test_output_shapes(self):
++        b1, b2, b3, e1, e2, e3 = self._uniform_fields()
++        u_B, u_E = ep.field_energy_profiles(b1, b2, b3, e1, e2, e3, self.x, x_shock=50.0)
++        assert u_B.shape == (self.N,)
++        assert u_E.shape == (self.N,)
++
++    def test_full_mode_uniform_field(self):
++        """B² / 2 for uniform unit field along one axis."""
++        b1 = np.ones(self.N)
++        zeros = np.zeros(self.N)
++        u_B, u_E = ep.field_energy_profiles(
++            b1, zeros, zeros, zeros, zeros, zeros, self.x, x_shock=50.0, field_mode="full"
++        )
++        np.testing.assert_allclose(u_B, 0.5)
++        np.testing.assert_allclose(u_E, 0.0)
++
++    def test_electric_energy_formula(self):
++        """E² / 2 summed over three components."""
++        zeros = np.zeros(self.N)
++        e1 = np.full(self.N, 1.0)
++        e2 = np.full(self.N, 2.0)
++        e3 = np.full(self.N, 3.0)
++        _, u_E = ep.field_energy_profiles(
++            zeros, zeros, zeros, e1, e2, e3, self.x, x_shock=50.0
++        )
++        expected = 0.5 * (1**2 + 2**2 + 3**2)
++        np.testing.assert_allclose(u_E, expected)
++
++    def test_delta_mode_subtracts_upstream_mean(self):
++        """In delta mode, upstream region B energy should be ~0 for uniform upstream."""
++        b2 = np.where(self.x > 50.0, 3.0, 6.0)  # uniform in upstream half
++        zeros = np.zeros(self.N)
++        u_B, _ = ep.field_energy_profiles(
++            zeros, b2, zeros, zeros, zeros, zeros, self.x, x_shock=50.0,
++            field_mode="delta"
++        )
++        upstream_mask = self.x > 50.0
++        np.testing.assert_allclose(u_B[upstream_mask], 0.0, atol=1e-10)
++
++    def test_full_vs_delta_differ_when_background_nonzero(self):
++        b2 = np.ones(self.N) * 2.0
++        zeros = np.zeros(self.N)
++        u_B_full, _ = ep.field_energy_profiles(
++            zeros, b2, zeros, zeros, zeros, zeros, self.x, x_shock=50.0, field_mode="full"
++        )
++        u_B_delta, _ = ep.field_energy_profiles(
++            zeros, b2, zeros, zeros, zeros, zeros, self.x, x_shock=50.0, field_mode="delta"
++        )
++        # delta mode removes background → upstream energy goes to 0
++        assert np.all(u_B_full >= u_B_delta - 1e-12)
++
++
++# ---------------------------------------------------------------------------
++# partition_by_region
++# ---------------------------------------------------------------------------
++
++class TestPartitionByRegion:
++    x = np.linspace(0.0, 100.0, 101)
++    x_shock = 60.0
++    x_ds_start = 20.0
++
++    def _flat_arrays(self, up_val, dn_val):
++        """Arrays that equal up_val upstream and dn_val downstream."""
++        arr = np.where(self.x > self.x_shock, up_val, dn_val)
++        return arr
++
++    def test_returns_upstream_and_downstream_keys(self):
++        arr = self._flat_arrays(1.0, 2.0)
++        result = ep.partition_by_region(arr, arr, arr, arr, self.x, self.x_shock, self.x_ds_start)
++        assert "upstream" in result
++        assert "downstream" in result
++
++    def test_upstream_mean_values(self):
++        u_ram = self._flat_arrays(10.0, 0.0)
++        zeros = np.zeros_like(self.x)
++        result = ep.partition_by_region(u_ram, zeros, zeros, zeros, self.x, self.x_shock, self.x_ds_start)
++        assert result["upstream"]["ram"] == pytest.approx(10.0)
++        assert result["upstream"]["thermal"] == pytest.approx(0.0)
++
++    def test_downstream_mean_values(self):
++        u_th = np.where(
++            (self.x >= self.x_ds_start) & (self.x <= self.x_shock), 5.0, 0.0
++        )
++        zeros = np.zeros_like(self.x)
++        result = ep.partition_by_region(zeros, u_th, zeros, zeros, self.x, self.x_shock, self.x_ds_start)
++        assert result["downstream"]["thermal"] == pytest.approx(5.0)
++
++    def test_all_channels_present(self):
++        arr = np.ones_like(self.x)
++        result = ep.partition_by_region(arr, arr, arr, arr, self.x, self.x_shock, self.x_ds_start)
++        for side in ("upstream", "downstream"):
++            for key in ("ram", "thermal", "B_field", "E_field"):
++                assert key in result[side]
++
++    def test_raises_on_empty_upstream(self):
++        x = np.linspace(0.0, 50.0, 51)
++        # x_shock beyond the grid → no upstream points
++        arr = np.ones_like(x)
++        with pytest.raises(ValueError, match="Empty region"):
++            ep.partition_by_region(arr, arr, arr, arr, x, x_shock=100.0, x_downstream_start=0.0)
++
++    def test_raises_on_empty_downstream(self):
++        x = np.linspace(0.0, 100.0, 101)
++        arr = np.ones_like(x)
++        with pytest.raises(ValueError, match="Empty region"):
++            ep.partition_by_region(arr, arr, arr, arr, x, x_shock=10.0, x_downstream_start=20.0)
+diff --git a/tests/test_flash_energy_partition.py b/tests/test_flash_energy_partition.py
+new file mode 100644
+index 0000000..7d2279a
+--- /dev/null
++++ b/tests/test_flash_energy_partition.py
+@@ -0,0 +1,231 @@
++"""Tests for src/flash_energy_partition.py.
++
++All tests use unyt arrays to mirror real FLASH lineout data, verifying
++dimensional correctness and numerical values against known analytic results.
++"""
++
++import numpy as np
++import pytest
++import unyt
++
++from conftest import make_phase_space  # noqa: F401 — triggers path setup
++import flash_energy_partition as fep
++
++
++# ---------------------------------------------------------------------------
++# Helpers
++# ---------------------------------------------------------------------------
++
++def make_inputs(N=50, v_shock_cgs=0.0):
++    """Return a dict of uniform synthetic FLASH lineout inputs."""
++    x = np.linspace(0.0, 1e10, N) * unyt.cm
++
++    ne    = np.full(N, 1e8)   * unyt.cm**-3
++    Te    = np.full(N, 1.0)   * unyt.eV
++    Ti    = np.full(N, 2.0)   * unyt.eV
++    n_ion = np.full(N, 1e8)   * unyt.cm**-3
++    rho   = np.full(N, 1.67e-15) * unyt.g / unyt.cm**3   # ~1e8 protons/cm³
++    v_para = np.full(N, 1e7)  * unyt.cm / unyt.s
++    B_mag = np.full(N, 1e-3)  * unyt.gauss
++
++    return dict(ne=ne, Te=Te, Ti=Ti, n_ion=n_ion, rho=rho,
++                v_para=v_para, v_shock=v_shock_cgs, B_mag=B_mag, x=x)
++
++
++# ---------------------------------------------------------------------------
++# energy_densities
++# ---------------------------------------------------------------------------
++
++class TestEnergyDensities:
++    def test_output_keys(self):
++        inp = make_inputs()
++        result = fep.energy_densities(
++            inp["ne"], inp["Te"], inp["Ti"], inp["n_ion"],
++            inp["rho"], inp["v_para"], inp["v_shock"], inp["B_mag"],
++        )
++        assert set(result) == {"u_kinetic", "u_th_e", "u_th_i", "u_mag"}
++
++    def test_output_units_are_erg_per_cm3(self):
++        inp = make_inputs()
++        result = fep.energy_densities(
++            inp["ne"], inp["Te"], inp["Ti"], inp["n_ion"],
++            inp["rho"], inp["v_para"], inp["v_shock"], inp["B_mag"],
++        )
++        for key, arr in result.items():
++            assert arr.units == unyt.erg / unyt.cm**3, f"{key} has wrong units: {arr.units}"
++
++    def test_kinetic_zero_when_v_equals_v_shock(self):
++        """When v_para == v_shock, ram energy must be zero."""
++        inp = make_inputs()
++        v = 3e7  # cm/s
++        inp["v_para"] = np.full(50, v) * unyt.cm / unyt.s
++        result = fep.energy_densities(
++            inp["ne"], inp["Te"], inp["Ti"], inp["n_ion"],
++            inp["rho"], inp["v_para"], v_shock=v, B_mag=inp["B_mag"],
++        )
++        np.testing.assert_allclose(result["u_kinetic"].value, 0.0, atol=1e-30)
++
++    def test_kinetic_energy_formula(self):
++        """u_kinetic = ½ ρ dv²; verify against hand calculation."""
++        N = 10
++        rho = np.full(N, 2.0) * unyt.g / unyt.cm**3
++        dv  = 3.0  # cm/s — v_para - v_shock
++        v_para = np.full(N, dv) * unyt.cm / unyt.s
++        zeros = np.zeros(N)
++        ne = np.full(N, 1.0) * unyt.cm**-3
++        Ti = Te = np.full(N, 1.0) * unyt.eV
++        n_ion = ne
++        B_mag = np.full(N, 1e-6) * unyt.gauss
++
++        result = fep.energy_densities(ne, Te, Ti, n_ion, rho, v_para, 0.0, B_mag)
++        expected = 0.5 * 2.0 * dv**2  # erg/cm³
++        np.testing.assert_allclose(
++            result["u_kinetic"].to("erg/cm**3").value, expected, rtol=1e-10
++        )
++
++    def test_thermal_electron_formula(self):
++        """u_th_e = 1.5 * ne * kTe; verify numerically."""
++        N = 5
++        ne_val = 1e10  # cm^-3
++        Te_val = 1.0   # eV
++        ne = np.full(N, ne_val) * unyt.cm**-3
++        Te = np.full(N, Te_val) * unyt.eV
++        Ti = Te.copy()
++        n_ion = ne.copy()
++        rho = np.full(N, 1e-15) * unyt.g / unyt.cm**3
++        v_para = np.zeros(N) * unyt.cm / unyt.s
++        B_mag = np.full(N, 1e-6) * unyt.gauss
++
++        result = fep.energy_densities(ne, Te, Ti, n_ion, rho, v_para, 0.0, B_mag)
++        expected = (1.5 * (ne_val * unyt.cm**-3) * (Te_val * unyt.eV)).to("erg/cm**3").value
++        np.testing.assert_allclose(
++            result["u_th_e"].to("erg/cm**3").value, expected, rtol=1e-6
++        )
++
++    def test_magnetic_energy_formula(self):
++        """u_mag = B²/(8π) in Gaussian CGS."""
++        N = 5
++        B_val = 1e-3  # Gauss
++        ne = np.full(N, 1e8) * unyt.cm**-3
++        Te = Ti = np.full(N, 1.0) * unyt.eV
++        n_ion = ne.copy()
++        rho = np.full(N, 1e-15) * unyt.g / unyt.cm**3
++        v_para = np.zeros(N) * unyt.cm / unyt.s
++        B_mag = np.full(N, B_val) * unyt.gauss
++
++        result = fep.energy_densities(ne, Te, Ti, n_ion, rho, v_para, 0.0, B_mag)
++        expected = B_val**2 / (8.0 * np.pi)  # erg/cm³
++        np.testing.assert_allclose(
++            result["u_mag"].to("erg/cm**3").value, expected, rtol=1e-6
++        )
++
++    def test_bare_float_v_shock_accepted(self):
++        """v_shock may be passed as a plain float (cm/s)."""
++        inp = make_inputs()
++        result = fep.energy_densities(
++            inp["ne"], inp["Te"], inp["Ti"], inp["n_ion"],
++            inp["rho"], inp["v_para"], v_shock=1e7, B_mag=inp["B_mag"],
++        )
++        assert "u_kinetic" in result
++
++    def test_all_channels_non_negative(self):
++        inp = make_inputs()
++        result = fep.energy_densities(
++            inp["ne"], inp["Te"], inp["Ti"], inp["n_ion"],
++            inp["rho"], inp["v_para"], inp["v_shock"], inp["B_mag"],
++        )
++        for key, arr in result.items():
++            assert np.all(arr.value >= 0.0), f"{key} has negative values"
++
++
++# ---------------------------------------------------------------------------
++# partition_by_region
++# ---------------------------------------------------------------------------
++
++class TestFlashPartitionByRegion:
++    N = 100
++    x = np.linspace(0.0, 1e10, N)  # plain float cm array
++    x_shock = 6e9
++    x_ds = 2e9
++
++    def _flat_energy(self, up_val, dn_val):
++        """Uniform energy dict: up_val upstream, dn_val downstream."""
++        arr_np = np.where(self.x > self.x_shock, up_val, dn_val)
++        # Wrap in unyt so the function's .to("erg/cm**3") call succeeds
++        arr = arr_np * unyt.erg / unyt.cm**3
++        return {k: arr for k in ("u_kinetic", "u_th_e", "u_th_i", "u_mag")}
++
++    def test_keys_present(self):
++        energy = self._flat_energy(1.0, 2.0)
++        result = fep.partition_by_region(energy, self.x, self.x_shock, self.x_ds)
++        assert "upstream" in result and "downstream" in result
++        for side in ("upstream", "downstream"):
++            assert "means" in result[side]
++            assert "fractions" in result[side]
++            assert "total" in result[side]
++
++    def test_upstream_mean_correct(self):
++        energy = self._flat_energy(up_val=10.0, dn_val=1.0)
++        result = fep.partition_by_region(energy, self.x, self.x_shock, self.x_ds)
++        for ch in ("u_kinetic", "u_th_e", "u_th_i", "u_mag"):
++            assert result["upstream"]["means"][ch] == pytest.approx(10.0, rel=1e-6)
++
++    def test_downstream_mean_correct(self):
++        energy = self._flat_energy(up_val=1.0, dn_val=5.0)
++        result = fep.partition_by_region(energy, self.x, self.x_shock, self.x_ds)
++        for ch in ("u_kinetic", "u_th_e", "u_th_i", "u_mag"):
++            assert result["downstream"]["means"][ch] == pytest.approx(5.0, rel=1e-6)
++
++    def test_fractions_sum_to_one(self):
++        energy = self._flat_energy(1.0, 2.0)
++        result = fep.partition_by_region(energy, self.x, self.x_shock, self.x_ds)
++        for side in ("upstream", "downstream"):
++            total_frac = sum(result[side]["fractions"].values())
++            assert total_frac == pytest.approx(1.0, rel=1e-6)
++
++    def test_total_equals_sum_of_means(self):
++        energy = self._flat_energy(3.0, 7.0)
++        result = fep.partition_by_region(energy, self.x, self.x_shock, self.x_ds)
++        for side in ("upstream", "downstream"):
++            s = sum(result[side]["means"].values())
++            assert result[side]["total"] == pytest.approx(s, rel=1e-10)
++
++    def test_raises_on_empty_upstream(self):
++        energy = self._flat_energy(1.0, 1.0)
++        with pytest.raises(ValueError, match="Empty region"):
++            fep.partition_by_region(energy, self.x, x_shock=2e10, x_downstream_start=0.0)
++
++    def test_raises_on_empty_downstream(self):
++        energy = self._flat_energy(1.0, 1.0)
++        with pytest.raises(ValueError, match="Empty region"):
++            fep.partition_by_region(energy, self.x, x_shock=1e9, x_downstream_start=5e9)
++
++
++# ---------------------------------------------------------------------------
++# partition_summary
++# ---------------------------------------------------------------------------
++
++class TestPartitionSummary:
++    def _make_result(self):
++        x = np.linspace(0.0, 1e10, 100)
++        x_shock = 6e9
++        x_ds = 2e9
++        arr = np.where(x > x_shock, 1.0, 2.0) * unyt.erg / unyt.cm**3
++        energy = {k: arr for k in ("u_kinetic", "u_th_e", "u_th_i", "u_mag")}
++        return fep.partition_by_region(energy, x, x_shock, x_ds)
++
++    def test_returns_string(self):
++        result = self._make_result()
++        summary = fep.partition_summary(result)
++        assert isinstance(summary, str)
++
++    def test_contains_channel_labels(self):
++        result = self._make_result()
++        summary = fep.partition_summary(result)
++        for label in ("Kinetic", "Thermal", "Magnetic"):
++            assert label in summary
++
++    def test_contains_upstream_and_downstream(self):
++        result = self._make_result()
++        summary = fep.partition_summary(result)
++        assert "Upstream" in summary or "upstream" in summary.lower()
+diff --git a/tests/test_moments.py b/tests/test_moments.py
+new file mode 100644
+index 0000000..6a61425
+--- /dev/null
++++ b/tests/test_moments.py
+@@ -0,0 +1,137 @@
++"""Tests for src/moments.py.
++
++Each moment order is verified against a Gaussian distribution whose analytic
++moments are known exactly:
++    order 0  -> integral of f  = 1  (normalised Gaussian)
++    order 1  -> mean           = mu
++    order 2  -> variance       = sigma^2
++"""
++
++import numpy as np
++import pytest
++
++from conftest import FakeAxis, FakeH5Data, make_phase_space
++import moments
++
++
++# ---------------------------------------------------------------------------
++# Helpers
++# ---------------------------------------------------------------------------
++
++def gaussian_phase_space(mu: float, sigma: float, p_arr, x_arr) -> FakeH5Data:
++    """1-D Gaussian in p, uniform over x, shape (p, x)."""
++    f_p = np.exp(-0.5 * ((p_arr - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
++    values = np.outer(f_p, np.ones(len(x_arr)))
++    return make_phase_space(p_arr, x_arr, values)
++
++
++# ---------------------------------------------------------------------------
++# Fixtures
++# ---------------------------------------------------------------------------
++
++@pytest.fixture
++def p_arr():
++    return np.linspace(-10.0, 10.0, 2001)
++
++
++@pytest.fixture
++def x_arr():
++    return np.linspace(0.0, 50.0, 20)
++
++
++# ---------------------------------------------------------------------------
++# Order 0 — number density
++# ---------------------------------------------------------------------------
++
++class TestMomentOrder0:
++    def test_unit_gaussian_integrates_to_one(self, p_arr, x_arr):
++        ps = gaussian_phase_space(mu=0.0, sigma=1.0, p_arr=p_arr, x_arr=x_arr)
++        result = moments.moment(ps, order=0, axis="p1")
++        assert result.shape == (len(x_arr),)
++        np.testing.assert_allclose(result, 1.0, atol=1e-4)
++
++    def test_scaled_gaussian_density(self, p_arr, x_arr):
++        """Density scales linearly with amplitude."""
++        ps = gaussian_phase_space(mu=0.0, sigma=1.0, p_arr=p_arr, x_arr=x_arr)
++        m0 = moments.moment(ps * 3.0, order=0, axis="p1")
++        np.testing.assert_allclose(m0, 3.0, atol=1e-3)
++
++    def test_zero_distribution_gives_zero_density(self, p_arr, x_arr):
++        ps = make_phase_space(p_arr, x_arr, np.zeros((len(p_arr), len(x_arr))))
++        result = moments.moment(ps, order=0, axis="p1")
++        np.testing.assert_array_equal(result, 0.0)
++
++
++# ---------------------------------------------------------------------------
++# Order 1 — mean (bulk) velocity
++# ---------------------------------------------------------------------------
++
++class TestMomentOrder1:
++    def test_zero_mean_gaussian(self, p_arr, x_arr):
++        ps = gaussian_phase_space(mu=0.0, sigma=1.0, p_arr=p_arr, x_arr=x_arr)
++        m1 = moments.moment(ps, order=1, axis="p1")
++        np.testing.assert_allclose(m1, 0.0, atol=1e-4)
++
++    def test_shifted_mean(self, p_arr, x_arr):
++        ps = gaussian_phase_space(mu=2.5, sigma=1.0, p_arr=p_arr, x_arr=x_arr)
++        m1 = moments.moment(ps, order=1, axis="p1")
++        np.testing.assert_allclose(m1, 2.5, atol=1e-3)
++
++    def test_negative_shift(self, p_arr, x_arr):
++        ps = gaussian_phase_space(mu=-1.8, sigma=0.8, p_arr=p_arr, x_arr=x_arr)
++        m1 = moments.moment(ps, order=1, axis="p1")
++        np.testing.assert_allclose(m1, -1.8, atol=1e-3)
++
++    def test_zero_distribution_returns_zero_not_nan(self, p_arr, x_arr):
++        """Safe division: zero density should give zero, not NaN."""
++        ps = make_phase_space(p_arr, x_arr, np.zeros((len(p_arr), len(x_arr))))
++        m1 = moments.moment(ps, order=1, axis="p1")
++        assert np.all(m1 == 0.0)
++
++
++# ---------------------------------------------------------------------------
++# Order 2 — velocity variance
++# ---------------------------------------------------------------------------
++
++class TestMomentOrder2:
++    def test_unit_gaussian_variance(self, p_arr, x_arr):
++        """sigma=1 Gaussian should give variance=1."""
++        ps = gaussian_phase_space(mu=0.0, sigma=1.0, p_arr=p_arr, x_arr=x_arr)
++        m2 = moments.moment(ps, order=2, axis="p1")
++        np.testing.assert_allclose(m2, 1.0, atol=1e-3)
++
++    def test_variance_independent_of_mean(self, p_arr, x_arr):
++        """Variance is the *central* moment, so shifting the mean doesn't change it."""
++        ps_centred = gaussian_phase_space(mu=0.0, sigma=2.0, p_arr=p_arr, x_arr=x_arr)
++        ps_shifted = gaussian_phase_space(mu=3.0, sigma=2.0, p_arr=p_arr, x_arr=x_arr)
++        m2_c = moments.moment(ps_centred, order=2, axis="p1")
++        m2_s = moments.moment(ps_shifted, order=2, axis="p1")
++        np.testing.assert_allclose(m2_c, m2_s, rtol=5e-3)
++
++    def test_wider_gaussian_larger_variance(self, p_arr, x_arr):
++        ps_narrow = gaussian_phase_space(mu=0.0, sigma=0.5, p_arr=p_arr, x_arr=x_arr)
++        ps_wide = gaussian_phase_space(mu=0.0, sigma=2.0, p_arr=p_arr, x_arr=x_arr)
++        m2_narrow = moments.moment(ps_narrow, order=2, axis="p1")
++        m2_wide = moments.moment(ps_wide, order=2, axis="p1")
++        assert np.all(m2_wide > m2_narrow)
++
++    def test_zero_distribution_returns_zero_not_nan(self, p_arr, x_arr):
++        ps = make_phase_space(p_arr, x_arr, np.zeros((len(p_arr), len(x_arr))))
++        m2 = moments.moment(ps, order=2, axis="p1")
++        assert np.all(m2 == 0.0)
++
++
++# ---------------------------------------------------------------------------
++# Error handling
++# ---------------------------------------------------------------------------
++
++class TestMomentErrors:
++    def test_invalid_axis_raises(self, p_arr, x_arr):
++        ps = gaussian_phase_space(mu=0.0, sigma=1.0, p_arr=p_arr, x_arr=x_arr)
++        with pytest.raises(ValueError, match="axis"):
++            moments.moment(ps, order=0, axis="bad_axis")
++
++    def test_unsupported_order_raises(self, p_arr, x_arr):
++        ps = gaussian_phase_space(mu=0.0, sigma=1.0, p_arr=p_arr, x_arr=x_arr)
++        with pytest.raises(ValueError, match="order"):
++            moments.moment(ps, order=3, axis="p1")
+diff --git a/tests/test_temperature_anisotropy.py b/tests/test_temperature_anisotropy.py
+new file mode 100644
+index 0000000..83c5c06
+--- /dev/null
++++ b/tests/test_temperature_anisotropy.py
+@@ -0,0 +1,134 @@
++"""Tests for src/temperature_anisotropy.py."""
++
++import numpy as np
++import pytest
++
++from conftest import FakeAxis, FakeH5Data, make_phase_space
++
++
++# ---------------------------------------------------------------------------
++# Helpers
++# ---------------------------------------------------------------------------
++
++def gaussian_phase_space(mu, sigma, p_arr, x_arr):
++    f_p = np.exp(-0.5 * ((p_arr - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
++    values = np.outer(f_p, np.ones(len(x_arr)))
++    return make_phase_space(p_arr, x_arr, values)
++
++
++# ---------------------------------------------------------------------------
++# safe_ratio
++# ---------------------------------------------------------------------------
++
++class TestSafeRatio:
++    def setup_method(self):
++        # Import inside method so sys.path manipulation is in effect
++        import temperature_anisotropy as ta
++        self.ta = ta
++
++    def test_normal_division(self):
++        num = np.array([2.0, 4.0, 6.0])
++        den = np.array([1.0, 2.0, 3.0])
++        result = self.ta.safe_ratio(num, den)
++        np.testing.assert_allclose(result, [2.0, 2.0, 2.0])
++
++    def test_zero_denominator_gives_nan(self):
++        num = np.array([1.0, 2.0])
++        den = np.array([0.0, 1.0])
++        result = self.ta.safe_ratio(num, den)
++        assert np.isnan(result[0])
++        assert result[1] == pytest.approx(2.0)
++
++    def test_below_floor_gives_nan(self):
++        num = np.array([1.0])
++        den = np.array([1e-15])  # below default floor of 1e-10
++        result = self.ta.safe_ratio(num, den)
++        assert np.isnan(result[0])
++
++    def test_custom_floor(self):
++        num = np.array([1.0])
++        den = np.array([0.5])
++        # With a very high floor, even 0.5 is below it → nan
++        result = self.ta.safe_ratio(num, den, floor=1.0)
++        assert np.isnan(result[0])
++
++    def test_negative_denominator_below_floor(self):
++        """safe_ratio checks |denominator|, so negatives near zero also → nan."""
++        num = np.array([1.0])
++        den = np.array([-1e-12])
++        result = self.ta.safe_ratio(num, den)
++        assert np.isnan(result[0])
++
++    def test_all_finite_when_denominator_large(self):
++        num = np.ones(10)
++        den = np.full(10, 100.0)
++        result = self.ta.safe_ratio(num, den)
++        assert np.all(np.isfinite(result))
++
++
++# ---------------------------------------------------------------------------
++# temperature_profile
++# ---------------------------------------------------------------------------
++
++class TestTemperatureProfile:
++    def setup_method(self):
++        import temperature_anisotropy as ta
++        self.ta = ta
++        self.p_arr = np.linspace(-10.0, 10.0, 2001)
++        self.x_arr = np.linspace(0.0, 50.0, 20)
++
++    def test_electron_temperature_unit_gaussian(self):
++        """Electrons: rqm=1, sigma=1 Gaussian → T = 1 (in m_e c^2 units)."""
++        ps = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
++        T = self.ta.temperature_profile(ps, rqm=1.0, momentum_axis="p1")
++        np.testing.assert_allclose(T, 1.0, atol=1e-3)
++
++    def test_rqm_scales_temperature(self):
++        """Temperature scales with |rqm| (the species mass factor)."""
++        ps = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
++        T_e = self.ta.temperature_profile(ps, rqm=1.0, momentum_axis="p1")
++        T_i = self.ta.temperature_profile(ps, rqm=100.0, momentum_axis="p1")
++        np.testing.assert_allclose(T_i, 100.0 * T_e, rtol=1e-3)
++
++    def test_negative_rqm_same_as_positive(self):
++        """Sign of rqm (charge sign) must not affect temperature."""
++        ps = gaussian_phase_space(0.0, 2.0, self.p_arr, self.x_arr)
++        T_pos = self.ta.temperature_profile(ps, rqm=+50.0, momentum_axis="p1")
++        T_neg = self.ta.temperature_profile(ps, rqm=-50.0, momentum_axis="p1")
++        np.testing.assert_allclose(T_pos, T_neg, rtol=1e-10)
++
++    def test_wider_distribution_higher_temperature(self):
++        ps_cold = gaussian_phase_space(0.0, 0.5, self.p_arr, self.x_arr)
++        ps_hot = gaussian_phase_space(0.0, 3.0, self.p_arr, self.x_arr)
++        T_cold = self.ta.temperature_profile(ps_cold, rqm=1.0, momentum_axis="p1")
++        T_hot = self.ta.temperature_profile(ps_hot, rqm=1.0, momentum_axis="p1")
++        assert np.all(T_hot > T_cold)
++
++
++# ---------------------------------------------------------------------------
++# region_averages
++# ---------------------------------------------------------------------------
++
++class TestRegionAverages:
++    def setup_method(self):
++        import temperature_anisotropy as ta
++        self.ta = ta
++
++    def test_known_averages(self):
++        x = np.linspace(0.0, 100.0, 101)
++        # upstream: x > 60, downstream: 20 <= x <= 60
++        arr = np.where(x > 60, 10.0, 1.0)
++        up_mean, dn_mean = self.ta.region_averages(
++            arr, x, x_shock=60.0, x_downstream_start=20.0
++        )
++        assert up_mean == pytest.approx(10.0)
++        assert dn_mean == pytest.approx(1.0)
++
++    def test_uniform_array_same_means(self):
++        x = np.linspace(0.0, 100.0, 100)
++        arr = np.ones_like(x) * 5.0
++        up_mean, dn_mean = self.ta.region_averages(
++            arr, x, x_shock=50.0, x_downstream_start=10.0
++        )
++        assert up_mean == pytest.approx(5.0)
++        assert dn_mean == pytest.approx(5.0)
+-- 
+2.43.0
+
