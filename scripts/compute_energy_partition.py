@@ -60,6 +60,7 @@ def main():
     print(f"Dump    : t={t_val}  (index {t_idx} of {len(times)} dumps)")
 
     sim = analysis_utils.run_from_config(cfg)
+    spec = analysis_utils.RunSpec.from_sim_dir(sim_dir)
     species_list = list(sim.deck.species)  # species defined in the input deck
 
     # Load phase spaces and fields for this single dump
@@ -154,7 +155,7 @@ def main():
         downstream_E_field=np.asarray(dn["E_field"]),
         # Metadata for reproducibility
         field_mode=np.asarray(field_mode),
-        norm_density_cm3=np.asarray(cfg["norm_density_cm3"]),
+        norm_density_cm3=np.asarray(spec.reference_density),
         config_path=np.asarray(os.path.abspath(args.config)),
     )
     print(f"\nSaved → {out_path}")

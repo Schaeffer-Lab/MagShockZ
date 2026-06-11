@@ -43,6 +43,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import osh5def
 import osh5io
+import osh5vis
 from matplotlib.colors import LogNorm
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +55,9 @@ from analysis_utils import (
     StreakBuilder, axis_values, field_path, density_path, phase_path,
     transverse_profile,
 )
+# Shock-front detection / trajectory fitting is single-sourced in src/shock.py.
+from shock import detect_front_edge as detect_front
+from shock import robust_linfit
 
 
 # ---------------------------------------------------------------------------
@@ -70,15 +74,24 @@ def bmag_frame(sim_dir: str, t: int, layout, hw: float):
     b = {q: osh5io.read_h5(field_path(sim_dir, q, t))
          for q in ("b1", "b2", "b3")}
     bmag = np.sqrt(b["b1"] ** 2 + b["b2"] ** 2 + b["b3"] ** 2)  # stays H5Data
-    bmag.data_attrs = dict(bmag.data_attrs, NAME="|B|", LONG_NAME=r"$|B|$", UNITS="B_0")
+    # Keep the propagated UNITS (osh5def carries the field unit m_e c ω_p/e through
+    # the sqrt) — do NOT relabel as B_0: the data is in OSIRIS field-normalisation
+    # units, not normalised to an upstream B_0.  LONG_NAME is bare TeX (osh5vis wraps).
+    bmag.data_attrs = dict(bmag.data_attrs, NAME="|B|", LONG_NAME=r"|B|")
     return transverse_profile(bmag, layout.normal_axis, hw)
 
 
 def density_frame(sim_dir: str, sp: str, t: int, layout, hw: float):
-    """Number density n = |charge|, reduced to a 1D profile [n_0]."""
+    """Number density n = |charge|, reduced to a 1D profile [n_0].
+
+    The OSIRIS ``charge`` diagnostic is q·n in normalised charge-density units; the
+    UNITS are relabelled to n_0 here because |charge| = |q|·n/n_0 equals n/n_0 only
+    for a singly-charged species.  overview.py calls this only for electrons (q=−1),
+    where that holds; do NOT use it for multiply-charged ions without dividing by Z.
+    """
     ch = osh5io.read_h5(density_path(sim_dir, sp, t, savg=layout.density_savg))
     n = np.abs(ch)
-    n.data_attrs = dict(n.data_attrs, NAME=f"n_{sp}", LONG_NAME=fr"$n_\mathrm{{{sp}}}$", UNITS="n_0")
+    n.data_attrs = dict(n.data_attrs, NAME=f"n_{sp}", LONG_NAME=fr"n_\mathrm{{{sp}}}", UNITS="n_0")
     return transverse_profile(n, layout.normal_axis, hw)
 
 
@@ -95,7 +108,7 @@ def temperature_frame(sim_dir: str, sp: str, t: int, rqm: float, layout, axis: s
     x_axis = next(a for a in ps.axes if a.name != axis)  # the spatial axis
     return osh5def.H5Data(
         T,
-        data_attrs={"NAME": f"T_{sp}", "LONG_NAME": fr"$T_{{{sp}}}$", "UNITS": "m_e c^2"},
+        data_attrs={"NAME": f"T_{sp}", "LONG_NAME": fr"T_{{{sp}}}", "UNITS": "m_e c^2"},
         run_attrs=ps.run_attrs,
         axes=[x_axis],
     )
@@ -106,92 +119,70 @@ def temperature_frame(sim_dir: str, sp: str, t: int, rqm: float, layout, axis: s
 # ---------------------------------------------------------------------------
 
 def assemble_streak(frames):
-    """StreakBuilder a list of 1D H5Data frames -> (Z[time, x], time[], x[])."""
+    """StreakBuilder a list of 1D H5Data frames -> (streak[time, x] H5Data, Z, time[], x[]).
+
+    The H5Data ``streak`` (axes [time, x], carrying NAME/LONG_NAME/UNITS) is what
+    osh5vis plots; Z/time/x are the plain-numpy views the .npz and detection use.
+    """
     streak = StreakBuilder(frames).build()
     Z = np.asarray(streak)
     time = axis_values(streak, 0)
     x = axis_values(streak, 1)
-    return Z, time, x
-
-
-def detect_front(x, profile, x_pred, half_window, compression_min=1.3, edge_frac=0.5):
-    """Detect the (upstream) leading edge of compression near x_pred.
-
-    Returns the largest x within [x_pred - hw, x_pred + hw] at which `profile`
-    exceeds baseline + edge_frac*(peak - baseline).  The shock moves toward +x
-    with compressed plasma on the low-x side, so the leading edge is the
-    upstream-most crossing.  Returns nan if the window holds no clear
-    compression (peak/baseline < compression_min).
-    """
-    win = (x >= x_pred - half_window) & (x <= x_pred + half_window)
-    if not win.any():
-        return float("nan")
-    xa, pa = x[win], profile[win]
-    baseline = np.percentile(pa, 20)
-    peak = np.percentile(pa, 99)
-    if baseline <= 0 or peak / baseline < compression_min:
-        return float("nan")
-    thresh = baseline + edge_frac * (peak - baseline)
-    above = xa[pa >= thresh]
-    return float(above.max()) if above.size else float("nan")
+    return streak, Z, time, x
 
 
 # ---------------------------------------------------------------------------
 # Plot helpers
 # ---------------------------------------------------------------------------
 
-def plot_streak(ax, time, x, Z, *, label, cmap, log, shock_lines):
+def plot_streak(ax, streak, x, *, title, cmap, log, shock_lines):
     """Render one streak (time horizontal, space vertical) with shock overlays.
+
+    ``streak`` is the [time, x] H5Data; it is transposed to [x, time] and drawn
+    with osh5vis.osimshow, which sets the time/space axis labels and the colorbar
+    *unit* from the data's own ``data_attrs`` (so the displayed unit always matches
+    the data, never a hardcoded guess).  ``title`` is just the quantity name; the
+    percentile colour limits and shock-line overlays are layered on top.
 
     shock_lines : list of (time_arr, x_arr, style_kwargs, legend_label)
     """
-    C = Z.T  # [x, time] for pcolormesh(X=time, Y=space)
+    C = np.asarray(streak)
     finite = C[np.isfinite(C)]
     if log:
         pos = finite[finite > 0]
-        vmin = np.percentile(pos, 2) if pos.size else 1e-6
         vmax = np.percentile(pos, 99.5) if pos.size else 1.0
-        norm = LogNorm(vmin=max(vmin, vmax * 1e-4), vmax=vmax)
-        im = ax.pcolormesh(time, x, np.clip(C, max(vmin, vmax * 1e-4), None), cmap=cmap, norm=norm, shading="auto")
+        vmin = max(np.percentile(pos, 2) if pos.size else 1e-6, vmax * 1e-4)
+        kw = dict(norm=LogNorm(vmin=vmin, vmax=vmax))
     else:
         vmax = np.percentile(finite, 99.5) if finite.size else 1.0
-        im = ax.pcolormesh(time, x, C, cmap=cmap, vmin=0.0, vmax=vmax, shading="auto")
-    cb = ax.figure.colorbar(im, ax=ax, pad=0.01)
-    cb.set_label(label)
+        kw = dict(vmin=0.0, vmax=vmax)
+    # osimshow draws [x, time] (time horizontal, x vertical), auto axes; colorbar
+    # label is derived from the data's UNITS (no cblabel override).
+    osh5vis.osimshow(streak.transpose(), ax=ax, cmap=cmap, title=title, **kw)
     for t_arr, x_arr, style, leg in shock_lines:
         ax.plot(t_arr, x_arr, label=leg, **style)
-    ax.set_xlabel(r"$t$ [$\omega_{pe}^{-1}$]")
-    ax.set_ylabel(r"$x$ [$c/\omega_{pe}$]")
     ax.set_ylim(x.min(), x.max())
-    ax.set_title(label)
     ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
 
 
-def plot_phasespace(ax, ps, *, title, normal_axis="x1", x_shock=None):
-    """imshow a p-x phase space (x horizontal, p vertical) on a log color scale.
+def plot_phasespace(ax, ps, *, title, x_shock=None):
+    """osimshow a p-x phase space (x horizontal, p vertical) on a log color scale.
 
     OSIRIS phase spaces are charge-weighted, so electron f is stored negative;
-    take |f| so both species share one positive log color scale.  ``normal_axis``
-    names the spatial axis ("x1" in 1D, "x2" in the 2D run).
+    take |f| so both species share one positive log color scale.  osh5io stores
+    the data as [p, x] (in both 1D and the 2D run), so osh5vis.osimshow places the
+    spatial axis horizontal and momentum vertical and labels both from the data's
+    own metadata — no explicit normal-axis needed.
     """
-    data = np.abs(np.asarray(ps))
-    p_ax = next(a for a in ps.axes if a.name != normal_axis)
-    x_ax = next(a for a in ps.axes if a.name == normal_axis)
-    # axes order is [p, x]; data is f(p, x) so origin='lower' with extent below
-    vmax = np.percentile(data[data > 0], 99.7) if (data > 0).any() else 1.0
+    data = np.abs(ps)                                   # H5Data, metadata preserved
+    arr = np.asarray(data)
+    vmax = np.percentile(arr[arr > 0], 99.7) if (arr > 0).any() else 1.0
     vmin = vmax * 1e-4
-    im = ax.imshow(
-        np.clip(data, vmin, None),
-        origin="lower", aspect="auto",
-        extent=[x_ax.min, x_ax.max, p_ax.min, p_ax.max],
-        cmap="inferno", norm=LogNorm(vmin=vmin, vmax=vmax),
-    )
-    ax.figure.colorbar(im, ax=ax, pad=0.01, label=r"$f$ (arb.)")
+    osh5vis.osimshow(data, ax=ax, cmap="inferno",
+                     norm=LogNorm(vmin=vmin, vmax=vmax), title=title,
+                     cblabel=r"$f$ (arb.)")
     if x_shock is not None and np.isfinite(x_shock):
         ax.axvline(x_shock, color="cyan", ls="--", lw=1.2)
-    ax.set_xlabel(r"$x$ [$c/\omega_{pe}$]")
-    ax.set_ylabel(r"$p_1$ [$m_e c$]")
-    ax.set_title(title)
 
 
 def main():
@@ -276,10 +267,10 @@ def main():
     # is not, so they have different cell counts.  Each streak therefore keeps
     # its own spatial axis; combine via interpolation, never by shared indexing.
     print("Loading |B|, n_e frames...")
-    B_streak,  time_f, x_f  = assemble_streak([bmag_frame(sim_dir, t, layout, hw) for t in field_dumps])
-    ne_streak, _,      x_ne = assemble_streak([density_frame(sim_dir, "e", t, layout, hw) for t in field_dumps])
+    B_h5,  B_streak,  time_f, x_f  = assemble_streak([bmag_frame(sim_dir, t, layout, hw) for t in field_dumps])
+    ne_h5, ne_streak, _,      x_ne = assemble_streak([density_frame(sim_dir, "e", t, layout, hw) for t in field_dumps])
     print("Loading T_i frames (phase space)...")
-    Ti_streak, time_p, x_p = assemble_streak([temperature_frame(sim_dir, "al", t, rqm_i, layout) for t in phase_dumps])
+    Ti_h5, Ti_streak, time_p, x_p = assemble_streak([temperature_frame(sim_dir, "al", t, rqm_i, layout) for t in phase_dumps])
 
     # ------------------------------------------------------------------
     # Per-frame shock-front detection (from the fine density streak) + fit
@@ -300,25 +291,44 @@ def main():
         else float(np.median(B_streak[0]))
     t_gyro = 2.0 * np.pi * abs(rqm_i) / B_upstream  # ion gyroperiod [1/wpe]
 
+    # Upstream Alfven speed in OSIRIS units (v_A/c), measured from the t=0 frame.
+    # In normalised units the field equals omega_ce [1/wpe], so omega_ci = |B|/|rqm_i|,
+    # and the ion plasma frequency is omega_pi = sqrt(n_e/|rqm_i|) [wpe] (the upstream
+    # charge density is n_e by quasineutrality).  Hence
+    #     v_A/c = omega_ci/omega_pi = |B| / sqrt(|rqm_i| * n_e).
+    # The config and detected shock speeds are then quoted as Alfvenic Mach numbers.
+    upstream_ne = x_ne > x_shock_0
+    ne_upstream = float(np.median(ne_streak[0][upstream_ne])) if upstream_ne.any() \
+        else float(np.median(ne_streak[0]))
+    v_A = B_upstream / np.sqrt(abs(rqm_i) * ne_upstream)  # [c]
+    M_A_cfg = v_shock_cfg / v_A
+
     detected = np.isfinite(x_det)
     fit_mask = detected & (time_f >= t_gyro)
     if fit_mask.sum() >= 2:
-        slope, intercept = np.polyfit(time_f[fit_mask], x_det[fit_mask], 1)
+        # Same outlier-rejecting fit as FLASH (shock.robust_linfit): on a clean
+        # detected front it equals a plain polyfit, but stray detections are
+        # sigma-clipped instead of biasing the trajectory.
+        slope, intercept = robust_linfit(time_f[fit_mask], x_det[fit_mask])
         v_fit, x0_fit = float(slope), float(intercept)
     else:
         v_fit, x0_fit = float("nan"), float("nan")
 
+    M_A_fit = v_fit / v_A
+
     print("\n--- Shock front ---")
-    print(f"  config fit   : v = {v_shock_cfg:.5f} c,  x0 = {x_shock_0:.1f} c/wpe")
-    print(f"  ion gyroperiod : T_ci = {t_gyro:.1f} /wpe  (|B|_up = {B_upstream:.4g}); "
-          f"fit skips t < T_ci")
-    print(f"  detected fit : v = {v_fit:.5f} c,  x0 = {x0_fit:.1f} c/wpe  "
+    print(f"  upstream     : |B| = {B_upstream:.4g} [m_e c wpe/e],  n_e = {ne_upstream:.4g} n0,  v_A = {v_A:.5f} c")
+    print(f"  config fit   : v = {v_shock_cfg:.5f} c = {M_A_cfg:.2f} v_A,  x0 = {x_shock_0:.1f} c/wpe")
+    print(f"  ion gyroperiod : T_ci = {t_gyro:.1f} /wpe; fit skips t < T_ci")
+    print(f"  detected fit : v = {v_fit:.5f} c = {M_A_fit:.2f} v_A,  x0 = {x0_fit:.1f} c/wpe  "
           f"({fit_mask.sum()}/{detected.sum()} fitted/detected frames)")
 
-    cfg_line = (time_f, x_pred, dict(color="white", ls="-", lw=1.6), f"config fit (v={v_shock_cfg:.4f}c)")
+    cfg_line = (time_f, x_pred, dict(color="white", ls="-", lw=1.6),
+                f"config fit (v={v_shock_cfg:.4f}c, $M_A$={M_A_cfg:.2f})")
     det_pts  = (time_f[detected], x_det[detected], dict(color="lime", ls="none", marker=".", ms=6), "detected front")
     fit_line = (time_f[time_f >= t_gyro], x0_fit + v_fit * time_f[time_f >= t_gyro],
-                dict(color="lime", ls="--", lw=1.2), f"detected fit (v={v_fit:.4f}c, t≥T_ci)")
+                dict(color="lime", ls="--", lw=1.2),
+                f"detected fit (v={v_fit:.4f}c, $M_A$={M_A_fit:.2f}, t≥T_ci)")
 
     out_dir = args.output_dir or os.path.join(_HERE, "..", "results", os.path.basename(sim_dir.rstrip("/")))
     os.makedirs(out_dir, exist_ok=True)
@@ -328,23 +338,24 @@ def main():
     # Figure 1 — streaks
     # ------------------------------------------------------------------
     fig1, axes = plt.subplots(2, 2, figsize=(16, 10))
-    plot_streak(axes[0, 0], time_f, x_f, B_streak,
-                label=r"$|B|$ [$B_0$]", cmap="viridis", log=False,
+    plot_streak(axes[0, 0], B_h5, x_f,
+                title=r"$|B|$", cmap="viridis", log=False,
                 shock_lines=[cfg_line, det_pts, fit_line])
-    plot_streak(axes[0, 1], time_f, x_ne, ne_streak,
-                label=r"$n_e$ [$n_0$]", cmap="magma", log=True,
+    plot_streak(axes[0, 1], ne_h5, x_ne,
+                title=r"$n_e$", cmap="magma", log=True,
                 shock_lines=[cfg_line, det_pts, fit_line])
-    plot_streak(axes[1, 0], time_p, x_p, Ti_streak,
-                label=r"$T_{i,\parallel}$ [$m_e c^2$]", cmap="inferno", log=True,
+    plot_streak(axes[1, 0], Ti_h5, x_p,
+                title=r"$T_{i,\parallel}$", cmap="inferno", log=True,
                 shock_lines=[cfg_line, det_pts, fit_line])
 
     axt = axes[1, 1]
-    axt.plot(time_f, x_pred, color="tab:blue", lw=1.8, label=f"config fit (v={v_shock_cfg:.4f}c)")
+    axt.plot(time_f, x_pred, color="tab:blue", lw=1.8,
+             label=f"config fit (v={v_shock_cfg:.4f}c, $M_A$={M_A_cfg:.2f})")
     axt.plot(time_f[detected], x_det[detected], "o", color="tab:green", ms=5, label="detected front")
     if np.isfinite(v_fit):
         tf = time_f[time_f >= t_gyro]
         axt.plot(tf, x0_fit + v_fit * tf, "--", color="tab:green", lw=1.4,
-                 label=f"detected fit (v={v_fit:.4f}c, t≥T_ci)")
+                 label=f"detected fit (v={v_fit:.4f}c, $M_A$={M_A_fit:.2f}, t≥T_ci)")
     axt.axvline(t_gyro, color="0.4", ls=":", lw=1.2, label=fr"$T_{{ci}}$ = {t_gyro:.0f}/$\omega_{{pe}}$")
     axt.set_xlabel(r"$t$ [$\omega_{pe}^{-1}$]")
     axt.set_ylabel(r"$x_\mathrm{shock}$ [$c/\omega_{pe}$]")
@@ -371,19 +382,21 @@ def main():
 
     fig2, ax2 = plt.subplots(2, 2, figsize=(16, 10))
     plot_phasespace(ax2[0, 0], ps_al, title=f"Ion $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})",
-                    normal_axis=layout.normal_axis, x_shock=x_shock_snap)
+                    x_shock=x_shock_snap)
     plot_phasespace(ax2[0, 1], ps_e,  title=f"Electron $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})",
-                    normal_axis=layout.normal_axis, x_shock=x_shock_snap)
+                    x_shock=x_shock_snap)
 
-    # n_e and |B| line-outs (field grid)
+    # n_e and |B| line-outs (osplot1d draws each H5Data row on its own x-axis;
+    # the twin y-axis, colours and shock marker are layered on afterward).
     axp = ax2[1, 0]
-    axp.plot(x_ne, ne_streak[i_snap], color="tab:purple", label=r"$n_e$ [$n_0$]")
-    axp.set_xlabel(r"$x$ [$c/\omega_{pe}$]")
-    axp.set_ylabel(r"$n_e$ [$n_0$]", color="tab:purple")
+    # osplot1d sets each y-label (name + UNITS) from the data; just recolour them,
+    # so |B| shows its true field unit rather than a hardcoded B_0.
+    osh5vis.osplot1d(ne_h5[i_snap], ax=axp, color="tab:purple", show_time=False, title="")
+    axp.yaxis.label.set_color("tab:purple")
     axp.tick_params(axis="y", labelcolor="tab:purple")
     axb = axp.twinx()
-    axb.plot(x_f, B_streak[i_snap], color="tab:orange", label=r"$|B|$ [$B_0$]")
-    axb.set_ylabel(r"$|B|$ [$B_0$]", color="tab:orange")
+    osh5vis.osplot1d(B_h5[i_snap], ax=axb, color="tab:orange", show_time=False, title="")
+    axb.yaxis.label.set_color("tab:orange")
     axb.tick_params(axis="y", labelcolor="tab:orange")
     axp.axvline(x_shock_snap, color="k", ls="--", lw=1)
     axp.set_title("Density & magnetic compression")
@@ -392,18 +405,20 @@ def main():
     # T_i, T_e (parallel) line-outs (phase grid), recomputed fresh at the snapshot
     # dump (the T_i streak may be on a coarser cadence).  Temperature is meaningless
     # in the upstream vacuum, so mask where n_e (interpolated onto the phase grid)
-    # drops below 5% of its peak.
-    Ti_snap = np.asarray(temperature_frame(sim_dir, "al", t_snap, rqm_i, layout))
-    Te_snap = np.asarray(temperature_frame(sim_dir, "e", t_snap, -1.0, layout))
+    # drops below 5% of its peak.  The masked profiles stay H5Data so ossemilogy can
+    # label them; nan masks the vacuum.
+    Ti_snap = temperature_frame(sim_dir, "al", t_snap, rqm_i, layout)
+    Te_snap = temperature_frame(sim_dir, "e", t_snap, -1.0, layout)
     ne_on_p = np.interp(x_p, x_ne, ne_streak[i_snap])
     have_plasma = ne_on_p > 0.05 * np.nanmax(ne_streak[i_snap])
-    Ti_plot = np.where(have_plasma, Ti_snap, np.nan)
-    Te_plot = np.where(have_plasma, Te_snap, np.nan)
+    Ti_plot = Ti_snap.copy(); Ti_plot[~have_plasma] = np.nan
+    Te_plot = Te_snap.copy(); Te_plot[~have_plasma] = np.nan
     axT = ax2[1, 1]
-    axT.semilogy(x_p, Ti_plot, color="tab:red", label=r"$T_{i,\parallel}$ (Al)")
-    axT.semilogy(x_p, Te_plot, color="tab:blue", label=r"$T_{e,\parallel}$")
+    osh5vis.ossemilogy(Ti_plot, ax=axT, color="tab:red", label=r"$T_{i,\parallel}$ (Al)",
+                       show_time=False, title="")
+    osh5vis.ossemilogy(Te_plot, ax=axT, color="tab:blue", label=r"$T_{e,\parallel}$",
+                       show_time=False, title="")
     axT.axvline(x_shock_snap, color="k", ls="--", lw=1)
-    axT.set_xlabel(r"$x$ [$c/\omega_{pe}$]")
     axT.set_ylabel(r"$T$ [$m_e c^2$]")
     axT.set_title("Temperature line-outs")
     axT.grid(alpha=0.3, which="both")
@@ -428,6 +443,8 @@ def main():
         x_shock_detected=x_det,
         v_shock_cfg=np.asarray(v_shock_cfg), x_shock_0=np.asarray(x_shock_0),
         v_shock_fit=np.asarray(v_fit), x_shock_0_fit=np.asarray(x0_fit),
+        v_A=np.asarray(v_A), M_A_cfg=np.asarray(M_A_cfg), M_A_fit=np.asarray(M_A_fit),
+        ne_upstream=np.asarray(ne_upstream),
         t_gyro=np.asarray(t_gyro), B_upstream=np.asarray(B_upstream),
         config_path=np.asarray(os.path.abspath(args.config)),
     )

@@ -1077,11 +1077,109 @@ PROTON_ELECTRON_MASS_RATIO = 1836
 
 
 def _str2bool(v):
+    if isinstance(v, bool):
+        return v
     if v.lower() in ("true", "t", "1", "yes"):
         return True
     if v.lower() in ("false", "f", "0", "no"):
         return False
     raise argparse.ArgumentTypeError("expected true/false")
+
+
+# Top-level run.yaml keys that are analysis metadata, NOT generator inputs: kept
+# nested (not flattened into the argparse namespace) so they survive round-trips.
+_METADATA_KEYS = {"charge_states"}
+
+
+def load_run_config(path):
+    """Flatten a run.yaml into a ``dest -> value`` dict for argparse defaults.
+
+    Logical groups (``geometry``/``solver``/``diagnostics``) are one level of
+    nesting purely for readability; their sub-keys map directly to argparse dests
+    and are flattened here.  Metadata blocks in :data:`_METADATA_KEYS` (e.g.
+    ``charge_states``) are passed through unflattened.
+    """
+    import yaml
+    with open(path) as f:
+        cfg = yaml.safe_load(f) or {}
+    flat = {}
+    for k, v in cfg.items():
+        if isinstance(v, dict) and k not in _METADATA_KEYS:
+            flat.update(v)
+        else:
+            flat[k] = v
+    return flat
+
+
+def build_run_spec(args):
+    """Build the canonical (nested, re-runnable) run.yaml dict from resolved args.
+
+    The result is both the frozen provenance record written into the run dir and a
+    valid ``--config`` input (see :func:`load_run_config`).  ``charge_states`` is
+    carried through for downstream analysis even though the generator derives rqm
+    from FLASH and never uses it.
+    """
+    spec = {
+        "data_path": str(args.data_path),
+        "dim": args.dim,
+        "inputfile_name": args.inputfile_name,
+        "reference_density": args.reference_density,
+        "rqm_factor": args.rqm_factor,
+        "dx": args.dx,
+        "ppc": args.ppc,
+        "tmax_gyroperiods": args.tmax_gyroperiods,
+        "algorithm": args.algorithm,
+        "node_number": args.node_number,
+        "num_threads": args.num_threads,
+        "n_dump_total": args.n_dump_total,
+        "restart": args.restart,
+    }
+    charge_states = getattr(args, "charge_states", None)
+    if charge_states is not None:
+        spec["charge_states"] = charge_states
+    if args.dim == 1:
+        spec["geometry"] = {"start_point": args.start_point, "end_point": args.end_point}
+    else:
+        spec["geometry"] = {"xmin": args.xmin, "xmax": args.xmax,
+                            "ymin": args.ymin, "ymax": args.ymax}
+    spec["solver"] = {
+        "vpml_bnd_size": args.vpml_bnd_size,
+        "emf_boundary": args.emf_boundary,
+        "part_boundary": args.part_boundary,
+        "interpolation": args.interpolation,
+        "smooth_type": args.smooth_type,
+        "smooth_order": args.smooth_order,
+    }
+    spec["diagnostics"] = {
+        "n_ave": args.n_ave,
+        "emf_reports": args.emf_reports,
+        "reports": args.reports,
+        "rep_udist": args.rep_udist,
+        "phasespaces": args.phasespaces,
+        "e_ps_pmin": args.e_ps_pmin,
+        "e_ps_pmax": args.e_ps_pmax,
+        "i_ps_pmin": args.i_ps_pmin,
+        "i_ps_pmax": args.i_ps_pmax,
+        "ps_np": args.ps_np,
+        "ps_ngamma": args.ps_ngamma,
+        "ps_gammamax": args.ps_gammamax,
+        "ps_nx": args.ps_nx,
+        "ps_ny": args.ps_ny,
+    }
+    return spec
+
+
+def freeze_run_yaml(out_dir, args):
+    """Write the resolved run spec to ``<out_dir>/run.yaml`` (the analysis source of
+    truth: reference_density, rqm_factor, dx, ppc, charge_states, ...)."""
+    import yaml
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "run.yaml"
+    with open(out_path, "w") as f:
+        yaml.safe_dump(build_run_spec(args), f, default_flow_style=False, sort_keys=False)
+    logger.info(f"Frozen run spec written to {out_path}")
+    return out_path
 
 
 def main(args):
@@ -1163,14 +1261,32 @@ def main(args):
         sim.plot2D(PLOT_FIELDS)
 
     sim.plot_conservation_diagnostics()   # 1D line overlays / 2D imshow comparisons
+    # run.yaml is the analysis source of truth (params); the manifest holds only
+    # provenance + derived quantities (git, omega_pe, gyrotime, ...).
+    freeze_run_yaml(sim.output_dir, args)
     sim.write_manifest(cli_args=" ".join(sys.argv))
 
 
-if __name__ == "__main__":
+def parse_args(argv=None):
+    """Build the CLI, resolve an optional ``--config`` run.yaml, and return args.
+
+    Precedence: a ``--config`` run.yaml supplies values for every argument, and
+    explicit CLI flags override it. ``required`` is relaxed only for keys the config
+    actually provides, so anything left unspecified still errors (no hidden defaults).
+    """
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument('--config', type=str, default=None)
+    _pre_args, _ = _pre.parse_known_args(argv)
+    _config_defaults = load_run_config(_pre_args.config) if _pre_args.config else {}
+
     p = argparse.ArgumentParser(
         description="Generate a python-init OSIRIS deck + py-script + interp slices + "
-                    "lineout plots from a FLASH dump. Every parameter is required: the "
-                    "runme file is the single source of truth (no hidden defaults).")
+                    "lineout plots from a FLASH dump. Provide either a --config run.yaml "
+                    "(the single source of truth) or every flag explicitly (no hidden "
+                    "defaults); CLI flags override the config.")
+
+    p.add_argument('--config', type=str, default=None,
+                   help="YAML run spec providing values for all arguments (CLI overrides)")
 
     # --- physics / core (all required) ---
     p.add_argument('--data_path', type=str, required=True, help="Path to the FLASH dump")
@@ -1223,6 +1339,19 @@ if __name__ == "__main__":
     p.add_argument('--ps_nx', type=int, required=True, help="Spatial bins along x1 for phase space")
     p.add_argument('--ps_ny', type=int, required=True, help="Spatial bins along x2 (2D only, still required)")
 
-    args = p.parse_args()
+    # Apply the run.yaml as defaults: relax `required` for anything it supplies
+    # (CLI still overrides), and inject metadata (e.g. charge_states) into the
+    # namespace. Anything neither in the config nor on the CLI still errors out.
+    if _config_defaults:
+        for action in p._actions:
+            if action.dest in _config_defaults:
+                action.required = False
+        p.set_defaults(**_config_defaults)
+
+    return p.parse_args(argv)
+
+
+if __name__ == "__main__":
+    args = parse_args()
     logger.info(args)
     main(args)

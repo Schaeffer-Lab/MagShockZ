@@ -33,7 +33,7 @@ node_conf
 !----------spatial grid----------
 grid
 {
-    {% if dims == 1 %}nx_p = {{ nx }},{% else %}
+    {% if dims == 1 %}nx_p(1:1) = {{ nx }},{% else %}
     nx_p(1:2) = {{ nx }}, {{ ny }},
     !load_balance(1:2) = .true., .true.,
     !lb_type = "dynamic",

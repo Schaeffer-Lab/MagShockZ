@@ -18,8 +18,9 @@ scripts/overview.py for the OSIRIS run, but in physical units throughout:
     - upstream Mach numbers (M_A, M_s) and v_shock annotated
 
 Run parameters are read from two sources (never duplicated):
-    runme_perlmutter.sh  : line of sight, rqm_factor, B0_Gauss, data_path
-    config YAML          : norm_density_cm3, and optionally flash.v_shock_est
+    run spec (run.yaml)  : data_path, line of sight, rqm_factor, reference_density
+                           (RunSpec; falls back to run_manifest.yaml / runme*.sh)
+    config YAML          : derived-from-data annotations (flash.v_shock_est, shock fit)
 
 Usage
 -----
@@ -49,6 +50,7 @@ sys.path.insert(0, os.path.join(_HERE, "..", "init_nopython"))
 
 import analysis_utils
 import flash_utils as fu
+import shock
 
 # Unit conversion factors
 _CM_TO_UM  = 1e4      # cm → µm
@@ -65,29 +67,6 @@ def _load_one(path, line_start, line_end):
     one FLASH dump and extracts its lineout — fully independent of every other
     dump, so the dumps fan out across worker processes."""
     return fu.flash_lineout(path, line_start, line_end)
-
-
-def _robust_linfit(t, x, n_iter=3, n_sigma=2.5):
-    """Linear fit x = slope·t + intercept with iterative σ-clipping.
-
-    A few bad per-frame detections would otherwise drag the trajectory fit (and
-    hence the predicted window) off the real front, so we drop points more than
-    n_sigma residual-σ from the line and refit.  At least 3 points are always
-    kept; if clipping would drop below that the previous fit is retained.
-    Returns (slope, intercept)."""
-    slope, intercept = np.polyfit(t, x, 1)
-    keep = np.ones(len(t), dtype=bool)
-    for _ in range(n_iter):
-        resid = x - (slope * t + intercept)
-        sigma = np.std(resid[keep])
-        if sigma == 0:
-            break
-        new_keep = np.abs(resid) <= n_sigma * sigma
-        if new_keep.sum() < 3 or np.array_equal(new_keep, keep):
-            break
-        keep = new_keep
-        slope, intercept = np.polyfit(t[keep], x[keep], 1)
-    return float(slope), float(intercept)
 
 
 # ---------------------------------------------------------------------------
@@ -204,17 +183,17 @@ def main():
     # Config + run parameters
     # ------------------------------------------------------------------
     cfg    = analysis_utils.load_config(args.config)
-    runme  = analysis_utils.load_runme(cfg["sim_dir"])
+    spec   = analysis_utils.RunSpec.from_sim_dir(cfg["sim_dir"])
 
-    data_path   = runme["data_path"]                      # e.g. .../plt_cnt_0009
+    data_path   = spec["data_path"]                       # e.g. .../plt_cnt_0009
     flash_dir   = str(os.path.dirname(data_path))
     file_prefix = os.path.basename(data_path)[:-4]        # strip 4-digit index
     flash_ic_index = int(os.path.basename(data_path)[-4:])
 
-    line_start  = tuple(float(v) for v in runme["start_point"])
-    line_end    = tuple(float(v) for v in runme["end_point"])
-    rqm_factor  = float(runme["rqm_factor"])
-    ref_density = float(cfg["norm_density_cm3"])           # cm⁻³
+    line_start  = tuple(float(v) for v in spec["start_point"])
+    line_end    = tuple(float(v) for v in spec["end_point"])
+    rqm_factor  = float(spec.rqm_factor)
+    ref_density = spec.reference_density                   # cm⁻³
 
     # Shock velocity and position estimates from config (used to seed detection)
     flash_cfg    = cfg.get("flash", {})
@@ -321,7 +300,7 @@ def main():
         detected = np.isfinite(x_det_cm)
         if detected.sum() < 2:
             break
-        v_shock_fit, x_shock_0_fit = _robust_linfit(
+        v_shock_fit, x_shock_0_fit = shock.robust_linfit(
             t_s_arr[detected], x_det_cm[detected])
         x_pred_cm = x_shock_0_fit + v_shock_fit * t_s_arr  # predict for next pass
 
@@ -366,7 +345,7 @@ def main():
     x_um_pred = x_pred_cm * _CM_TO_UM
     fit_line  = (time_ns, x_um_pred,
                  dict(color="white", ls="-", lw=1.6),
-                 f"fit  v={v_shock_kms:.1f} km/s")
+                 f"fit  v={v_shock_kms:.1f} km/s  $M_A$={float(mach['M_A']):.2f}")
     det_pts   = (t_ns_det, x_um_det,
                  dict(color="lime", ls="none", marker=".", ms=6),
                  "detected front")

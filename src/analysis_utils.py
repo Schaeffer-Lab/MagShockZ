@@ -16,7 +16,6 @@ Two public objects:
 import glob
 import os
 import re
-import shlex
 from typing import List, Optional
 
 import astropy
@@ -31,7 +30,11 @@ import plasmapy.formulary
 import plasmapy.particles.particle_class
 import yaml
 
-# Fallback input-deck filename when neither the config nor the runme names one.
+# RunSpec — the single source of truth for a run's parameters — lives in its own
+# dependency-light module; re-exported here so analysis_utils.RunSpec keeps working.
+from run_spec import RunSpec, _parse_cli_flags  # noqa: F401
+
+# Fallback input-deck filename when neither the config nor the run spec names one.
 DEFAULT_INPUT_DECK = "magshockz_gpu.1d"
 
 
@@ -446,81 +449,19 @@ def load_results(path: str) -> dict:
     return {k: (d[k].item() if d[k].ndim == 0 else d[k]) for k in d.files}
 
 
-def input_deck_path(cfg: dict) -> str:
-    """Absolute path to the OSIRIS input deck for this run.
-
-    The deck filename is intrinsic to the run, so it is taken from the runme's
-    ``--inputfile_name`` rather than the analysis config.  An explicit
-    ``input_deck`` in the config still overrides (handy for ad-hoc reruns), and
-    :data:`DEFAULT_INPUT_DECK` is the last-resort fallback.
-    """
-    sim_dir = cfg["sim_dir"]
-    name = cfg.get("input_deck")
-    if name is None:
-        try:
-            name = load_runme(sim_dir).get("inputfile_name")
-        except FileNotFoundError:
-            name = None
-    return os.path.join(sim_dir, name or DEFAULT_INPUT_DECK)
-
-
 def run_from_config(cfg: dict, *, B0=None, Z=None, m_i=None) -> "MagShockZRun":
-    """Build a :class:`MagShockZRun` from a parsed config.
+    """Build a :class:`MagShockZRun` from a parsed analysis config.
 
-    Centralises the norm-density unit attach and input-deck path resolution
-    that every analysis script otherwise repeats.
+    Norm density and the input-deck name come from the run's :class:`RunSpec`
+    (single source of truth), not the analysis config.  An explicit
+    ``input_deck`` in the config still overrides the deck name (escape hatch for a
+    run whose generated deck name is unparseable); :data:`DEFAULT_INPUT_DECK` is
+    the last resort.
     """
-    norm_density = float(cfg["norm_density_cm3"]) * astropy.units.cm**-3
-    return MagShockZRun(input_deck_path(cfg), norm_density=norm_density, B0=B0, Z=Z, m_i=m_i)
-
-
-def find_runme(sim_dir: str) -> str:
-    """Return the path to the run's ``runme*.sh`` script inside ``sim_dir``."""
-    matches = sorted(glob.glob(os.path.join(sim_dir, "runme*.sh")))
-    if not matches:
-        raise FileNotFoundError(f"No runme*.sh found in {sim_dir}")
-    return matches[0]
-
-
-def parse_runme(path: str) -> dict:
-    """Extract ``--key value`` pairs from a python-invocation shell script.
-
-    Handles backslash line continuations and strips comments. Multi-value flags
-    (e.g. ``--start_point 0 0.07 0``) are returned as lists; if a flag appears
-    more than once the last occurrence wins.
-    """
-    with open(path) as f:
-        text = f.read()
-    text = re.sub(r"#[^\n]*", "", text)   # strip comments
-    text = re.sub(r"\\\s*\n", " ", text)  # join continuation lines
-    text = text.rstrip().rstrip("\\")     # drop a dangling trailing backslash
-    tokens = shlex.split(text)
-
-    # Advance past the 'python' call and script path to the first flag.
-    i = 0
-    while i < len(tokens) and not tokens[i].startswith("--"):
-        i += 1
-
-    args: dict = {}
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok.startswith("--"):
-            key = tok[2:]
-            vals = []
-            j = i + 1
-            while j < len(tokens) and not tokens[j].startswith("--"):
-                vals.append(tokens[j])
-                j += 1
-            args[key] = vals[0] if len(vals) == 1 else vals
-            i = j
-        else:
-            i += 1
-    return args
-
-
-def load_runme(sim_dir: str) -> dict:
-    """Find and parse the run's ``runme*.sh`` into a ``--key -> value`` dict."""
-    return parse_runme(find_runme(sim_dir))
+    spec = RunSpec.from_sim_dir(cfg["sim_dir"])
+    deck_name = cfg.get("input_deck") or spec.deck_name or DEFAULT_INPUT_DECK
+    return MagShockZRun(os.path.join(cfg["sim_dir"], deck_name),
+                        norm_density=spec.norm_density, B0=B0, Z=Z, m_i=m_i)
 
 
 def default_output_path(output: Optional[str], sim_dir: str, stem: str, t_val: int) -> str:
