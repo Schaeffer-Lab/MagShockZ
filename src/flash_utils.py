@@ -125,8 +125,11 @@ def flash_lineout(
 
 
 # ---------------------------------------------------------------------------
-# Shock-front detection (mirrors overview.py detect_front, real units)
+# Shock-front detection — single-sourced in src/shock.py
 # ---------------------------------------------------------------------------
+
+import shock as _shock
+
 
 def detect_front(
     x: np.ndarray,
@@ -136,42 +139,15 @@ def detect_front(
     compression_min: float = 1.3,
     smooth: int = 3,
 ) -> float:
-    """Detect the shock front (steepest density drop) near x_pred.
+    """FLASH shock front (steepest density drop) near x_pred, in physical CGS units.
 
-    The shock moves toward +x: the shocked/driver material is dense at smaller x
-    and the ambient upstream is tenuous at larger x, so the front is the location
-    of the steepest *drop* in nₑ with increasing x.  We locate it as the most
-    negative density gradient inside the search window, after light boxcar
-    smoothing, and require a minimum compression so flat/ambient windows return
-    nan rather than a spurious edge.  Targeting the steepest gradient places the
-    marker on the actual jump (not its leading edge).
-
-    Parameters
-    ----------
-    x, ne       : spatial coordinate [cm] and electron density [cm⁻³]
-    x_pred      : predicted shock position [cm]
-    half_window : search half-width [cm]
-    compression_min : minimum (95th pct / 20th pct) density ratio to accept a front
-    smooth      : boxcar width [cells] used to suppress single-cell noise
+    Thin wrapper over :func:`shock.detect_front_gradient` (the shared
+    implementation); kept here as ``flash_utils.detect_front`` for the existing
+    ``fu.detect_front`` call sites.
     """
-    win = (x >= x_pred - half_window) & (x <= x_pred + half_window)
-    if win.sum() < 5:
-        return float("nan")
-    xa, pa = x[win], ne[win]
-    order  = np.argsort(xa)
-    xa, pa = xa[order], pa[order]
-
-    baseline = np.percentile(pa, 20)
-    peak     = np.percentile(pa, 95)
-    if baseline <= 0 or peak / baseline < compression_min:
-        return float("nan")
-
-    # light boxcar smoothing (symmetric, so it does not shift the front)
-    if smooth > 1 and pa.size >= smooth:
-        pa = np.convolve(pa, np.ones(smooth) / smooth, mode="same")
-
-    grad = np.gradient(pa, xa)
-    return float(xa[np.argmin(grad)])      # steepest drop = front
+    return _shock.detect_front_gradient(
+        x, ne, x_pred, half_window,
+        compression_min=compression_min, smooth=smooth)
 
 
 # ---------------------------------------------------------------------------

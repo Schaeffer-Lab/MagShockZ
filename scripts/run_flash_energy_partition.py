@@ -85,12 +85,12 @@ def main():
     # Config + run parameters
     # ------------------------------------------------------------------
     cfg   = analysis_utils.load_config(args.config)
-    runme = analysis_utils.load_runme(cfg["sim_dir"])
+    spec  = analysis_utils.RunSpec.from_sim_dir(cfg["sim_dir"])
 
-    data_path   = runme["data_path"]
+    data_path   = spec["data_path"]
     flash_dir   = str(os.path.dirname(data_path))
-    line_start  = tuple(float(v) for v in runme["start_point"])
-    line_end    = tuple(float(v) for v in runme["end_point"])
+    line_start  = tuple(float(v) for v in spec["start_point"])
+    line_end    = tuple(float(v) for v in spec["end_point"])
 
     all_files   = fu.find_plot_files(flash_dir)
     snap_file   = all_files[args.snapshot_idx % len(all_files)]

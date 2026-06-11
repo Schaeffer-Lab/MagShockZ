@@ -19,7 +19,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install numpy scipy unyt pytest pytest-cov
+        run: pip install numpy scipy unyt pyyaml pytest pytest-cov
 
       - name: Run tests
         run: pytest --cov=src --cov-report=term-missing

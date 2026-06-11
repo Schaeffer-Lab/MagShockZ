@@ -241,10 +241,10 @@ def main():
     print(f"Dump    : t={t_val}  (index {args.timestep_idx} of {len(cfg['times'])} dumps)")
 
     sim = analysis_utils.run_from_config(cfg)
-    runme = analysis_utils.load_runme(sim_dir)
+    spec = analysis_utils.RunSpec.from_sim_dir(sim_dir)
 
     # Ion charge state and simulation (reduced) mass ratio
-    Z_i       = int(runme["al_charge_state"])  # number of stripped electrons (from runme)
+    Z_i       = spec.charge_state("al")    # number of stripped electrons (run spec)
     abs_rqm_i = abs(sim.rqm)                # |rqm_i| = m/q = m_i/(Z_i m_e) [m_e/e]
     m_ratio   = Z_i * abs_rqm_i             # physical mass ratio m_i / m_e = Z_i * |rqm_i|
 

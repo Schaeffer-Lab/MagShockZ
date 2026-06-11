@@ -1,57 +1,45 @@
-# Analysis config for the perlmutter_1.3.1d OSIRIS run.
-# Stores only parameters not derivable from the OSIRIS input deck.
-# All parameters in OSIRIS normalised units (lengths in c/ωpe, velocities in c)
-# unless noted otherwise.
+# Analysis annotations for the perlmutter_1.3.1d OSIRIS run.
+#
+# This file holds ONLY values obtained by inspecting the data (shock fit, manually
+# read downstream edges, notable times). Run parameters (reference_density, charge
+# states, rqm_factor, geometry, deck name) live in the run's single source of truth
+# and are read via analysis_utils.RunSpec — never duplicated here. RunSpec resolves
+# <sim_dir>/run.yaml, then run_manifest.yaml, then runme*.sh.
+#
+# Lengths in c/ωpe, velocities in c, unless noted.
 
 sim_dir: /pscratch/sd/d/dschnei/perlmutter_1.3.1d  # override with $MAGSHOCKZ_SIM_DIR
 
-# Physical normalisation density — not in OSIRIS deck; set by the experiment.
-norm_density_cm3: 5.0e18
-
-# NOTE: the input-deck filename (runme --inputfile_name) and the species list
-# (deck `species` sections) are read from the run itself, not duplicated here.
-
-# Dump indices to load (file suffix: p1x1-al-{t:06d}.h5).
-# NOT simulation time — extract run_attrs["TIME"] from HDF5 for physical time.
-# Either a list, or a start/stop/step mapping (stop is inclusive).
+# Dump indices to load (file suffix: p1x1-al-{t:06d}.h5). NOT simulation time —
+# extract run_attrs["TIME"] from HDF5 for physical time. List or start/stop/step.
 times:
   start: 0
   stop: 360   # inclusive -> 0, 20, 40, ..., 360
   step: 20
 
+# Shock-front fit, read off the overview streak plot.
 shock:
-  v_shock: 0.0375       # shock velocity in c, from streak-plot linear fit
+  v_shock: 0.0375       # shock velocity in c
   x_shock_0: 750.0      # shock position at t_sim=0 [c/ωpe]
 
 # Per-dump manually inspected values, keyed by t_val (dump file suffix).
-# Both fields are required for any dump you intend to analyse.
-#   x_downstream_start : left edge of the downstream region [c/ωpe]
-#   x_shock            : if set, overrides the formula x_shock_0 + v_shock * t_sim
+#   x_downstream_start : left edge of the downstream region [c/ωpe]  (required)
+#   x_shock            : overrides x_shock_0 + v_shock * t_sim         (optional)
 dump_params:
   360:
     x_downstream_start: 1100.0
 
-field_mode: full  # "full": total B²; "delta": subtract upstream mean B first
+# Notable dump indices worth plotting/inspecting (optional, free-form).
+# interesting_times: [120, 240, 360]
 
-# Si charge state for FLASH/OSIRIS temperature comparison.
-# The Al charge state (al_charge_state), B0, line of sight and all other init
-# params are read directly from runme_*.sh in the sim directory — not here.
-# Si is not passed to the init script, so its charge state lives in this config.
-si_charge_state: 14
-
-# Averaging windows for compute_dimensionless_params.py.
-# Both values are in units of grid cells, measured from x_shock:
-#   upstream   : (x_shock,            x_shock + upstream_window_ncells * dx]
-#   downstream : [x_shock - downstream_window_ncells * dx,  x_shock)
-upstream_window_ncells: 200
-downstream_window_ncells: 200
-
-# FLASH-specific analysis parameters (physical units).
-# v_shock_est_cms : first-guess shock velocity [cm/s] used to seed the
-#                   per-frame detection window before the linear fit.
-# x_shock_0_cm   : shock position along the LOS at the IC dump time [cm].
-#                   Together these define the initial prediction:
-#                   x_pred = x_shock_0_cm + v_shock_est_cms * (t - t_IC)
+# FLASH detection seeds (physical units).
+#   v_shock_est_cms : first-guess shock velocity [cm/s] seeding the detection window.
+#   x_shock_0_cm    : shock position along the LOS at the IC dump time [cm].
 flash:
-  v_shock_est_cms: 9.16e7   # cm/s  
+  v_shock_est_cms: 9.16e7   # cm/s
   x_shock_0_cm:   0.19      # position at IC dump [cm]; update after first run
+
+# Optional analysis-setting overrides (code defaults shown):
+# field_mode: full              # "full": total B²; "delta": subtract upstream mean B
+# upstream_window_ncells: 200   # averaging window for compute_dimensionless_params.py
+# downstream_window_ncells: 200

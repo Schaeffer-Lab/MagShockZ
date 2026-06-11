@@ -1,0 +1,42 @@
+# Analysis annotations for the dx=0.1 convergence-scan OSIRIS run
+# (input_files/magshockz_rqm100_dx0.1_ppc500_g20.1d).
+#
+# Holds ONLY values read from the data. Run parameters (reference_density 5e18,
+# charge states al=13/si=14, rqm_factor 100, geometry) live in that run dir's
+# run.yaml and are read via analysis_utils.RunSpec. Same FLASH IC / experiment as
+# perlmutter_1.3.1d; only the grid resolution differs.
+
+sim_dir: /pscratch/sd/d/dschnei/MagShockZ/input_files/magshockz_rqm100_dx0.1_ppc500_g20.1d
+
+# Escape hatch: the dx-scan generator wrote "nx_p = 26508" (un-indexed), which
+# osiris_utils cannot parse; analysis uses a copy with "nx_p(1:1) = 26508" (identical
+# physics). New decks use the indexed form, so this override is only for this old run.
+input_deck: magshockz_rqm100_dx0.1_analysis.1d
+
+# Phase dumps run every index (p1x1-e-{t:06d}.h5, t=0..512); savg field dumps
+# exist only at EVEN indices, so keep the times list even for energy partition.
+times:
+  start: 0
+  stop: 512   # inclusive -> 0, 64, 128, ..., 512
+  step: 64
+
+# Linear shock-front fit (overview.py refits from per-frame detection).
+shock:
+  v_shock: 0.04      # shock velocity in c (overview detected fit, M_A=8.28)
+  x_shock_0: 750     # shock position at t_sim=0 [c/ωpe]
+
+# Per-dump manually inspected values, keyed by dump index (file suffix).
+#   x_downstream_start : left edge of the downstream region [c/ωpe]  (required)
+#   x_shock            : overrides x_shock_0 + v_shock * t_sim         (optional)
+dump_params:
+  512:
+    x_shock: 1234.0          # detected front at t=512
+    x_downstream_start: 1050.0
+
+# Notable dump indices worth plotting/inspecting (optional, free-form).
+# interesting_times: [128, 256, 512]
+
+# Optional analysis-setting overrides (code defaults shown):
+# field_mode: full
+# upstream_window_ncells: 200
+# downstream_window_ncells: 200
