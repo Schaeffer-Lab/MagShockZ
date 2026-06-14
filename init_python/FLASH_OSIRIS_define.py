@@ -44,7 +44,7 @@ class FLASH_OSIRIS_Base:
         self.inputfile_name = OSIRIS_inputfile_name + f".{self.osiris_dims}d"
         self.n0 = reference_density_cc * yt.units.cm**-3
         self.ppc = ppc
-        self.deck = deck_options          # complete dict built from the CLI (no defaults)
+        self.deck = deck_options
         self.interpolation = self.deck['interpolation']
         self.dx = dx
         self.rqm_factor = rqm_normalization_factor
@@ -112,7 +112,7 @@ class FLASH_OSIRIS_Base:
         logger.info(f"Background temperature: {(self.all_data['flash', 'tele'][-1, -1, 0] * yt.units.boltzmann_constant).to('eV'):.3e}")
 
 
-        self.rqm_real = 1836 / self.all_data['flash', 'ye'][-1, -1, 0] # ye has units of 
+        self.rqm_real = 1836 / self.all_data['flash', 'ye'][-1, -1, 0]
         logger.info(f"{'*'*10} real mass ratio: {self.rqm_real} {'*'*10}")
 
 
@@ -157,11 +157,8 @@ class FLASH_OSIRIS_Base:
         B_gauss = 3.204e-3 * B_test * self.n0**0.5
         logger.info(f"Test magnetic field value: {B_test:.3e} OSIRIS units, which corresponds to {B_gauss:.3e} Gauss")
 
-        # print(f"Normalizations: {self.normalizations}")
         n_species = 3
         if self.osiris_dims == 1:
-            # 1D domain length is the lineout distance (xmax-xmin is ~0 for a
-            # theta=pi/2 lineout).
             n_particles = self.distance / self.dx  * n_species * self.ppc
         elif self.osiris_dims == 2:
             n_particles = (self.xmax-self.xmin) * (self.ymax - self.ymin) / self.dx**2  * n_species * self.ppc**2
@@ -223,9 +220,10 @@ class FLASH_OSIRIS_Base:
             Axis normal to the slice plane ('x', 'y', or 'z'). Default is 'z'. # TODO allow for other normal axes
             
         Note:
-            - Density data is output as a numpy array because OSIRIS uses its own interpolator
-            - Other fields are saved as pickle files with interpolators
-            - Thermal velocities require special handling because we need to take sqrt of temperature
+            - Every field (densities included) is saved as a raw .npy grid; the
+              py-script and the readers here rebuild the interpolator on load, so
+              nothing depends on a pickled scipy object surviving a version change.
+            - Densities additionally feed OSIRIS' own built-in interpolator.
         """
         interp_dir = self.output_dir / "interp"
         if not interp_dir.exists():
@@ -252,10 +250,10 @@ class FLASH_OSIRIS_Base:
             self.all_data.clear_data()
 
     def _save_field(self, field, normalization, middle_index, chunk_size, interp_dir):
-        """Save regular field data."""
-        import pickle
-        from scipy.interpolate import RegularGridInterpolator
-
+        """Save a field slice as a raw .npy grid indexed [i_x, i_y] over (self.x,
+        self.y).  Every field (densities included) is stored the same way; the
+        py-script and the generator's own readers rebuild the scipy interpolator
+        on load, so nothing depends on the pickle format of a given scipy version."""
         field_data = np.zeros(self.all_data['flash', field][:, :, middle_index].shape)
 
         # Process data in chunks to save memory
@@ -264,20 +262,23 @@ class FLASH_OSIRIS_Base:
             chunk = self.all_data['flash', field][i:end, :, middle_index]
             field_data[i:end, :] = chunk / normalization
 
-        # Special handling for density fields
+        # Densities: zero out negligible values so the vacuum is empty.
         if field.endswith('dens'):
-            # Remove small density values
-            lower_bound = 0.001
-            field_data[field_data < lower_bound] = 0
-            np.save(f"{interp_dir}/{field}.npy", field_data)
-        else:
-            interp = RegularGridInterpolator(
-                (self.x, self.y), field_data,
-                method='linear', bounds_error=True, fill_value=0)
-            with open(f"{interp_dir}/{field}.pkl", "wb") as f:
-                pickle.dump(interp, f)
+            field_data[field_data < 0.001] = 0
+
+        np.save(f"{interp_dir}/{field}.npy", field_data)
 
         # Tried to include memory cleanup here, but it just doesn't work
+
+    def _field_interp(self, field):
+        """Rebuild the (x_flash, y_flash) linear interpolator for a saved .npy
+        slice -- the single reader used by every plotting/diagnostic path here,
+        mirroring the py-script's _interp (no pickled scipy objects)."""
+        from scipy.interpolate import RegularGridInterpolator
+        data = np.load(self.output_dir / f'interp/{field}.npy')
+        return RegularGridInterpolator(
+            (np.asarray(self.x), np.asarray(self.y)), data,
+            method='linear', bounds_error=True, fill_value=0)
 
     def write_input_file(self):
         """
@@ -474,33 +475,27 @@ class FLASH_OSIRIS_Base:
         dict
             Thermal velocity bounds for electrons and all ion species
         """
-        import pickle
-        
-
-        if self.osiris_dims == 1: 
+        if self.osiris_dims == 1:
             bounds = {
             'electron': None,
             'ions': {}
             }
-            # Read electron thermal velocity bounds
-            with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
-                vthele = pickle.load(f)
-                bounds['electron'] = [
-                    vthele((self.xmin, self.ymin)),
-                    vthele((self.xmax, self.ymax))
-                ]
-                logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
-            
-            # Read ion thermal velocity bounds for each species
+            # Sample vth at the two lineout endpoints, in (x, y) order.
+            vthele = self._field_interp("vthele")
+            bounds['electron'] = [
+                vthele((self.xmin, self.ymin)),
+                vthele((self.xmax, self.ymax))
+            ]
+            logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
+
             for ion in self.species_rqms.keys():
-                with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
-                    vthion = pickle.load(f)
-                    bounds['ions'][ion] = [
-                        vthion((self.xmin, self.ymin)),
-                        vthion((self.xmax, self.ymax))
-                    ]
-                    logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")
-        elif self.osiris_dims == 2:             
+                vthion = self._field_interp(f"vth{ion}")
+                bounds['ions'][ion] = [
+                    vthion((self.xmin, self.ymin)),
+                    vthion((self.xmax, self.ymax))
+                ]
+                logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")
+        elif self.osiris_dims == 2:
             bounds = {
                 'electron': {},
                 'ions': {}
@@ -509,28 +504,20 @@ class FLASH_OSIRIS_Base:
             # needed (sampled across x at the ymin/ymax faces).
             num_samples = 16  # Number of points to sample
             x_samples = np.linspace(self.xmin, self.xmax, num_samples)
-            with open(self.output_dir / "interp/vthele.pkl", "rb") as f:
-                    vthele = pickle.load(f)
-                    y_lower_bound = np.mean([vthele((x, self.ymin)) for x in x_samples])
-                    y_upper_bound = np.mean([vthele((x, self.ymax)) for x in x_samples])
-                    bounds['electron']['y'] = [
-                        y_lower_bound,
-                        y_upper_bound
-                    ]
-                    logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
+            vthele = self._field_interp("vthele")
+            bounds['electron']['y'] = [
+                np.mean([vthele((x, self.ymin)) for x in x_samples]),
+                np.mean([vthele((x, self.ymax)) for x in x_samples])
+            ]
+            logger.info(f"Electron thermal velocity bounds: {bounds['electron']}")
 
-                # Read ion thermal velocity bounds for each species
             for ion in self.species_rqms.keys():
-                bounds['ions'][ion] = {}
-                with open(self.output_dir / f"interp/vth{ion}.pkl", "rb") as f:
-                    vthion = pickle.load(f)
-                    y_lower_bound = np.mean([vthion((x, self.ymin)) for x in x_samples])
-                    y_upper_bound = np.mean([vthion((x, self.ymax)) for x in x_samples])
-                    bounds['ions'][ion]['y'] = [
-                        y_lower_bound,
-                        y_upper_bound
-                    ]
-                    logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")
+                vthion = self._field_interp(f"vth{ion}")
+                bounds['ions'][ion] = {'y': [
+                    np.mean([vthion((x, self.ymin)) for x in x_samples]),
+                    np.mean([vthion((x, self.ymax)) for x in x_samples])
+                ]}
+                logger.info(f"{ion} thermal velocity bounds: {bounds['ions'][ion]}")
         return bounds
     
     def write_python_file(self):
@@ -624,8 +611,6 @@ class FLASH_OSIRIS_Base:
 
     def plot1D(self, fields):
         import matplotlib.pyplot as plt
-        from scipy.interpolate import RegularGridInterpolator
-        import pickle
 
         self.fig_dir.mkdir(parents=True, exist_ok=True)
         if isinstance(fields, str):
@@ -634,29 +619,16 @@ class FLASH_OSIRIS_Base:
             fields = fields  # Use as is
 
         for field in fields:
-            if field.endswith('dens'):
-                data = np.load(self.output_dir / f'interp/{field}.npy')
-                f = RegularGridInterpolator(
-                    (self.x, self.y), data, 
-                    method='linear', bounds_error=True, fill_value=0)
-            else:
-                with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
-                    f = pickle.load(p)
-                    x1,x2 = np.meshgrid(self.x, self.y)
-                    data = f((x1,x2))
+            f = self._field_interp(field)
+            data = np.load(self.output_dir / f'interp/{field}.npy')   # (i_x, i_y)
 
             # Create figure with two subplots side by side
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-            # Left subplot: 2D plane with lineout.
-            # Density arrays are stored (nx, ny); transpose to (ny, nx) so imshow's
-            # (rows=y, cols=x) convention matches the extent. The non-density arrays
-            # come from meshgrid(self.x, self.y) and are already (ny, nx).
-            if field.endswith('dens'):
-                im = ax1.imshow(np.log(data).T, origin='lower',
-                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
-            else:
-                im = ax1.imshow(data, origin='lower',
+            # Left subplot: 2D plane with lineout. Arrays are stored (i_x, i_y);
+            # transpose to (i_y, i_x) so imshow's (rows=y, cols=x) matches the extent.
+            img = np.log(data).T if field.endswith('dens') else data.T
+            im = ax1.imshow(img, origin='lower',
                         extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
             ax1.plot([self.xmin, self.xmax], [self.ymin, self.ymax], color='r', linewidth=2, label='Lineout')
             ax1.set_xlabel(r'x [$c/\omega_{pe}$]')
@@ -691,7 +663,6 @@ class FLASH_OSIRIS_Base:
         from flash_utils.mach_numbers). OSIRIS side: the saved normalized interp
         slices (formulas from scripts/compute_dimensionless_params.py). Requires
         save_slices() to have run first."""
-        import pickle
         from scipy.interpolate import RegularGridInterpolator
 
         kB = 1.380649e-16        # erg/K
@@ -702,16 +673,11 @@ class FLASH_OSIRIS_Base:
             sl = self.all_data[ftype, field][:, :, mid]
             arr = np.asarray(sl if unit is None else sl.to(unit))
             self.all_data.clear_data()  # cap covering-grid memory (one field at a time)
-            return RegularGridInterpolator((self.x, self.y), arr,
+            return RegularGridInterpolator((np.asarray(self.x), np.asarray(self.y)), arr,
                                            method='linear', bounds_error=True)(pts)
 
         def osa(field):
-            if field.endswith('dens'):
-                data = np.load(self.output_dir / f'interp/{field}.npy')
-                return RegularGridInterpolator((self.x, self.y), data,
-                                               method='linear', bounds_error=True)(pts)
-            with open(self.output_dir / f'interp/{field}.pkl', "rb") as f:
-                return pickle.load(f)(pts)
+            return self._field_interp(field)(pts)
 
         # ---- FLASH physical (CGS) ----
         B = np.sqrt(sum(fl(f, 'G')**2 for f in ('magx', 'magy', 'magz')))
@@ -905,8 +871,6 @@ class FLASH_OSIRIS_Base:
 
     def plot2D(self, fields):
         import matplotlib.pyplot as plt
-        from scipy.interpolate import RegularGridInterpolator
-        import pickle
         self.fig_dir.mkdir(parents=True, exist_ok=True)
         output = {}
         if isinstance(fields, str):
@@ -914,16 +878,8 @@ class FLASH_OSIRIS_Base:
         else:
             fields = fields  # Use as is
         for field in fields:
-            if field.endswith('dens'):
-                data = np.load(self.output_dir / f'interp/{field}.npy')
-                f = RegularGridInterpolator(
-                    (self.x, self.y), data, 
-                    method='linear', bounds_error=True, fill_value=0)
-            else:
-                with open(self.output_dir / f'interp/{field}.pkl', "rb") as p:
-                    f = pickle.load(p)
-                    x1,x2 = np.meshgrid(self.x,self.y)
-                    data = f((x1,x2))
+            f = self._field_interp(field)
+            data = np.load(self.output_dir / f'interp/{field}.npy')   # (i_x, i_y)
 
             # Create figure with two subplots side by side
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
@@ -937,13 +893,10 @@ class FLASH_OSIRIS_Base:
             ax1.plot([self.xmin, self.xmin], [self.ymin, self.ymax], color='r')
             ax1.plot([self.xmax, self.xmax], [self.ymin, self.ymax], color='r')
 
-            # Left subplot: 2D plane with lineout
-            if field.endswith('dens'):
-                im = ax1.imshow(np.log(data).T, origin='lower',
-                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
-            else:
-                im = ax1.imshow(data, origin='lower',
-                        extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
+            # Left subplot: 2D plane with lineout. Stored (i_x, i_y) -> transpose.
+            img = np.log(data).T if field.endswith('dens') else data.T
+            im = ax1.imshow(img, origin='lower',
+                    extent=[self.x[0], self.x[-1], self.y[0], self.y[-1]])
             ax1.set_xlabel(r'x [$c/\omega_{pe}$]')
             ax1.set_ylabel(r'y [$c/\omega_{pe}$]')
             ax1.set_title(f'{field} - 2D plane')
@@ -1246,25 +1199,27 @@ def main(args):
                     f"c/wpe, distance={distance:.1f} c/wpe, theta={theta:.4f} rad")
 
         sim = FLASH_OSIRIS_1D(start_point=[x0, y0], distance=distance, theta=theta, **common)
-        sim.save_slices()
-        sim.write_input_file()
-        sim.write_python_file()
-        sim.plot1D(PLOT_FIELDS)
+        plot = lambda: sim.plot1D(PLOT_FIELDS)
     else:
         for name in ("xmin", "xmax", "ymin", "ymax"):
             assert getattr(args, name) is not None, f"--{name} (c/wpe) is required for --dim 2"
         sim = FLASH_OSIRIS_2D(xmin=args.xmin, xmax=args.xmax,
                               ymin=args.ymin, ymax=args.ymax, **common)
-        sim.save_slices()
-        sim.write_input_file()
-        sim.write_python_file()
-        sim.plot2D(PLOT_FIELDS)
+        plot = lambda: sim.plot2D(PLOT_FIELDS)
 
-    sim.plot_conservation_diagnostics()   # 1D line overlays / 2D imshow comparisons
+    # Write the essential artifacts (slices, deck, py-script) and provenance FIRST,
+    # so a failure in the optional diagnostic plots below never costs the run spec.
+    sim.save_slices()
+    sim.write_input_file()
+    sim.write_python_file()
     # run.yaml is the analysis source of truth (params); the manifest holds only
     # provenance + derived quantities (git, omega_pe, gyrotime, ...).
     freeze_run_yaml(sim.output_dir, args)
     sim.write_manifest(cli_args=" ".join(sys.argv))
+
+    # Diagnostics last (lineouts + FLASH-vs-OSIRIS-init conservation overlays).
+    plot()
+    sim.plot_conservation_diagnostics()
 
 
 def parse_args(argv=None):

@@ -1,0 +1,102 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this project is
+
+MagShockZ analyzes magnetized collisionless shock simulations for the Magnetized
+Collisionless Shocks on Z (MagShockZ) experiment. Its core job is converting **FLASH**
+MHD simulation output into initialized **OSIRIS** PIC input decks, then analyzing the
+resulting OSIRIS runs (and the source FLASH data). Most work runs on NERSC Perlmutter.
+
+## Environments
+
+Two conda environments, used for disjoint stages — do not mix them:
+
+- **`osiris2`** — FLASH→OSIRIS initialization and deck generation (`init_python/`).
+  Has `yt` + `unyt` for reading FLASH HDF5 plot files and `jinja2` for deck templating.
+- **`analysis`** — OSIRIS analysis (`scripts/`). Has `osh5` / pyVisOS (`osh5io`,
+  `osh5def`, `osh5vis`) and `osiris_utils` for reading OSIRIS HDF5 output.
+
+The installable package (`src/`, see `pyproject.toml`) depends only on numpy/scipy/unyt
+so the pure-function modules import and test without the heavy OSIRIS/yt/astropy stack.
+
+## Commands
+
+```bash
+# Tests (CI runs this; pip install numpy scipy unyt pyyaml pytest pytest-cov first)
+pytest                                  # full suite (testpaths=tests)
+pytest --cov=src --cov-report=term-missing
+pytest tests/test_shock.py              # single file
+pytest tests/test_shock.py::test_name   # single test
+
+# Generate an OSIRIS deck from a run spec (single source of truth)
+conda activate osiris2
+cd init_python
+python FLASH_OSIRIS_define.py --config ../runs/perlmutter_1d.run.yaml
+# wrappers exist: runme_perlmutter_1d.sh, runme_perlmutter_2d.sh, run_dx_scan.sh
+
+# Run an analysis script (config-driven; see each script's module docstring)
+conda activate analysis
+python scripts/overview.py --config config/perlmutter_1.3.1d.yaml [--stride 16 ...]
+```
+
+The generator's CLI is **terminal-only with no hidden defaults**: argparse enforces
+required-ness once, every parameter is explicit in the run spec, and CLI flags override
+individual spec keys.
+
+## Architecture
+
+### Single source of truth: the run spec
+
+Each run's parameters live **once**, in a `run.yaml` in the run's own directory.
+`runs/*.run.yaml` are the version-controlled inputs; `FLASH_OSIRIS_define.py` freezes a
+resolved copy to `<run_dir>/run.yaml`. Analysis reads parameters back through
+`src/run_spec.py::RunSpec` instead of re-copying them into analysis configs.
+
+`RunSpec.from_sim_dir()` resolves in priority order (first hit wins): `run.yaml` →
+`run_manifest.yaml` (parse its `cli_command`) → legacy `runme*.sh` (parse python flags).
+In a `run.yaml`, the `geometry` / `solver` / `diagnostics` groups exist purely for
+readability and are flattened to top-level keys (matching the original CLI flags);
+`charge_states` stays nested as metadata. `RunSpec` is deliberately dependency-light
+(stdlib + PyYAML, astropy imported lazily) so it is unit-testable in isolation.
+
+### Generation: `init_python/`
+
+`FLASH_OSIRIS_define.py` (class `FLASH_OSIRIS_Base`, with 1D/2D subclasses) reads FLASH
+data via `yt`, derives OSIRIS normalizations and per-species `rqm` from FLASH (mean
+1836/ye over each species' mask within the OSIRIS domain), and renders the
+`*_TEMPLATE.jinja` decks. `dt` is set from the CFL condition (`dx*0.95/sqrt(dims)`).
+Units stay yt-native + `unyt` here (no astropy on the generation path).
+
+### Analysis: library-first
+
+Pure, testable functions live in **`src/`** and are re-exported from `src/__init__.py`
+(`moment`, `temperature_profile`, `species_energy_profiles`, FLASH energy-partition
+helpers, etc.). The thin, plotting/IO-heavy **`scripts/`** orchestrate them. Each script:
+is `--config` driven (with a `$MAGSHOCKZ_SIM_DIR` override), uses
+`analysis_utils.MagShockZRun` for unit/field context, `analysis_utils.detect_layout` /
+`RunLayout` for dimension-agnostic (1D/2D) axis handling, reads with `osh5io`, plots with
+`osh5vis` (metadata-sourced labels/units), and saves under `results/<run_name>/`.
+
+`MagShockZRun` wraps an OSIRIS deck (via `osiris_utils.Simulation`) for field access and
+astropy-unit conversions (cyclotron/ion frequencies, gyrotime). FLASH-side analysis uses
+yt + unyt and does **not** go through `MagShockZRun`.
+
+Scripts add `src/` to `sys.path` at import time (`sys.path.insert(0, .../src)`); they are
+run as files, not as an installed module.
+
+### Tests
+
+`tests/conftest.py` puts `tests/` *ahead of* `src/` on `sys.path` so lightweight stubs
+(`tests/osh5def.py`, `tests/analysis_utils.py`) shadow the real modules that would pull in
+osiris/astropy. This is why the pure-function modules can be tested in CI without the
+analysis env — keep new testable logic dependency-light and in `src/`.
+
+## Conventions
+
+- FLASH analysis: yt-native + `unyt` units. No astropy, and not via the OSIRIS code path.
+- 2D-capable analysis treats `x2` as the shock-normal axis; use `detect_layout` /
+  `transverse_profile` rather than hardcoding dimensionality.
+- Plan before implementing analysis changes; prefer adding a pure function to `src/`
+  (with a test) over embedding logic in a script.
