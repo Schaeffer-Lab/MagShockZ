@@ -10,7 +10,7 @@ Everything here is pure (numpy/scipy only) and unit-agnostic: the core solver
 takes the upstream **sonic** and **Alfvenic** Mach numbers, so it works
 unchanged in OSIRIS-normalised units, CGS, or SI.  The convenience wrappers
 build those Mach numbers from upstream primitives in the same convention as
-``scripts/compute_dimensionless_params.py`` (OSIRIS units: T in m_e c^2, B^2 in
+``scripts/dimensionless_params.py`` (OSIRIS units: T in m_e c^2, B^2 in
 B_0^2, n in n_0, velocities in c, ion mass-per-charge ``abs_rqm_i`` in m_e/e).
 
 Primary case is the **perpendicular** MHD shock (B transverse to the shock
@@ -106,7 +106,7 @@ def solve_jump(
     """Perpendicular-MHD downstream state from upstream primitives (OSIRIS units).
 
     Mirrors the upstream-quantity conventions of
-    ``scripts/compute_dimensionless_params.py``::
+    ``scripts/dimensionless_params.py``::
 
         c_s = sqrt( gamma * (T_e + T_i) / |rqm_i| )      [c]
         v_A = sqrt( B^2 / (|rqm_i| * n_e) )              [c]

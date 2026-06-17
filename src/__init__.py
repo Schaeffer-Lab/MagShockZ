@@ -38,3 +38,8 @@ from .synthetic_diagnostics import (
     apply_resolution,
     probe_signal,
 )
+from .dimensionless_params import (
+    ion_skin_depth,
+    compute_dimensionless,
+    magnetic_reynolds,
+)

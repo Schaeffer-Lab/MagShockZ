@@ -13,6 +13,7 @@ Two public objects:
       be passed directly to osh5vis.osplot().
 """
 
+import dataclasses
 import glob
 import os
 import re
@@ -500,6 +501,52 @@ def load_results(path: str) -> dict:
     """Load a results .npz, unwrapping 0-d arrays to plain Python scalars."""
     d = np.load(path, allow_pickle=True)
     return {k: (d[k].item() if d[k].ndim == 0 else d[k]) for k in d.files}
+
+
+def save_result(result, path: str) -> str:
+    """Serialise a dataclass ``result`` to ``path`` (.npz) and return the path.
+
+    The dataclass *is* the output schema, so this avoids hand-listing keys in every
+    analysis script.  Each field becomes one flat, inspectable .npz entry:
+
+      - array fields are stored as-is;
+      - scalar/string fields are wrapped as 0-d arrays;
+      - ``dict`` fields (e.g. per-region averages ``{"ram": ..., "thermal": ...}``)
+        are flattened to ``<field>_<key>`` entries (so ``upstream={"ram":x}`` is
+        stored as ``upstream_ram``), keeping the .npz a flat key/value store you
+        can ``np.load`` and read directly.
+    """
+    flat = {}
+    for f in dataclasses.fields(result):
+        val = getattr(result, f.name)
+        if isinstance(val, dict):
+            for k, v in val.items():
+                flat[f"{f.name}_{k}"] = np.asarray(v)
+        else:
+            flat[f.name] = np.asarray(val)
+    np.savez(path, **flat)
+    return path
+
+
+def load_result(cls, path: str):
+    """Inverse of :func:`save_result`: rebuild a ``cls`` dataclass from its .npz.
+
+    Fields annotated ``dict`` are reassembled from their flattened
+    ``<field>_<key>`` entries; all other fields are read by name (0-d arrays
+    unwrapped to Python scalars).
+    """
+    d = np.load(path, allow_pickle=True)
+    raw = {k: (d[k].item() if d[k].ndim == 0 else d[k]) for k in d.files}
+    kwargs = {}
+    for f in dataclasses.fields(cls):
+        is_dict = f.type is dict or f.type == "dict"
+        if is_dict:
+            prefix = f.name + "_"
+            kwargs[f.name] = {k[len(prefix):]: raw[k]
+                              for k in raw if k.startswith(prefix)}
+        else:
+            kwargs[f.name] = raw[f.name]
+    return cls(**kwargs)
 
 
 def run_from_config(cfg: dict, *, B0=None, Z=None, m_i=None) -> "MagShockZRun":

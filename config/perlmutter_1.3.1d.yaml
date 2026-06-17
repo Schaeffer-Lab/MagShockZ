@@ -18,7 +18,7 @@ times:
   step: 20
 
 # Shock-front fit, read off the overview streak plot.
-#   v_shock   : single "Mach number" seed [c]; sets M_A in compute_dimensionless_params
+#   v_shock   : single "Mach number" seed [c]; sets M_A in dimensionless_params
 #               and seeds the front-detection window. The energy-partition / heating
 #               analyses instead use the instantaneous derivative of the auto-fitted
 #               front trajectory (so v_shock there tracks the front deceleration).
@@ -47,5 +47,5 @@ flash:
 
 # Optional analysis-setting overrides (code defaults shown):
 # field_mode: full              # "full": total B²; "delta": subtract upstream mean B
-# upstream_window_ncells: 200   # averaging window for compute_dimensionless_params.py
+# upstream_window_ncells: 200   # averaging window for dimensionless_params.py
 # downstream_window_ncells: 200

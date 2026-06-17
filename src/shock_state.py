@@ -1,7 +1,7 @@
 """Shared per-dump loader for OSIRIS shock analysis (single code path).
 
-Several scripts (``compute_dimensionless_params.py``,
-``compute_heating_decomposition.py``) need the same thing from one dump: the
+Several scripts (``dimensionless_params.py``,
+``heating_decomposition.py``) need the same thing from one dump: the
 electron/ion temperature profiles, electron density, the EM fields on a common
 grid, the shock kinematics, and upstream/downstream region averages — all in
 OSIRIS normalised units.  This module loads that once into a :class:`ShockState`
@@ -98,7 +98,7 @@ def load_shock_state(cfg: dict, timestep_idx: int = -1,
                      v_shock_from_fit: bool = True) -> ShockState:
     """Load one dump into a :class:`ShockState`.
 
-    Parameters mirror ``compute_dimensionless_params.py``: averaging windows
+    Parameters mirror ``dimensionless_params.py``: averaging windows
     come from ``upstream_window_ncells`` / ``downstream_window_ncells`` in the
     config (default 200 cells each, measured from ``x_shock``).
 
@@ -107,7 +107,7 @@ def load_shock_state(cfg: dict, timestep_idx: int = -1,
     (``analysis_utils.resolve_shock_velocity``); the single config
     ``shock.v_shock`` is kept as the detection seed / fallback.  Pass
     ``v_shock_from_fit=False`` to use the config value directly (e.g. so
-    ``compute_dimensionless_params`` reports M_A from the one YAML Mach number).
+    ``dimensionless_params`` reports M_A from the one YAML Mach number).
     """
     sim_dir = cfg["sim_dir"]
     t_val = cfg["times"][timestep_idx]

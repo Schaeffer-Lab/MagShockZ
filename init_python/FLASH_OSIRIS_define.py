@@ -661,7 +661,7 @@ class FLASH_OSIRIS_Base:
         (flash, osiris) dicts keyed by quantity. Shared by the 1D (lineout) and 2D
         (box-grid) diagnostics. FLASH side: physical covering-grid fields (formulas
         from flash_utils.mach_numbers). OSIRIS side: the saved normalized interp
-        slices (formulas from scripts/compute_dimensionless_params.py). Requires
+        slices (formulas from scripts/dimensionless_params.py). Requires
         save_slices() to have run first."""
         from scipy.interpolate import RegularGridInterpolator
 
