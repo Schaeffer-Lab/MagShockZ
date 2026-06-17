@@ -93,6 +93,35 @@ run as files, not as an installed module.
 osiris/astropy. This is why the pure-function modules can be tested in CI without the
 analysis env — keep new testable logic dependency-light and in `src/`.
 
+## OSIRIS normalized units
+
+OSIRIS normalizes to the electron plasma frequency `ω_p` and the reference density `n_0`.
+Primed quantities are what live in the HDF5 files (Gaussian-based normalization):
+
+| quantity | normalization | note |
+|----------|---------------|------|
+| time     | `t' = t·ω_p`                              | frequencies `ω' = ω/ω_p` |
+| length   | `x' = ω_p·x / c`                          | i.e. units of `c/ω_p` (electron skin depth) |
+| momentum | `u' = p/(m_sp·c) = γv/c`                  | **per-species** mass `m_sp`, so `u' ≈ v/c` for every species |
+| E field  | `E' = (e·c/ω_p)/(m_e c²)·E`               | |
+| B field  | `B' = (e·c/ω_p)/(m_e c²)·B`               | so `ω_ce = e·B/(m_e c) = B'·ω_p` |
+| density  | `n' = n/n_0`                              | |
+| energy   | per particle in `m_e c²`; densities in `n_0 m_e c²` | |
+
+Consequences used throughout the analysis (`src/energy_partition.py`,
+`src/temperature_anisotropy.py`):
+
+- Because momentum is per-species (`u' = v/c`), bulk velocities are directly comparable
+  across species and to `v_shock` (also in `c`); no per-species rescaling of velocities.
+- The 2nd central moment of a phase space is `σ² = uth'² = T/(m_sp c²)`, so temperature in
+  `m_e c²` is `T = |rqm|·σ²` (with `|rqm| = m_sp/m_e` for charge state 1).
+- Kinetic energy densities (in `n_0 m_e c²`): ram `= ½·n·|rqm|·(⟨u'⟩−v_sh)²`, thermal
+  `= ½·n·|rqm|·Σ_d σ_d²` (= `(3/2) n T_iso` isotropic). Both carry the ½ of `½mv²`.
+- EM energy densities (in `n_0 m_e c²`) are `B'²/2` and `E'²/2` — the Gaussian
+  `B²/(8π)` with `B² = B'²·B_0²`, `B_0 = m_e c ω_p/e`, reduces to exactly `B'²/2`.
+  So field and particle energies share the same `n_0 m_e c²` units and are directly
+  comparable. Fields look small only because `u_ram/u_B = v²/v_A² = M_A²` (≈100 here).
+
 ## Conventions
 
 - FLASH analysis: yt-native + `unyt` units. No astropy, and not via the OSIRIS code path.

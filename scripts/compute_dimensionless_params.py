@@ -74,7 +74,6 @@ import sys
 import astropy.constants
 import astropy.units as u
 import numpy as np
-import osh5io
 from plasmapy.formulary import Mag_Reynolds, Spitzer_resistivity
 
 # electron rest energy [eV]; converts T [m_e c^2] -> T [eV]
@@ -84,14 +83,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
-from analysis_utils import axis_values
-import moments as mom_module
-import temperature_anisotropy as ta
-
-
-def region_mean(arr: np.ndarray, mask: np.ndarray) -> float:
-    """Nanmean over mask; returns nan if mask selects no cells."""
-    return float(np.nanmean(arr[mask])) if mask.any() else float("nan")
+import shock_state
 
 
 def compute_dimensionless(prim: dict, v_shock: float, abs_rqm_i: float) -> dict:
@@ -240,115 +232,41 @@ def main():
     print(f"sim_dir : {sim_dir}")
     print(f"Dump    : t={t_val}  (index {args.timestep_idx} of {len(cfg['times'])} dumps)")
 
-    sim = analysis_utils.run_from_config(cfg)
-    spec = analysis_utils.RunSpec.from_sim_dir(sim_dir)
-
-    # Ion charge state and simulation (reduced) mass ratio
-    Z_i       = spec.charge_state("al")    # number of stripped electrons (run spec)
-    abs_rqm_i = abs(sim.rqm)                # |rqm_i| = m/q = m_i/(Z_i m_e) [m_e/e]
-    m_ratio   = Z_i * abs_rqm_i             # physical mass ratio m_i / m_e = Z_i * |rqm_i|
-
-    # Averaging window (grid cells from x_shock, into each side)
-    up_ncells = int(cfg.get("upstream_window_ncells",   200))
-    dn_ncells = int(cfg.get("downstream_window_ncells", 200))
-
-    species = ["al", "e"]
-    species_rqm = {sp: sim.rqm_of(sp) for sp in species}  # per-species rqm from deck
-
+    # Load all per-dump quantities through the shared loader (single code path;
+    # see src/shock_state.py).  This gives the temperature/density/field profiles,
+    # shock kinematics, averaging masks and region-averaged primitives.
     print("\nLoading HDF5 files...")
-    pha_p1 = {
-        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p1x1", sp, t_val))
-        for sp in species
-    }
-    pha_p2 = {
-        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p2x1", sp, t_val))
-        for sp in species
-    }
-    fld = {
-        name: osh5io.read_h5(analysis_utils.field_path(sim_dir, name, t_val))
-        for name in ["b1", "b2", "b3"]
-    }
+    # M_A here is the single YAML Mach number (shock.v_shock), kept simple; the
+    # fitted instantaneous v_shock is used by the energy-partition analyses only.
+    state = shock_state.load_shock_state(cfg, args.timestep_idx, v_shock_from_fit=False)
 
-    x_pha = axis_values(pha_p1["al"], ax_idx=1)  # phase-space spatial grid [c/omega_pe]
-    x_fld = axis_values(fld["b1"],   ax_idx=0)   # field spatial grid        [c/omega_pe]
-    t_sim = float(pha_p1["al"].run_attrs["TIME"][0])
+    sim, spec = state.sim, state.spec
+    Z_i       = state.Z_i           # ion charge state (run spec)
+    abs_rqm_i = state.abs_rqm_i     # |rqm_i| = m/q = m_i/(Z_i m_e) [m_e/e]
+    m_ratio   = Z_i * abs_rqm_i     # physical mass ratio m_i / m_e = Z_i * |rqm_i|
+    up_ncells, dn_ncells = state.up_ncells, state.dn_ncells
 
-    dump    = analysis_utils.resolve_dump_params(cfg, t_val, t_sim)
-    v_shock = dump["v_shock"]   # [c]
-    x_shock = dump["x_shock"]  # [c/omega_pe]
+    x_pha   = state.x_pha
+    t_sim   = state.t_sim
+    v_shock = state.v_shock         # [c]
+    x_shock = state.x_shock         # [c/omega_pe]
+    dx      = state.dx
+
+    # Profiles on the phase-space grid (OSIRIS units).
+    T_par, T_perp, T_iso = state.T_par, state.T_perp, state.T_iso
+    n_e = state.n_e                 # [n_0], zeroth moment of f_e(p1,x1)
+    B2  = state.B2                  # [B_0^2] = b1^2+b2^2+b3^2 on the phase grid
+
+    upstream_mask, downstream_mask = state.upstream_mask, state.downstream_mask
+    prim_up, prim_dn = state.prim_up, state.prim_dn
 
     print(f"t_sim   : {t_sim:.1f}  [omega_pe^-1]")
     print(f"x_shock : {x_shock:.1f}  [c/omega_pe]")
     print(f"v_shock : {v_shock:.4f}  [c]")
-
-    # ------------------------------------------------------------------
-    # Temperature profiles  T(x)  [m_e c^2]
-    #
-    # T = |rqm| * <(p - <p>)^2>
-    #   p is in OSIRIS normalised momentum units (m_e c = 1).
-    #   |rqm| scales the variance from electron-mass units to species mass:
-    #     electrons:  |rqm_e| = 1      =>  T_e in m_e c^2
-    #     Al ions:    |rqm_i|           =>  T_i in m_e c^2  (sim reduced mass)
-    # T_iso = (T_par + 2 T_perp) / 3   [m_e c^2]
-    # ------------------------------------------------------------------
-    T_par  = {sp: ta.temperature_profile(pha_p1[sp], species_rqm[sp], "p1") for sp in species}
-    T_perp = {sp: ta.temperature_profile(pha_p2[sp], species_rqm[sp], "p2") for sp in species}
-    T_iso  = {sp: (T_par[sp] + 2.0 * T_perp[sp]) / 3.0 for sp in species}
-
-    # ------------------------------------------------------------------
-    # Electron number density profile  n_e(x)  [n_0]
-    #
-    # Zeroth moment of f(p1, x1) over p1.  Ion density is not loaded
-    # separately; sim ions carry unit charge, so n_i = n_e is used
-    # wherever n_i would appear (see compute_dimensionless).
-    # ------------------------------------------------------------------
-    n_e = np.abs(mom_module.moment(pha_p1["e"], axis="p1", order=0))
-
-    # ------------------------------------------------------------------
-    # Magnetic field squared  B^2(x)  [B_0^2]
-    #
-    # Time-averaged (savg) fields; B^2 = b1^2 + b2^2 + b3^2.
-    # Interpolate from the field grid onto the phase-space grid.
-    # ------------------------------------------------------------------
-    b1 = np.asarray(fld["b1"])
-    b2 = np.asarray(fld["b2"])
-    b3 = np.asarray(fld["b3"])
-    B2_fld = b1**2 + b2**2 + b3**2            # on field grid
-    B2     = np.interp(x_pha, x_fld, B2_fld)  # on phase-space grid
-
-    # ------------------------------------------------------------------
-    # Averaging windows (grid cells from x_shock)
-    #
-    #   upstream   : undisturbed plasma just to the right of the shock
-    #   downstream : compressed plasma just to the left of the shock
-    # ------------------------------------------------------------------
-    dx = float(x_pha[1] - x_pha[0])
-    upstream_mask, downstream_mask = analysis_utils.window_masks(
-        x_pha, x_shock, dx, up_ncells, dn_ncells
-    )
-
     print(f"\nUpstream   window: x in ({x_shock:.1f}, {x_shock + up_ncells * dx:.1f}]  "
           f"({up_ncells} cells, dx={dx:.2f})")
     print(f"Downstream window: x in [{x_shock - dn_ncells * dx:.1f}, {x_shock:.1f})  "
           f"({dn_ncells} cells, dx={dx:.2f})")
-
-    # ------------------------------------------------------------------
-    # Region-averaged primitive quantities
-    # ------------------------------------------------------------------
-    def region_primitives(mask: np.ndarray) -> dict:
-        return {
-            "n_e":      region_mean(n_e,             mask),  # [n_0]
-            "T_e":      region_mean(T_iso["e"],      mask),  # isotropic [m_e c^2]
-            "T_e_par":  region_mean(T_par["e"],      mask),
-            "T_e_perp": region_mean(T_perp["e"],     mask),
-            "T_i":      region_mean(T_iso["al"],     mask),
-            "T_i_par":  region_mean(T_par["al"],     mask),
-            "T_i_perp": region_mean(T_perp["al"],    mask),
-            "B2":       region_mean(B2,              mask),  # [B_0^2]
-        }
-
-    prim_up = region_primitives(upstream_mask)
-    prim_dn = region_primitives(downstream_mask)
 
     # ------------------------------------------------------------------
     # Dimensionless parameters
@@ -363,9 +281,7 @@ def main():
     #   N_d_i   : number of ion skin depths across the box (per-region density)
     #   Rm      : physical magnetic Reynolds number (Spitzer; per-region T_e, n_e)
     # ------------------------------------------------------------------
-    x_box_lo = float(fld["b1"].axes[0].min)
-    x_box_hi = float(fld["b1"].axes[0].max)
-    L_box    = x_box_hi - x_box_lo                       # [c/omega_pe]
+    L_box    = state.L_box                               # [c/omega_pe], full box
     d_i_ref  = float(np.sqrt(abs_rqm_i))                 # ion skin depth at n_e = 1
 
     N_di_up = L_box / params_up["d_i"] if np.isfinite(params_up["d_i"]) else float("nan")

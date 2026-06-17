@@ -23,6 +23,11 @@ import astropy.constants
 import astropy.units
 import numpy as np
 import osiris_utils
+# osiris_utils' own quantity registries — reused by diag_path so our on-disk path
+# routing stays in sync with what osiris_utils.Simulation knows how to load.
+from osiris_utils.data.diagnostic import (
+    OSIRIS_FLD, OSIRIS_PHA, OSIRIS_SPECIE_REPORTS, OSIRIS_SPECIE_REP_UDIST,
+)
 import osh5def
 import osh5io
 import plasmapy
@@ -94,10 +99,6 @@ class MagShockZRun:
                         pass
                 raise KeyError(f"Could not resolve field '{name}'")
         return self.sim[name]
-
-    # Backward-compatible alias used by existing notebooks.
-    def _get_field(self, name: str):
-        return self.field(name)
 
     # ------------------------------------------------------------------
     # Input-deck parameters
@@ -239,29 +240,48 @@ class MagShockZRun:
 # HDF5 path helpers — the on-disk OSIRIS diagnostic layout in one place
 # ---------------------------------------------------------------------------
 
-def phase_path(sim_dir: str, pha: str, sp: str, t: int) -> str:
-    """Path to a phase-space dump, e.g. MS/PHA/p1x1/al/p1x1-al-000360.h5."""
-    return f"{sim_dir}/MS/PHA/{pha}/{sp}/{pha}-{sp}-{t:06d}.h5"
+def diag_path(sim_dir: str, quantity: str, t: int, species: Optional[str] = None) -> str:
+    """On-disk path to a single OSIRIS HDF5 dump, mirroring osiris_utils' MS/ layout.
 
+    One helper for every diagnostic family — fields, phase spaces, species charge
+    densities and UDIST moments — keyed on the OSIRIS ``quantity`` string.  The
+    family (and thus the ``MS/<DIR>/...`` subtree) is derived from osiris_utils'
+    own quantity registries, so this stays in sync with what
+    ``osiris_utils.Simulation`` can load.
 
-def field_path(sim_dir: str, q: str, t: int) -> str:
-    """Path to a time-averaged (savg) field dump, e.g. MS/FLD/b3-savg/b3-savg-000360.h5."""
-    return f"{sim_dir}/MS/FLD/{q}-savg/{q}-savg-{t:06d}.h5"
+    ``quantity`` carries its own averaging suffix — pass ``"b3"`` for the raw
+    field or ``"b3-savg"`` for the time-averaged one, ``"charge"`` vs
+    ``"charge-savg"`` for density.  Averaging is never assumed (the old
+    ``field_path`` hard-coded ``-savg``, which this replaces).
 
+    ``species`` is required for everything except fields::
 
-def density_path(sim_dir: str, sp: str, t: int, savg: bool = True) -> str:
-    """Path to a species charge-density dump.
-
-    With ``savg=True`` (the time-averaged diagnostic, the default and the only
-    form produced by the 1D runs) the layout is
-    ``MS/DENSITY/{sp}/charge-savg/charge-savg-{sp}-{t}.h5``; with ``savg=False``
-    (un-averaged, as in the 2D test run) it is
-    ``MS/DENSITY/{sp}/charge/charge-{sp}-{t}.h5``.  Use
-    :func:`detect_layout` to pick the right form for a given run.
+        diag_path(d, "b3-savg", t)            -> MS/FLD/b3-savg/b3-savg-000360.h5
+        diag_path(d, "p1x1", t, "al")         -> MS/PHA/p1x1/al/p1x1-al-000360.h5
+        diag_path(d, "charge-savg", t, "e")   -> MS/DENSITY/e/charge-savg/charge-savg-e-000360.h5
+        diag_path(d, "T11", t, "al")          -> MS/UDIST/al/T11/T11-al-000360.h5
     """
-    if savg:
-        return f"{sim_dir}/MS/DENSITY/{sp}/charge-savg/charge-savg-{sp}-{t:06d}.h5"
-    return f"{sim_dir}/MS/DENSITY/{sp}/charge/charge-{sp}-{t:06d}.h5"
+    if quantity in OSIRIS_FLD:
+        return f"{sim_dir}/MS/FLD/{quantity}/{quantity}-{t:06d}.h5"
+
+    # The remaining families are per-species; the filename is the same
+    # (quantity-species-iter) but the directory nesting differs: phase spaces nest
+    # quantity/species, while densities and moments nest species/quantity.
+    if quantity in OSIRIS_PHA:
+        subtree, inner = "PHA", f"{quantity}/{species}"
+    elif quantity in OSIRIS_SPECIE_REPORTS:
+        subtree, inner = "DENSITY", f"{species}/{quantity}"
+    elif quantity in OSIRIS_SPECIE_REP_UDIST:
+        subtree, inner = "UDIST", f"{species}/{quantity}"
+    else:
+        raise ValueError(
+            f"Unknown OSIRIS quantity {quantity!r}; not in osiris_utils' FLD / PHA / "
+            f"DENSITY / UDIST registries. Use osiris_utils.which_quantities() to list them."
+        )
+
+    if species is None:
+        raise ValueError(f"quantity {quantity!r} ({subtree}) requires a species.")
+    return f"{sim_dir}/MS/{subtree}/{inner}/{quantity}-{species}-{t:06d}.h5"
 
 
 def axis_values(h5data, ax_idx: int) -> np.ndarray:
@@ -284,18 +304,24 @@ class RunLayout:
         (the phase spaces are binned against, and the shock propagates along,
         that axis);
       - phase spaces are named ``p{c}x1`` (1D) vs ``p{c}x2`` (2D);
-      - species charge density is time-averaged (``charge-savg``) in 1D but not
-        in the 2D test run (``charge``).
+      - species charge density may be the time-averaged diagnostic
+        (``charge-savg``) or the raw one (``charge``).  This is a per-run
+        diagnostic choice, NOT a 1D/2D distinction — every production run uses
+        ``charge-savg``; only the early 2D test run dumped raw ``charge``.
+        :func:`detect_layout` decides by inspecting which directory the run
+        actually wrote, so new savg-using 2D runs resolve correctly.
 
     Build with :func:`detect_layout`; pass the instance to the path helpers and
     to :func:`transverse_profile` so a script stays dimension-agnostic.
     """
 
-    def __init__(self, ndim: int, normal_axis: str, momenta: List[int], density_savg: bool):
+    def __init__(self, ndim: int, normal_axis: str, momenta: List[int],
+                 density_savg: bool, field_savg: bool):
         self.ndim = ndim
         self.normal_axis = normal_axis          # "x1" or "x2"
         self.momenta = momenta                  # available momentum components, e.g. [1, 2, 3]
         self.density_savg = density_savg
+        self.field_savg = field_savg
 
     def pha_name(self, component: int) -> str:
         """OSIRIS phase-space name for momentum ``component`` vs the normal axis.
@@ -309,9 +335,26 @@ class RunLayout:
             )
         return f"p{component}{self.normal_axis}"
 
+    @property
+    def charge_quantity(self) -> str:
+        """OSIRIS charge-density quantity name for this run: ``charge-savg`` if the
+        run dumped the time-averaged density diagnostic, else raw ``charge``.  The
+        choice is taken from what the run actually wrote (see :func:`detect_layout`),
+        not from its dimensionality.  Pass straight to :func:`diag_path`."""
+        return "charge-savg" if self.density_savg else "charge"
+
+    def field_quantity(self, name: str) -> str:
+        """OSIRIS field quantity name for this run: ``<name>-savg`` if the run dumped
+        time-averaged fields, else raw ``<name>`` (e.g. ``field_quantity("b3")`` ->
+        ``"b3-savg"`` or ``"b3"``).  The field analogue of :attr:`charge_quantity`;
+        like it, the choice comes from what the run wrote (see :func:`detect_layout`),
+        not its dimensionality.  Pass straight to :func:`diag_path`."""
+        return f"{name}-savg" if self.field_savg else name
+
     def __repr__(self):
         return (f"RunLayout(ndim={self.ndim}, normal_axis={self.normal_axis!r}, "
-                f"momenta={self.momenta}, density_savg={self.density_savg})")
+                f"momenta={self.momenta}, density_savg={self.density_savg}, "
+                f"field_savg={self.field_savg})")
 
 
 def detect_layout(sim_dir: str) -> RunLayout:
@@ -320,6 +363,7 @@ def detect_layout(sim_dir: str) -> RunLayout:
     Detection is data-driven (no config needed):
       - shock-normal axis + available momenta from the ``MS/PHA/p?x?`` dir names;
       - ``density_savg`` from whether ``MS/DENSITY/<sp>/charge-savg`` exists;
+      - ``field_savg`` from whether any ``MS/FLD/*-savg`` dir exists;
       - ``ndim`` from the number of spatial axes in a sample field dump.
     """
     pha_root = os.path.join(sim_dir, "MS", "PHA")
@@ -344,14 +388,23 @@ def detect_layout(sim_dir: str) -> RunLayout:
                if os.path.isdir(os.path.join(dens_root, d)))
     density_savg = os.path.isdir(os.path.join(dens_root, sp0, "charge-savg"))
 
-    fld_files = sorted(glob.glob(os.path.join(sim_dir, "MS", "FLD", "*-savg", "*.h5")))
+    fld_root = os.path.join(sim_dir, "MS", "FLD")
+    savg_dirs = sorted(glob.glob(os.path.join(fld_root, "*-savg")))
+    field_savg = bool(savg_dirs)
+
+    # ndim from a sample field dump — prefer a savg dir when present, else any field
+    # dir, so this also works for a run that only dumped raw (non-savg) fields.
+    sample_dirs = savg_dirs or sorted(
+        d for d in glob.glob(os.path.join(fld_root, "*")) if os.path.isdir(d))
+    fld_files = [f for d in sample_dirs
+                 for f in sorted(glob.glob(os.path.join(d, "*.h5")))]
     if not fld_files:
-        raise RuntimeError(f"No averaged field dumps under {sim_dir}/MS/FLD/*-savg/.")
+        raise RuntimeError(f"No field dumps under {fld_root}/*/.")
     sample = osh5io.read_h5(fld_files[0])
     ndim = sum(1 for a in sample.axes if a.name.startswith("x"))
 
     return RunLayout(ndim=ndim, normal_axis=normal_axis, momenta=momenta,
-                     density_savg=density_savg)
+                     density_savg=density_savg, field_savg=field_savg)
 
 
 def transverse_profile(frame, normal_axis: str, half_width: float = 5.0,
@@ -541,6 +594,120 @@ def resolve_dump_params(cfg: dict, t_val: int, t_sim: float) -> dict:
     }
     params.update(per_dump)
     return params
+
+
+def fit_shock_trajectory(cfg: dict, deg: int = 2, species: str = "e",
+                         search_halfwidth: float = 400.0,
+                         transverse_hw: float = 5.0) -> dict:
+    """Detect the shock front across every configured dump and fit ``x_shock(t)``.
+
+    Reuses the same density leading-edge detection as ``scripts/overview.py``
+    (``shock.detect_front_edge``), seeded per dump by the config shock fit
+    (``shock.v_shock`` / ``shock.x_shock_0``), then fits the trajectory with a
+    degree-``deg`` polynomial (:func:`shock.robust_polyfit`) so the velocity can
+    be taken as its analytic time-derivative.
+
+    Like the overview, **frames before one ion gyroperiod are excluded from the
+    fit**: the front is not magnetically organised until the upstream ions have
+    gyrated once, and those early detections (piston/driver edge) otherwise
+    corrupt the trajectory — especially its derivative.  ``T_ci`` is computed
+    from the t=0 upstream |B| (in OSIRIS units the field equals ω_ce, so
+    ω_ci = |B|/|rqm_i| and T_ci = 2π|rqm_i|/|B|); override with
+    ``shock.fit_t_min`` in the config.  ``deg`` is reduced automatically if too
+    few post-gyro frames are detected.
+
+    Returns a dict with the polynomial ``coeffs`` (np.polyfit convention), the
+    per-dump ``t_sim`` / ``x_det`` arrays, the boolean ``fit_mask`` of frames
+    actually fit, ``t_min`` used, and the ``deg`` actually used.
+    """
+    import osh5io
+    from shock import detect_front_edge, robust_polyfit
+
+    sim_dir = cfg["sim_dir"]
+    layout = detect_layout(sim_dir)
+    v_cfg = float(cfg["shock"]["v_shock"])
+    x0 = float(cfg["shock"]["x_shock_0"])
+
+    t_sim, x_det = [], []
+    for t in cfg["times"]:
+        ne_h5 = osh5io.read_h5(diag_path(sim_dir, layout.charge_quantity, t, species))
+        prof = transverse_profile(np.abs(ne_h5), layout.normal_axis, transverse_hw)
+        x = axis_values(prof, ax_idx=0)
+        ts = float(ne_h5.run_attrs["TIME"][0])
+        x_pred = x0 + v_cfg * ts
+        t_sim.append(ts)
+        x_det.append(detect_front_edge(x, np.asarray(prof), x_pred, search_halfwidth))
+
+    t_sim = np.asarray(t_sim, dtype=float)
+    x_det = np.asarray(x_det, dtype=float)
+
+    # Skip the first ion gyroperiod (front not yet magnetically organised).
+    t_min = cfg.get("shock", {}).get("fit_t_min")
+    if t_min is None:
+        t_min = _ion_gyroperiod(cfg, layout, x0)
+    t_min = float(t_min)
+
+    fit_mask = np.isfinite(x_det) & (t_sim >= t_min)
+    if fit_mask.sum() < 2:  # too few post-gyro detections -> fall back to all detected
+        fit_mask = np.isfinite(x_det)
+        t_min = 0.0
+    if fit_mask.sum() < 2:
+        raise ValueError(
+            f"shock-trajectory fit needs >=2 detected frames, got {int(fit_mask.sum())}"
+        )
+    deg_used = int(min(deg, fit_mask.sum() - 1))  # need deg+1 points for a deg-poly
+    coeffs = robust_polyfit(t_sim[fit_mask], x_det[fit_mask], deg=deg_used)
+    return {"coeffs": coeffs, "t_sim": t_sim, "x_det": x_det,
+            "fit_mask": fit_mask, "t_min": t_min, "deg": deg_used}
+
+
+def _ion_gyroperiod(cfg: dict, layout, x_shock_0: float) -> float:
+    """Ion gyroperiod T_ci = 2π|rqm_i|/|B| [1/ωpe] from the t=0 upstream field.
+
+    Mirrors ``scripts/overview.py``: |B| is the median of the first frame ahead
+    of the t=0 predicted front; |rqm_i| comes from the run's input deck.
+    """
+    import osh5io
+    sim_dir = cfg["sim_dir"]
+    t0 = cfg["times"][0]
+    b = {n: osh5io.read_h5(diag_path(sim_dir, layout.field_quantity(n), t0))
+         for n in ("b1", "b2", "b3")}
+    x = axis_values(b["b1"], ax_idx=0)
+    Bmag = np.sqrt(sum(np.asarray(b[n]) ** 2 for n in ("b1", "b2", "b3")))
+    upstream = x > x_shock_0
+    B_up = float(np.median(Bmag[upstream])) if upstream.any() else float(np.median(Bmag))
+    rqm_i = abs(run_from_config(cfg).rqm)
+    return 2.0 * np.pi * rqm_i / B_up
+
+
+def resolve_shock_velocity(cfg: dict, t_sim: float, deg: int = 2,
+                           species: str = "e", **fit_kw) -> dict:
+    """Instantaneous shock velocity = d/dt of the fitted front trajectory at ``t_sim``.
+
+    For the energy-partition / heating analyses the relevant frame boost is the
+    *instantaneous* shock speed at the analyzed dump, which a curved fit captures
+    (the front decelerates).  The single ``shock.v_shock`` in the analysis YAML is
+    kept only as the detection seed and as the fallback if the fit fails; the
+    degree can be set with ``shock.fit_degree`` in the config (default 2).
+
+    Returns a dict: ``v_shock`` [c], ``x_shock_fit`` [c/ωpe] at ``t_sim``,
+    ``source`` ("fit" or "config"), ``deg``, ``n_det``, plus the config value as
+    ``v_shock_cfg``.
+    """
+    from shock import trajectory_at
+
+    v_cfg = float(cfg["shock"]["v_shock"])
+    deg = int(cfg.get("shock", {}).get("fit_degree", deg))
+    try:
+        traj = fit_shock_trajectory(cfg, deg=deg, species=species, **fit_kw)
+        x_fit, v_fit = trajectory_at(traj["coeffs"], t_sim)
+        return {"v_shock": float(v_fit), "x_shock_fit": float(x_fit),
+                "source": "fit", "deg": traj["deg"],
+                "n_det": int(traj["fit_mask"].sum()), "v_shock_cfg": v_cfg}
+    except Exception as exc:  # detection/fit failed -> fall back to config seed
+        return {"v_shock": v_cfg, "x_shock_fit": float("nan"),
+                "source": f"config ({type(exc).__name__})", "deg": 0,
+                "n_det": 0, "v_shock_cfg": v_cfg}
 
 
 # ---------------------------------------------------------------------------

@@ -61,16 +61,28 @@ def main():
 
     sim = analysis_utils.run_from_config(cfg)
     spec = analysis_utils.RunSpec.from_sim_dir(sim_dir)
+    layout = analysis_utils.detect_layout(sim_dir)  # for the savg field-name suffix
     species_list = list(sim.deck.species)  # species defined in the input deck
 
     # Load phase spaces and fields for this single dump
     print("Loading HDF5 files...")
     pha = {
-        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p1x1", sp, t_val))
+        sp: osh5io.read_h5(analysis_utils.diag_path(sim_dir, "p1x1", t_val, sp))
         for sp in species_list
     }
+    # Transverse phase spaces (p2x1, p3x1), when those diagnostics were output,
+    # so the thermal energy carries every available momentum direction.
+    pha_perp = {sp: [] for sp in species_list}
+    for pdir in ("p2x1", "p3x1"):
+        for sp in species_list:
+            path = analysis_utils.diag_path(sim_dir, pdir, t_val, sp)
+            if os.path.exists(path):
+                pha_perp[sp].append(osh5io.read_h5(path))
+    n_perp = max((len(v) for v in pha_perp.values()), default=0)
+    print(f"Thermal directions: "
+          f"{', '.join(['p1', 'p2', 'p3'][:1 + n_perp])}")
     fld = {
-        name: osh5io.read_h5(analysis_utils.field_path(sim_dir, name, t_val))
+        name: osh5io.read_h5(analysis_utils.diag_path(sim_dir, layout.field_quantity(name), t_val))
         for name in ["b1", "b2", "b3", "e1", "e2", "e3"]
     }
 
@@ -80,12 +92,18 @@ def main():
 
     t_sim = float(pha[species_list[0]].run_attrs["TIME"][0])
     dump = analysis_utils.resolve_dump_params(cfg, t_val, t_sim)
-    v_shock = dump["v_shock"]
     x_shock = dump["x_shock"]
     x_downstream_start = dump["x_downstream_start"]
 
+    # Shock-frame boost velocity = instantaneous derivative of the fitted front
+    # trajectory at this dump (the config shock.v_shock is only the fit seed).
+    vfit = analysis_utils.resolve_shock_velocity(cfg, t_sim)
+    v_shock = vfit["v_shock"]
+
     print(f"t_sim   : {t_sim:.1f} [ωpe⁻¹]")
     print(f"x_shock : {x_shock:.1f} [c/ωpe]")
+    print(f"v_shock : {v_shock:.5f} c  (source: {vfit['source']}, deg={vfit['deg']}, "
+          f"{vfit['n_det']} detections; config seed {vfit['v_shock_cfg']:.5f} c)")
 
     species_rqm = {sp: sim.rqm_of(sp) for sp in species_list}  # per-species rqm from deck
 
@@ -94,7 +112,7 @@ def main():
     u_th_total = np.zeros(x_pha.size)
     for sp in species_list:
         u_ram_sp, u_th_sp = ep.species_energy_profiles(
-            pha[sp], species_rqm[sp], v_shock
+            pha[sp], species_rqm[sp], v_shock, perp_phase_spaces=pha_perp[sp]
         )
         u_ram_total += u_ram_sp
         u_th_total += u_th_sp
@@ -144,6 +162,10 @@ def main():
         t_sim=np.asarray(t_sim),
         x_shock=np.asarray(x_shock),
         x_downstream_start=np.asarray(x_downstream_start),
+        v_shock=np.asarray(v_shock),
+        v_shock_cfg=np.asarray(vfit["v_shock_cfg"]),
+        v_shock_source=np.asarray(vfit["source"]),
+        v_shock_fit_deg=np.asarray(vfit["deg"]),
         # Region averages
         upstream_ram=np.asarray(up["ram"]),
         upstream_thermal=np.asarray(up["thermal"]),

@@ -7,6 +7,12 @@
 
 All integrals use Simpson's rule along the named axis. Orders share the
 zeroth/first moment so a 2nd-order call integrates each quantity once.
+
+Pass ``p_mask`` (a boolean array over the momentum axis) to integrate over a
+sub-range of momentum only — e.g. to isolate the reflected-ion population.
+Bins outside the mask are zeroed before integration, so the uniform Simpson
+grid is preserved; the order-1/2 means are then taken over the masked
+sub-population.
 """
 
 import numpy as np
@@ -14,7 +20,8 @@ import osh5def
 import scipy.integrate
 
 
-def moment(data: osh5def.H5Data, order: int, axis: str, debug: bool = False):
+def moment(data: osh5def.H5Data, order: int, axis: str,
+           p_mask: np.ndarray = None, debug: bool = False):
     if not data.has_axis(axis):
         raise ValueError(f"Data does not have axis '{axis}'")
 
@@ -23,6 +30,17 @@ def moment(data: osh5def.H5Data, order: int, axis: str, debug: bool = False):
     if debug:
         print(f"Found axis '{axis}' at index {ax}, "
               f"range [{data.axes[ax].min}, {data.axes[ax].max}], size {data.axes[ax].size}")
+
+    if p_mask is not None:
+        p_mask = np.asarray(p_mask, dtype=bool)
+        if p_mask.shape != (data.axes[ax].size,):
+            raise ValueError(
+                f"p_mask shape {p_mask.shape} does not match momentum axis "
+                f"'{axis}' size {data.axes[ax].size}"
+            )
+        mshape = [1] * data.ndim
+        mshape[ax] = -1
+        data = np.asarray(data) * p_mask.reshape(mshape)
 
     # Reshape the momentum coordinate to broadcast against `data` along `ax`
     # without allocating a full-size weights array.

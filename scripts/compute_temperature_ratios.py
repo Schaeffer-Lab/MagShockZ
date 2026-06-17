@@ -54,11 +54,11 @@ def main():
 
     print("Loading HDF5 files...")
     pha_p1 = {
-        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p1x1", sp, t_val))
+        sp: osh5io.read_h5(analysis_utils.diag_path(sim_dir, "p1x1", t_val, sp))
         for sp in ["al", "e"]
     }
     pha_p2 = {
-        sp: osh5io.read_h5(analysis_utils.phase_path(sim_dir, "p2x1", sp, t_val))
+        sp: osh5io.read_h5(analysis_utils.diag_path(sim_dir, "p2x1", t_val, sp))
         for sp in ["al", "e"]
     }
 

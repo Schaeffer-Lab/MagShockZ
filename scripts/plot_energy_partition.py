@@ -52,15 +52,25 @@ def plot_profiles(r: dict, ax: plt.Axes) -> None:
 
 
 def plot_partition_bars(r: dict, ax: plt.Axes) -> None:
-    labels = ["Ram", "Thermal", "B field", "E field"]
     keys = ["ram", "thermal", "B_field", "E_field"]
-    up_vals = [r[f"upstream_{k}"] for k in keys]
-    dn_vals = [r[f"downstream_{k}"] for k in keys]
+    up_vals = [float(r[f"upstream_{k}"]) for k in keys]
+    dn_vals = [float(r[f"downstream_{k}"]) for k in keys]
+    # Fifth group: the total energy density, for a direct (linear) conservation
+    # check.  NB this compares energy *density*, not the shock-frame energy
+    # *flux* that is actually conserved across the front (see module notes).
+    up_vals.append(sum(up_vals))
+    dn_vals.append(sum(dn_vals))
+    labels = ["Ram", "Thermal", "B field", "E field", "Total"]
 
     x = np.arange(len(labels))
     w = 0.38
     ax.bar(x - w / 2, up_vals, w, label="Upstream")
     ax.bar(x + w / 2, dn_vals, w, label="Downstream")
+    # Annotate the total bars with the downstream/upstream ratio.
+    ratio = dn_vals[-1] / up_vals[-1] if up_vals[-1] else float("nan")
+    ax.text(x[-1], max(up_vals[-1], dn_vals[-1]) * 1.02,
+            f"dn/up = {ratio:.2f}", ha="center", va="bottom", fontsize=9)
+    ax.axvline(len(keys) - 0.5, color="0.7", lw=1, ls=":")  # set off the Total group
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Mean energy density [n₀ mₑ c²]")

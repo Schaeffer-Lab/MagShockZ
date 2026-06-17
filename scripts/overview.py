@@ -52,8 +52,7 @@ sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 import analysis_utils
 import temperature_anisotropy as ta
 from analysis_utils import (
-    StreakBuilder, axis_values, field_path, density_path, phase_path,
-    transverse_profile,
+    StreakBuilder, axis_values, diag_path, transverse_profile,
 )
 # Shock-front detection / trajectory fitting is single-sourced in src/shock.py.
 from shock import detect_front_edge as detect_front
@@ -71,7 +70,7 @@ from shock import robust_linfit
 
 def bmag_frame(sim_dir: str, t: int, layout, hw: float):
     """|B| = sqrt(b1^2 + b2^2 + b3^2), reduced to a 1D profile [B_0]."""
-    b = {q: osh5io.read_h5(field_path(sim_dir, q, t))
+    b = {q: osh5io.read_h5(diag_path(sim_dir, layout.field_quantity(q), t))
          for q in ("b1", "b2", "b3")}
     bmag = np.sqrt(b["b1"] ** 2 + b["b2"] ** 2 + b["b3"] ** 2)  # stays H5Data
     # Keep the propagated UNITS (osh5def carries the field unit m_e c ω_p/e through
@@ -89,7 +88,7 @@ def density_frame(sim_dir: str, sp: str, t: int, layout, hw: float):
     for a singly-charged species.  overview.py calls this only for electrons (q=−1),
     where that holds; do NOT use it for multiply-charged ions without dividing by Z.
     """
-    ch = osh5io.read_h5(density_path(sim_dir, sp, t, savg=layout.density_savg))
+    ch = osh5io.read_h5(diag_path(sim_dir, layout.charge_quantity, t, sp))
     n = np.abs(ch)
     n.data_attrs = dict(n.data_attrs, NAME=f"n_{sp}", LONG_NAME=fr"n_\mathrm{{{sp}}}", UNITS="n_0")
     return transverse_profile(n, layout.normal_axis, hw)
@@ -103,7 +102,7 @@ def temperature_frame(sim_dir: str, sp: str, t: int, rqm: float, layout, axis: s
     needs) so it can be stacked exactly like the field/density frames.  The
     phase-space name (p1x1 vs p1x2) comes from the run layout.
     """
-    ps = osh5io.read_h5(phase_path(sim_dir, layout.pha_name(int(axis[1:])), sp, t))
+    ps = osh5io.read_h5(diag_path(sim_dir, layout.pha_name(int(axis[1:])), t, sp))
     T = np.asarray(ta.temperature_profile(ps, rqm, axis))
     x_axis = next(a for a in ps.axes if a.name != axis)  # the spatial axis
     return osh5def.H5Data(
@@ -227,7 +226,8 @@ def main():
     # ------------------------------------------------------------------
     t_stop = args.t_stop
     if t_stop is None:
-        b3_dir = f"{sim_dir}/MS/FLD/b3-savg"
+        b3 = layout.field_quantity("b3")
+        b3_dir = f"{sim_dir}/MS/FLD/{b3}"
         idxs = [int(f.split("-")[-1].split(".")[0]) for f in os.listdir(b3_dir) if f.endswith(".h5")]
         t_stop = max(idxs)
 
@@ -235,11 +235,11 @@ def main():
         stride = stride + (stride % 2)  # keep even so field savg files exist
         out = []
         for t in range(args.t_start, t_stop + 1, stride):
-            if not os.path.exists(field_path(sim_dir, "b3", t)):
+            if not os.path.exists(diag_path(sim_dir, layout.field_quantity("b3"), t)):
                 continue
-            if not os.path.exists(density_path(sim_dir, "e", t, savg=layout.density_savg)):
+            if not os.path.exists(diag_path(sim_dir, layout.charge_quantity, t, "e")):
                 continue
-            if require_phase and not os.path.exists(phase_path(sim_dir, layout.pha_name(1), "al", t)):
+            if require_phase and not os.path.exists(diag_path(sim_dir, layout.pha_name(1), t, "al")):
                 continue
             out.append(t)
         return out
@@ -377,8 +377,8 @@ def main():
     i_snap = args.snapshot_idx % len(field_dumps)
     x_shock_snap = x_det[i_snap] if np.isfinite(x_det[i_snap]) else x_pred[i_snap]
 
-    ps_al = osh5io.read_h5(phase_path(sim_dir, layout.pha_name(1), "al", t_snap))
-    ps_e  = osh5io.read_h5(phase_path(sim_dir, layout.pha_name(1), "e",  t_snap))
+    ps_al = osh5io.read_h5(diag_path(sim_dir, layout.pha_name(1), t_snap, "al"))
+    ps_e  = osh5io.read_h5(diag_path(sim_dir, layout.pha_name(1), t_snap, "e"))
 
     fig2, ax2 = plt.subplots(2, 2, figsize=(16, 10))
     plot_phasespace(ax2[0, 0], ps_al, title=f"Ion $p_1$-$x$ phase space (t={time_f[i_snap]:.0f})",

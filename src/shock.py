@@ -102,3 +102,45 @@ def robust_linfit(t, x, n_iter: int = 3, n_sigma: float = 2.5):
         keep = new_keep
         slope, intercept = np.polyfit(t[keep], x[keep], 1)
     return float(slope), float(intercept)
+
+
+def robust_polyfit(t, x, deg: int = 2, n_iter: int = 3, n_sigma: float = 2.5):
+    """Polynomial trajectory fit ``x(t)`` of degree ``deg`` with σ-clipping.
+
+    Generalizes :func:`robust_linfit` to arbitrary degree so the shock front can
+    be fit as a (decelerating) curve and differentiated for an *instantaneous*
+    shock velocity ``v_shock = dx/dt`` (see :func:`trajectory_at`).  Same
+    iterative outlier rejection as :func:`robust_linfit`; at least ``deg + 2``
+    points are kept (if clipping would drop below that, the previous fit is
+    retained).  Returns numpy polynomial coefficients (highest power first, the
+    ``np.polyfit`` / ``np.poly1d`` convention).
+    """
+    t = np.asarray(t, dtype=float)
+    x = np.asarray(x, dtype=float)
+    min_pts = deg + 2
+    coeffs = np.polyfit(t, x, deg)
+    keep = np.ones(len(t), dtype=bool)
+    for _ in range(n_iter):
+        resid = x - np.polyval(coeffs, t)
+        sigma = np.std(resid[keep])
+        if sigma == 0:
+            break
+        new_keep = np.abs(resid) <= n_sigma * sigma
+        if new_keep.sum() < min_pts or np.array_equal(new_keep, keep):
+            break
+        keep = new_keep
+        coeffs = np.polyfit(t[keep], x[keep], deg)
+    return coeffs
+
+
+def trajectory_at(coeffs, t):
+    """Evaluate the fitted front (position, velocity) at time(s) ``t``.
+
+    ``velocity`` is the analytic time-derivative of the polynomial trajectory —
+    the instantaneous shock-front speed used to boost into the shock frame.
+    ``coeffs`` is the output of :func:`robust_polyfit` (or any ``np.polyfit``).
+    """
+    coeffs = np.asarray(coeffs, dtype=float)
+    pos = np.polyval(coeffs, t)
+    vel = np.polyval(np.polyder(coeffs), t)
+    return pos, vel

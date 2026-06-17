@@ -56,7 +56,7 @@ import osh5io
 import osh5def
 import osh5vis
 import analysis_utils
-from analysis_utils import phase_path, density_path, axis_values, detect_layout
+from analysis_utils import diag_path, axis_values, detect_layout
 import temperature_anisotropy as ta
 
 ME_C2_EV = 510998.95  # electron rest energy [eV]; T[eV] = T[m_e c^2] * ME_C2_EV
@@ -126,7 +126,7 @@ def parse_deck(deck):
 
 def phase_dumps(sim_dir, sp):
     """Sorted list of available p1x1 dump indices for a species."""
-    files = glob.glob(phase_path(sim_dir, "p1x1", sp, 0).replace("000000", "*"))
+    files = glob.glob(diag_path(sim_dir, "p1x1", 0, sp).replace("000000", "*"))
     idx = sorted(int(re.search(r"(\d+)\.h5$", f).group(1)) for f in files)
     return idx
 
@@ -148,7 +148,7 @@ def total_T_profile(sim_dir, sp, t, rqm):
     comps = []
     x = time = x_axis = run_attrs = None
     for c in (1, 2, 3):
-        path = phase_path(sim_dir, f"p{c}x1", sp, t)
+        path = diag_path(sim_dir, f"p{c}x1", t, sp)
         if not os.path.exists(path):
             continue
         ps = osh5io.read_h5(path)
