@@ -40,6 +40,7 @@ from .synthetic_diagnostics import (
 )
 from .dimensionless_params import (
     ion_skin_depth,
+    ion_gyroperiod,
     compute_dimensionless,
     magnetic_reynolds,
 )

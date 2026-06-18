@@ -39,6 +39,12 @@ python FLASH_OSIRIS_define.py --config ../runs/perlmutter_1d.run.yaml
 # Run an analysis script (config-driven; see each script's module docstring)
 conda activate analysis
 python scripts/overview.py --config config/perlmutter_1.3.1d.yaml [--stride 16 ...]
+
+# Quick MP4 movie of a diagnostic (analysis env; --units electron|ion sets axis/time
+# normalization read from the run dir; crop bounds are physical values in that unit)
+python scripts/make_movie.py -d <run>/MS --units ion             # interactive menu
+python scripts/make_movie.py -d <run>/MS/FLD/b2-savg --no-interactive \
+    --units ion --xlim 80 120 --log -s 4 -o b2   # headless (sbatch: make_movie.sbatch)
 ```
 
 The generator's CLI is **terminal-only with no hidden defaults**: argparse enforces

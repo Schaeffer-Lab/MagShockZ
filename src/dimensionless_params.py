@@ -43,6 +43,23 @@ def ion_skin_depth(abs_rqm_i: float, n_e: float = 1.0) -> float:
     return float(np.sqrt(abs_rqm_i / n_e))
 
 
+def ion_gyroperiod(abs_rqm_i: float, B_mag: float) -> float:
+    """Ion gyroperiod T_ci = 2*pi*|rqm_i|/|B'|  [1/omega_pe].
+
+    In OSIRIS units the electron cyclotron frequency is omega_ce' = B' (the
+    normalised field), so the ion cyclotron frequency is omega_ci' = B'/|rqm_i|
+    (rqm = m/q folds in the charge state), giving the gyroperiod
+
+        T_ci = 2*pi / omega_ci' = 2*pi*|rqm_i| / |B'|.
+
+    ``B_mag`` is the upstream field magnitude in OSIRIS units (B_0 = m_e c
+    omega_pe / e).  Returns nan for non-positive |B'|.
+    """
+    if not (np.isfinite(B_mag) and B_mag > 0.0):
+        return float("nan")
+    return float(2.0 * np.pi * abs_rqm_i / B_mag)
+
+
 def compute_dimensionless(prim: dict, v_shock: float, abs_rqm_i: float,
                           gamma: float = GAMMA_DEFAULT) -> dict:
     """Dimensionless parameters from region-averaged primitives (OSIRIS units).

@@ -6,6 +6,7 @@ import pytest
 
 from dimensionless_params import (
     ion_skin_depth,
+    ion_gyroperiod,
     compute_dimensionless,
     magnetic_reynolds,
 )
@@ -29,6 +30,32 @@ def test_ion_skin_depth_scales_with_density():
 def test_ion_skin_depth_nonpositive_density_is_nan():
     assert math.isnan(ion_skin_depth(4.0, n_e=0.0))
     assert math.isnan(ion_skin_depth(4.0, n_e=-1.0))
+
+
+# ---------------------------------------------------------------------------
+# ion_gyroperiod: T_ci = 2*pi*|rqm_i| / |B'|
+# ---------------------------------------------------------------------------
+
+def test_ion_gyroperiod_reference():
+    # |rqm|=2, B=pi -> T_ci = 2*pi*2/pi = 4
+    assert ion_gyroperiod(2.0, math.pi) == pytest.approx(4.0)
+
+
+def test_ion_gyroperiod_scales_inversely_with_field():
+    # Doubling |B'| halves the gyroperiod.
+    base = ion_gyroperiod(5.0, 0.5)
+    assert ion_gyroperiod(5.0, 1.0) == pytest.approx(base / 2.0)
+
+
+def test_ion_gyroperiod_scales_with_mass():
+    # Doubling |rqm_i| doubles the gyroperiod.
+    base = ion_gyroperiod(5.0, 0.5)
+    assert ion_gyroperiod(10.0, 0.5) == pytest.approx(base * 2.0)
+
+
+@pytest.mark.parametrize("B", [0.0, -1.0, math.nan])
+def test_ion_gyroperiod_nonpositive_field_is_nan(B):
+    assert math.isnan(ion_gyroperiod(2.0, B))
 
 
 # ---------------------------------------------------------------------------
