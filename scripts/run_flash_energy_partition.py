@@ -16,7 +16,7 @@ Unlike the OSIRIS version there is no parallel/perpendicular split.
 Usage
 -----
     python scripts/flash_energy_partition.py \\
-        --config config/perlmutter_1.3.1d.yaml \\
+        --config config/flash_3d_noshield.yaml \\
         [--snapshot-idx -1] \\
         [--x-shock-cm 0.045] \\
         [--x-downstream-start-cm 0.02] \\
@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 sys.path.insert(0, os.path.join(_HERE, "..", "init_nopython"))
 
 import analysis_utils
+import plot_style
 import flash_utils as fu
 import flash_energy_partition as fep
 
@@ -56,6 +57,17 @@ CHANNEL_COLORS = {
     "u_th_i":    "tab:red",
     "u_mag":     "tab:green",
 }
+
+# Momentum-flux (total-pressure) channels — the conserved RH quantity.  Same
+# colours as the energy channels so the two partitions read consistently.
+MOM_CHANNELS = ["p_ram", "p_th_e", "p_th_i", "p_mag"]
+MOM_LABELS = {
+    "p_ram":  "Ram pressure",
+    "p_th_e": r"Thermal $e^-$",
+    "p_th_i": r"Thermal $i^+$",
+    "p_mag":  "Magnetic",
+}
+MOM_COLORS = dict(zip(MOM_CHANNELS, CHANNEL_COLORS.values()))
 
 
 def main():
@@ -78,8 +90,14 @@ def main():
     parser.add_argument("--window-um", type=float, default=300.0, dest="window_um",
                         help="Half-width [µm] of the zoom window around the shock front "
                              "in the area plot (default 300 µm).")
+    parser.add_argument("--gamma", type=float, default=None,
+                        help="Adiabatic index for the RH compression check (default: "
+                             "config 'gamma' key, else 5/3). gamma=(f+2)/f: 5/3 (3 DOF), "
+                             "2 (2 DOF), 3 (1 DOF) — sweep to read off the effective index.")
     parser.add_argument("--output-dir", default=None, dest="output_dir")
+    plot_style.add_publication_arg(parser)
     args = parser.parse_args()
+    plot_style.apply(args.publication)
 
     # ------------------------------------------------------------------
     # Config + run parameters
@@ -178,8 +196,59 @@ def main():
 
     result = fep.partition_by_region(energy, x_cm, x_shock_cm, x_ds_start)
 
-    print("\n--- Energy partition ---")
+    print("\n--- Energy partition (NOT conserved across the shock) ---")
     print(fep.partition_summary(result))
+
+    # ------------------------------------------------------------------
+    # Momentum-flux (total-pressure) partition — the CONSERVED RH quantity.
+    # Same three reservoirs as the energy partition but with the pressure
+    # prefactors (ram ρu², thermal nkT, magnetic B_t²/8π); its total dn/up≈1 is
+    # the real continuity check.  Magnetic uses the transverse field (B_para
+    # excluded — the normal field contributes tension, not normal momentum flux).
+    # ------------------------------------------------------------------
+    momflux = fep.momentum_fluxes(
+        ne       = lo["ne"],
+        Te       = lo["Te"],
+        Ti       = lo["Ti"],
+        n_ion    = lo["n_ion"],
+        rho      = lo["rho"],
+        v_para   = lo["v_para"],
+        v_shock  = v_shock_cms,
+        B_mag    = lo["B_mag"],
+        B_para   = lo["B_para"],
+    )
+    mom_result = fep.partition_by_region(momflux, x_cm, x_shock_cm, x_ds_start)
+    mom_labels = [MOM_LABELS[c] for c in MOM_CHANNELS]
+
+    print("\n--- Momentum-flux partition (CONSERVED: dn/up should be ≈ 1) ---")
+    print(fep.partition_summary(mom_result, channels=MOM_CHANNELS,
+                                labels=mom_labels, unit="dyn/cm²"))
+    cont = fep.continuity_check(mom_result)
+    print(fep.continuity_summary(cont))
+
+    # ------------------------------------------------------------------
+    # Compression vs Rankine--Hugoniot (oblique MHD theory, shared with OSIRIS)
+    # ------------------------------------------------------------------
+    gamma = args.gamma if args.gamma is not None else float(cfg.get("gamma", 5.0 / 3.0))
+    up_mask = x_cm > x_shock_cm
+    dn_mask = (x_cm >= x_ds_start) & (x_cm <= x_shock_cm)
+
+    def _reg(field, units, mask):
+        return float(np.nanmean(lo[field].to(units).value[mask]))
+
+    def _prims(mask):
+        return dict(
+            rho=_reg("rho", "g/cm**3", mask), ne=_reg("ne", "cm**-3", mask),
+            n_ion=_reg("n_ion", "cm**-3", mask), Te=_reg("Te", "eV", mask),
+            Ti=_reg("Ti", "eV", mask), B_mag=_reg("B_mag", "gauss", mask),
+            B_para=_reg("B_para", "gauss", mask),
+        )
+
+    v_para_up = _reg("v_para", "cm/s", up_mask)
+    v_inflow = abs(v_shock_cms - v_para_up)        # shock-frame normal inflow [cm/s]
+    check = fep.compression_check(_prims(up_mask), _prims(dn_mask), v_inflow, gamma=gamma)
+    print("\n--- Compression vs Rankine--Hugoniot ---")
+    print(fep.compression_summary(check))
 
     # ------------------------------------------------------------------
     # Figure 1 — stacked area chart, shock rest frame, centred on the front
@@ -295,6 +364,47 @@ def main():
     print(f"Saved → {bar_path}")
 
     # ------------------------------------------------------------------
+    # Figure 3 — momentum-flux continuity: upstream vs downstream per channel,
+    # plus the total (the conserved quantity, dn/up annotated).
+    # ------------------------------------------------------------------
+    fig3, ax3 = plt.subplots(figsize=(9, 5))
+    bar_keys = MOM_CHANNELS + ["total"]
+    bar_lbls = [MOM_LABELS[c] for c in MOM_CHANNELS] + ["Total"]
+    up_vals = [mom_result["upstream"]["means"][c] for c in MOM_CHANNELS]
+    dn_vals = [mom_result["downstream"]["means"][c] for c in MOM_CHANNELS]
+    up_vals.append(mom_result["upstream"]["total"])
+    dn_vals.append(mom_result["downstream"]["total"])
+    colors = [MOM_COLORS[c] for c in MOM_CHANNELS] + ["0.5"]
+
+    xpos = np.arange(len(bar_keys))
+    w = 0.38
+    ax3.bar(xpos - w / 2, up_vals, w, color=colors, alpha=0.6,
+            edgecolor="k", linewidth=0.8, label="Upstream")
+    bars_dn = ax3.bar(xpos + w / 2, dn_vals, w, color=colors, alpha=1.0,
+                      edgecolor="k", linewidth=0.8, label="Downstream")
+    for b in bars_dn:
+        b.set_hatch("///")
+    ax3.axvline(len(MOM_CHANNELS) - 0.5, color="0.7", lw=1, ls=":")  # set off Total
+    ax3.annotate(f"dn/up = {cont['ratio']:.2f}  ({100 * cont['rel_imbalance']:+.0f}%)",
+                 xy=(xpos[-1], max(up_vals[-1], dn_vals[-1])), xytext=(0, 4),
+                 textcoords="offset points", ha="center", va="bottom", fontsize=10)
+    ax3.set_xticks(xpos)
+    ax3.set_xticklabels(bar_lbls, fontsize=10)
+    ax3.set_ylabel(r"momentum flux [dyn cm$^{-2}$]")
+    ax3.set_title(
+        f"Momentum-flux continuity (conserved if dn/up ≈ 1)\n"
+        f"{os.path.basename(snap_file)}  (t = {t_ns:.2f} ns)  "
+        f"v_shock = {v_shock_cms * _CM_TO_KMS:.1f} km/s"
+    )
+    ax3.legend(fontsize=9)
+    ax3.grid(axis="y", alpha=0.3)
+    fig3.tight_layout()
+    mom_path = os.path.join(out_dir, f"flash_momentum_flux_{os.path.basename(snap_file)}.png")
+    fig3.savefig(mom_path, dpi=150, bbox_inches="tight")
+    plt.close(fig3)
+    print(f"Saved → {mom_path}")
+
+    # ------------------------------------------------------------------
     # Save .npz
     # ------------------------------------------------------------------
     npz_path = os.path.join(out_dir, f"flash_energy_partition_{os.path.basename(snap_file)}.npz")
@@ -318,6 +428,21 @@ def main():
         dn_u_th_i_frac    = np.asarray(result["downstream"]["fractions"]["u_th_i"]),
         dn_u_mag_frac     = np.asarray(result["downstream"]["fractions"]["u_mag"]),
         dn_total_erg_cm3  = np.asarray(result["downstream"]["total"]),
+        # Momentum-flux (total-pressure) partition — the conserved RH quantity
+        **{f"mom_{c}": momflux[c].to("dyn/cm**2").value for c in MOM_CHANNELS},
+        mom_up_total_dyn_cm2 = np.asarray(mom_result["upstream"]["total"]),
+        mom_dn_total_dyn_cm2 = np.asarray(mom_result["downstream"]["total"]),
+        mom_continuity_ratio = np.asarray(cont["ratio"]),
+        mom_rel_imbalance    = np.asarray(cont["rel_imbalance"]),
+        # Compression vs Rankine--Hugoniot
+        rh_gamma          = np.asarray(check["gamma"]),
+        rh_theta_bn_rad   = np.asarray(check["theta_bn"]),
+        rh_mach_s         = np.asarray(check["mach_s"]),
+        rh_mach_a         = np.asarray(check["mach_a"]),
+        r_measured        = np.asarray(check["r_measured"]),
+        r_RH              = np.asarray(check["r_RH"]),
+        b_t_measured      = np.asarray(check["b_t_measured"]),
+        b_t_RH            = np.asarray(check["b_t_RH"]),
         config_path       = np.asarray(os.path.abspath(args.config)),
     )
     print(f"Saved → {npz_path}")
