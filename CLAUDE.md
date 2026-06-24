@@ -20,7 +20,7 @@ Two conda environments, used for disjoint stages — do not mix them:
 - **`analysis`** — OSIRIS analysis (`scripts/`). Has `osh5` / pyVisOS (`osh5io`,
   `osh5def`, `osh5vis`) and `osiris_utils` for reading OSIRIS HDF5 output.  It also
   has `yt` + `unyt`, so the FLASH-side analysis scripts (e.g.
-  `run_flash_energy_partition.py`) run here too — they import `analysis_utils`
+  `run_flash_pressure_partition.py`) run here too — they import `analysis_utils`
   (→ `osiris_utils`) for config/`RunSpec` loading, which only exists in `analysis`.
 
 The installable package (`src/`, see `pyproject.toml`) depends only on numpy/scipy/unyt
