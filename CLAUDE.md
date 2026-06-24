@@ -13,10 +13,15 @@ resulting OSIRIS runs (and the source FLASH data). Most work runs on NERSC Perlm
 
 Two conda environments, used for disjoint stages — do not mix them:
 
-- **`osiris2`** — FLASH→OSIRIS initialization and deck generation (`init_python/`).
-  Has `yt` + `unyt` for reading FLASH HDF5 plot files and `jinja2` for deck templating.
+- **`osiris2`** — FLASH→OSIRIS initialization and deck generation. The converter itself
+  is the standalone **`flash2osiris`** package (pip-installed here; repo at
+  `/pscratch/sd/d/dschnei/flash2osiris`); `init_python/` holds only the MagShockZ run
+  drivers. Has `yt` + `unyt` for reading FLASH HDF5 plot files and `jinja2` for templating.
 - **`analysis`** — OSIRIS analysis (`scripts/`). Has `osh5` / pyVisOS (`osh5io`,
-  `osh5def`, `osh5vis`) and `osiris_utils` for reading OSIRIS HDF5 output.
+  `osh5def`, `osh5vis`) and `osiris_utils` for reading OSIRIS HDF5 output.  It also
+  has `yt` + `unyt`, so the FLASH-side analysis scripts (e.g.
+  `run_flash_energy_partition.py`) run here too — they import `analysis_utils`
+  (→ `osiris_utils`) for config/`RunSpec` loading, which only exists in `analysis`.
 
 The installable package (`src/`, see `pyproject.toml`) depends only on numpy/scipy/unyt
 so the pure-function modules import and test without the heavy OSIRIS/yt/astropy stack.
@@ -30,21 +35,37 @@ pytest --cov=src --cov-report=term-missing
 pytest tests/test_shock.py              # single file
 pytest tests/test_shock.py::test_name   # single test
 
-# Generate an OSIRIS deck from a run spec (single source of truth)
+# Generate an OSIRIS deck from a run spec (single source of truth). The generator is
+# the external flash2osiris package; run it from the repo root so input_files/ lands here.
 conda activate osiris2
-cd init_python
-python FLASH_OSIRIS_define.py --config ../runs/perlmutter_1d.run.yaml
-# wrappers exist: runme_perlmutter_1d.sh, runme_perlmutter_2d.sh, run_dx_scan.sh
+python -m flash_osiris.generator --config runs/perlmutter_1d.run.yaml
+# wrappers: init_python/runme_perlmutter_1d.sh, runme_perlmutter_2d.sh, run_dx_scan.sh
 
 # Run an analysis script (config-driven; see each script's module docstring)
 conda activate analysis
 python scripts/overview.py --config config/perlmutter_1.3.1d.yaml [--stride 16 ...]
 
+# Interactively tune the config's shock params, then write them back (comments
+# preserved). Each command re-renders results/<run>/tune_*.png to refresh in your IDE.
+python scripts/tune_shock.py --config config/perlmutter_1.3.1d.yaml          # v_shock/x_shock_0
+python scripts/tune_shock.py --config ...yaml --mode regions --dump 400      # per-dump x_shock/x_downstream_start
+
+# FLASH analog of tune_shock: place the FLASH front by hand on physical-unit (µm/ns)
+# line-outs, then feed it to flash_rh_prediction.py. trajectory mode writes
+# flash: v_shock_est_cms/x_shock_0_cm; regions mode writes flash_dump_params.<idx>:
+# x_shock_cm/x_downstream_start_cm (cm; separate from the OSIRIS c/ωpe dump_params).
+# regions mode also shows a 2D n_e SlicePlot through the LOS, sharing the LOS-distance
+# axis with the line-outs so the shock/downstream markers fall over the 2D density jump
+# (--slice-axis {x,y,z}, --slice-halfwidth-um <transverse window>, --no-slice to skip).
+python scripts/tune_flash_shock.py --config config/flash_3d_noshield.yaml                  # v_shock_est/x_shock_0 on n_e/|B| streak
+python scripts/tune_flash_shock.py --config ...yaml --mode regions --snapshot-idx -1       # per-dump x_shock_cm/x_downstream_start_cm (+ slice)
+
 # Quick MP4 movie of a diagnostic (analysis env; --units electron|ion sets axis/time
-# normalization read from the run dir; crop bounds are physical values in that unit)
-python scripts/make_movie.py -d <run>/MS --units ion             # interactive menu
+# normalization read from the run dir; crop bounds are physical values in that unit;
+# --config uses the tuned upstream region for ion T_ci instead of the whole box)
+python scripts/make_movie.py -d <run>/MS --units ion --config config/<run>.yaml  # interactive
 python scripts/make_movie.py -d <run>/MS/FLD/b2-savg --no-interactive \
-    --units ion --xlim 80 120 --log -s 4 -o b2   # headless (sbatch: make_movie.sbatch)
+    --units ion --config config/<run>.yaml --xlim 80 120 --log -s 4 -o b2   # headless
 ```
 
 The generator's CLI is **terminal-only with no hidden defaults**: argparse enforces
@@ -56,7 +77,7 @@ individual spec keys.
 ### Single source of truth: the run spec
 
 Each run's parameters live **once**, in a `run.yaml` in the run's own directory.
-`runs/*.run.yaml` are the version-controlled inputs; `FLASH_OSIRIS_define.py` freezes a
+`runs/*.run.yaml` are the version-controlled inputs; the flash2osiris generator freezes a
 resolved copy to `<run_dir>/run.yaml`. Analysis reads parameters back through
 `src/run_spec.py::RunSpec` instead of re-copying them into analysis configs.
 
@@ -64,16 +85,20 @@ resolved copy to `<run_dir>/run.yaml`. Analysis reads parameters back through
 `run_manifest.yaml` (parse its `cli_command`) → legacy `runme*.sh` (parse python flags).
 In a `run.yaml`, the `geometry` / `solver` / `diagnostics` groups exist purely for
 readability and are flattened to top-level keys (matching the original CLI flags);
-`charge_states` stays nested as metadata. `RunSpec` is deliberately dependency-light
-(stdlib + PyYAML, astropy imported lazily) so it is unit-testable in isolation.
+`species_names` / `charge_states` stay nested as metadata. `RunSpec` is deliberately
+dependency-light (stdlib + PyYAML, astropy imported lazily) so it is unit-testable.
 
-### Generation: `init_python/`
+### Generation: the `flash2osiris` package (external)
 
-`FLASH_OSIRIS_define.py` (class `FLASH_OSIRIS_Base`, with 1D/2D subclasses) reads FLASH
-data via `yt`, derives OSIRIS normalizations and per-species `rqm` from FLASH (mean
-1836/ye over each species' mask within the OSIRIS domain), and renders the
-`*_TEMPLATE.jinja` decks. `dt` is set from the CFL condition (`dx*0.95/sqrt(dims)`).
-Units stay yt-native + `unyt` here (no astropy on the generation path).
+Deck generation lives in the standalone **`flash2osiris`** package
+(`/pscratch/sd/d/dschnei/flash2osiris`, pip-installed into `osiris2`); MagShockZ keeps
+only the run specs (`runs/`) and thin drivers (`init_python/`). `flash_osiris.generator`
+(class `FLASH_OSIRIS_Base`, 1D/2D subclasses) reads FLASH via `yt`, derives OSIRIS
+normalizations and per-population `rqm` (edens-weighted 1836/ye), and renders the deck +
+py-init templates; `dt` is the CFL condition (`dx*0.95/sqrt(dims)`). Ion populations are
+separated by **FLASH material** (target/chamber) via the yt plugin
+(`~/.config/yt/my_plugins.py` → `flash_osiris/yt_plugin.py`), not by ion mass; the run
+spec's `species_names: {cham: al, targ: si}` renames them. Units stay yt-native + `unyt`.
 
 ### Analysis: library-first
 
@@ -91,6 +116,30 @@ yt + unyt and does **not** go through `MagShockZRun`.
 
 Scripts add `src/` to `sys.path` at import time (`sys.path.insert(0, .../src)`); they are
 run as files, not as an installed module.
+
+Every plotting script takes a shared `--publication` (alias `--pub`) flag: off by default
+(matplotlib's own sizes, so saved figures are unchanged), on it bumps all text to large
+paper/slide sizes. The look lives once in `src/plot_style.py`; a script calls
+`plot_style.add_publication_arg(parser)` before `parse_args` and `plot_style.apply(args.publication)`
+after. It is rcParams-only (set before any figure is drawn, so it also restyles `make_movie`'s
+forked render workers) and imports matplotlib lazily, so it stays out of the CI-pure layer.
+
+`src/plot_style.py` also owns the **display-unit** mapping (the second shared flag,
+`--units electron|ion`): a script calls `plot_style.add_units_arg(parser)`, then
+`disp = plot_style.build_units(args.units, cfg=cfg, config_path=...)`, and threads the
+returned `DisplayUnits` into its `plot(...)`. `electron` (default) keeps native OSIRIS
+`c/ωpe` & `1/ωpe`; `ion` rescales every *length* axis by the ion skin depth `d_i =
+sqrt(|rqm_i|)` and shows time in the upstream ion gyroperiod `T_ci` (momentum/velocity
+axes stay native — only lengths and times are rescaled). `disp.x()` / `disp.t()` rescale
+coordinates, `disp.xlabel()` / `disp.tlabel()` / `disp.time_title()` give labels; only the
+*figures* change (the saved `.npz` stays in native units). The `DisplayUnits` dataclass core
+is numpy-only and unit-tested (`tests/test_plot_style.py`); `build_units`' ion path imports
+`analysis_utils` lazily. `T_ci` needs the upstream `|B'|`: it is read from the config's
+cached top-level `t_ci` key when present, else measured from the field. That `t_ci` is
+written **for free** by `scripts/tune_shock.py` (trajectory mode) — it already loads the t=0
+upstream field for `v_A`/`M_A`, so it computes `T_ci = ion_gyroperiod(|rqm_i|, |B'|)` there
+and includes it in the `save` write-back — so every `--units ion` run reads one consistent
+cached value (`make_movie.py` honours it too).
 
 ### Tests
 

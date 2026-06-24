@@ -33,6 +33,30 @@ class TestPoyntingFlux:
         zeros = np.zeros(2)
         np.testing.assert_allclose(ef.poynting_flux(e2, zeros, zeros, b3), [1.0, 2.0])
 
+    def test_v_shock_default_is_lab_frame(self):
+        # Omitting v_shock (default 0) reproduces the original lab-frame flux.
+        e2, e3, b2, b3 = 0.7, -0.3, 1.1, 2.0
+        assert ef.poynting_flux(e2, e3, b2, b3) == pytest.approx(e2 * b3 - e3 * b2)
+        assert ef.poynting_flux(e2, e3, b2, b3, v_shock=0.0) == pytest.approx(e2 * b3 - e3 * b2)
+
+    def test_shock_frame_subtracts_Bperp_advection(self):
+        # With zero lab E, the shock-frame flux is the magnetic-enthalpy advection
+        # −(v_shock/c)·(B2²+B3²).
+        b2, b3, v = 1.5, 2.0, 0.04
+        assert ef.poynting_flux(0.0, 0.0, b2, b3, v_shock=v) == pytest.approx(
+            -v * (b2**2 + b3**2))
+
+    def test_frozen_in_upstream_gives_shock_frame_enthalpy_flux(self):
+        # Ideal-MHD frozen-in field for plasma flowing at v_u (normal) in the lab:
+        # E2 = v_u·B3, E3 = −v_u·B2 (Gaussian, c=1).  The shock-frame Poynting
+        # flux must equal U·B_perp² with U = v_u − v_shock.
+        b2, b3 = 1.3, -0.8
+        v_u, v_shock = 0.05, 0.04
+        e2, e3 = v_u * b3, -v_u * b2
+        U = v_u - v_shock
+        assert ef.poynting_flux(e2, e3, b2, b3, v_shock=v_shock) == pytest.approx(
+            U * (b2**2 + b3**2))
+
 
 # ---------------------------------------------------------------------------
 # species_energy_flux

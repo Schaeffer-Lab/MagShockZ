@@ -25,7 +25,7 @@ times:
 #   fit_degree: optional polynomial degree for that trajectory fit (default 2).
 shock:
   v_shock: 0.0375       # shock velocity in c
-  x_shock_0: 750.0      # shock position at t_sim=0 [c/ωpe]
+  x_shock_0: 750      # shock position at t_sim=0 [c/ωpe]
   # fit_degree: 2
 
 # Per-dump manually inspected values, keyed by t_val (dump file suffix).
@@ -33,19 +33,26 @@ shock:
 #   x_shock            : overrides x_shock_0 + v_shock * t_sim         (optional)
 dump_params:
   360:
-    x_downstream_start: 1100.0
+    x_downstream_start: 1150
+    x_shock: 1470.6  # set by tune_shock
+  0:
+    x_shock: 800  # set by tune_shock
+    x_downstream_start: 650  # set by tune_shock
+  120:
+    x_shock: 990.2  # set by tune_shock
+    x_downstream_start: 790.2  # set by tune_shock
+  240:
+    x_shock: 1230.4  # set by tune_shock
+    x_downstream_start: 1030.4  # set by tune_shock
 
 # Notable dump indices worth plotting/inspecting (optional, free-form).
 # interesting_times: [120, 240, 360]
 
-# FLASH detection seeds (physical units).
-#   v_shock_est_cms : first-guess shock velocity [cm/s] seeding the detection window.
-#   x_shock_0_cm    : shock position along the LOS at the IC dump time [cm].
-flash:
-  v_shock_est_cms: 9.16e7   # cm/s
-  x_shock_0_cm:   0.19      # position at IC dump [cm]; update after first run
+# FLASH-side annotations (hand-fit fronts, v_shock estimate) for the FLASH source
+# of this run live in their own config: config/flash_3d_noshield.yaml.
 
 # Optional analysis-setting overrides (code defaults shown):
 # field_mode: full              # "full": total B²; "delta": subtract upstream mean B
 # upstream_window_ncells: 200   # averaging window for dimensionless_params.py
 # downstream_window_ncells: 200
+t_ci: 9803.12  # set by tune_shock

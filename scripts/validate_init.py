@@ -1,6 +1,6 @@
 """scripts/validate_init.py — does the OSIRIS initial condition match FLASH?
 
-The python-init pipeline (init_python/) writes interp/*.npy slices of the FLASH
+The flash2osiris generation pipeline writes interp/*.npy slices of the FLASH
 midplane plus a py-script that OSIRIS calls to fill the fields/particles at t=0.
 A silent x/y-order or rotation mistake in that py-script does not crash anything;
 it just initializes the wrong profile.  This script makes that failure loud.
@@ -19,12 +19,16 @@ import argparse
 import glob
 import importlib.util
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+import plot_style
 
 FIELD_COMPONENTS = ["b1", "b2", "b3", "e1", "e2", "e3"]
 
@@ -115,5 +119,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_dir", help="OSIRIS run directory (contains py-script-*.py and MS/)")
+    plot_style.add_publication_arg(ap)
     args = ap.parse_args()
+    plot_style.apply(args.publication)
     validate(args.run_dir)

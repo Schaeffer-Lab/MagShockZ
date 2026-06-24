@@ -45,6 +45,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+import plot_style
 import shock_state
 import dimensionless_params as dp
 
@@ -92,9 +93,8 @@ class DimensionlessParamsResult:
 def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "") -> DimensionlessParamsResult:
     """Load one dump, compute the dimensionless parameters up/downstream."""
     print("Loading HDF5 files...")
-    # M_A uses the single YAML shock.v_shock (v_shock_from_fit=False), not the
-    # fitted instantaneous velocity used by the energy analyses.
-    st = shock_state.load_shock_state(cfg, timestep_idx, v_shock_from_fit=False)
+    # M_A uses the tuned YAML shock.v_shock (the single source of the shock speed).
+    st = shock_state.load_shock_state(cfg, timestep_idx)
 
     abs_rqm_i = st.abs_rqm_i
     L_box = st.L_box
@@ -198,7 +198,12 @@ def main():
                         help="Index into config times list (default: -1, last dump).")
     parser.add_argument("--output", default=None,
                         help="Output .npz path (default results/<run>/dimensionless_params_t{t:06d}.npz).")
+    plot_style.add_publication_arg(parser)
+    # --units accepted for a uniform suite CLI, but this script emits a parameter
+    # table (no figure), so it is a no-op here; d_i is already reported in native units.
+    plot_style.add_units_arg(parser)
     args = parser.parse_args()
+    plot_style.apply(args.publication)
 
     cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]

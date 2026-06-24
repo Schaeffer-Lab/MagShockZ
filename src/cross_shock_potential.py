@@ -32,7 +32,7 @@ def potential_profile(e1: np.ndarray, x: np.ndarray) -> np.ndarray:
 
 def potential_jump(e1: np.ndarray, x: np.ndarray,
                    upstream_mask: np.ndarray, downstream_mask: np.ndarray) -> float:
-    """Cross-shock potential energy drop e*Δphi [m_e c^2] (downstream − upstream)."""
+    """Cross-shock potential energy drop e*Δphi [m_e c^2] (downstream - upstream)."""
     e_phi = potential_profile(e1, x)
     return float(np.nanmean(e_phi[downstream_mask]) - np.nanmean(e_phi[upstream_mask]))
 

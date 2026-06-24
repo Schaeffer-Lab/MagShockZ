@@ -42,6 +42,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+import plot_style
 from analysis_utils import axis_values
 import energy_partition as ep
 
@@ -63,10 +64,7 @@ class EnergyPartitionResult:
     t_sim: float                  # simulation time [1/wpe]
     x_shock: float                # shock-front position [c/wpe]
     x_downstream_start: float     # left edge of downstream region [c/wpe]
-    v_shock: float                # shock-frame boost velocity [c]
-    v_shock_cfg: float            # config detection seed [c]
-    v_shock_source: str           # "fit" or "config"
-    v_shock_fit_deg: int          # trajectory-fit polynomial degree
+    v_shock: float                # shock-frame boost velocity [c] (tuned config value)
     field_mode: str               # "full" or "delta"
     norm_density_cm3: float       # reference density n_0 [cm^-3]
     config_path: str              # absolute path of the analysis config used
@@ -120,10 +118,9 @@ def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "") -> EnergyP
     x_shock = dump["x_shock"]
     x_downstream_start = dump["x_downstream_start"]
 
-    # Shock-frame boost velocity = instantaneous derivative of the fitted front
-    # trajectory at this dump (the config shock.v_shock is only the fit seed).
-    vfit = analysis_utils.resolve_shock_velocity(cfg, t_sim)
-    v_shock = vfit["v_shock"]
+    # Shock-frame boost velocity is the tuned config shock.v_shock (set with
+    # scripts/tune_shock.py), used directly — no auto-fit of the front trajectory.
+    v_shock = float(cfg["shock"]["v_shock"])
 
     species_rqm = {sp: sim.rqm_of(sp) for sp in species_list}  # per-species rqm from deck
 
@@ -155,8 +152,7 @@ def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "") -> EnergyP
         x_axis=x_pha, u_ram=u_ram_total, u_th=u_th_total, u_B=u_B, u_E=u_E,
         t_val=int(t_val), t_sim=t_sim,
         x_shock=float(x_shock), x_downstream_start=float(x_downstream_start),
-        v_shock=float(v_shock), v_shock_cfg=float(vfit["v_shock_cfg"]),
-        v_shock_source=str(vfit["source"]), v_shock_fit_deg=int(vfit["deg"]),
+        v_shock=float(v_shock),
         field_mode=str(field_mode), norm_density_cm3=float(spec.reference_density),
         config_path=config_path,
         upstream=partition["upstream"], downstream=partition["downstream"],
@@ -167,8 +163,7 @@ def _print_summary(r: EnergyPartitionResult) -> None:
     """Console table of the energy partition (no computation)."""
     print(f"t_sim   : {r.t_sim:.1f} [ωpe⁻¹]")
     print(f"x_shock : {r.x_shock:.1f} [c/ωpe]")
-    print(f"v_shock : {r.v_shock:.5f} c  (source: {r.v_shock_source}, "
-          f"deg={r.v_shock_fit_deg}; config seed {r.v_shock_cfg:.5f} c)")
+    print(f"v_shock : {r.v_shock:.5f} c  (tuned config value)")
     total_up = sum(r.upstream.values())
     total_dn = sum(r.downstream.values())
     print("\n--- Energy partition ---")
@@ -184,24 +179,25 @@ def _print_summary(r: EnergyPartitionResult) -> None:
 # Plot (matplotlib only — reads the result, draws nothing new)
 # ---------------------------------------------------------------------------
 
-def _plot_profiles(r: EnergyPartitionResult, ax: plt.Axes) -> None:
+def _plot_profiles(r: EnergyPartitionResult, ax: plt.Axes, disp) -> None:
     x, x_shock, x_ds = r.x_axis, r.x_shock, r.x_downstream_start
+    xd = disp.x(x)                       # display coordinates (c/ωpe or d_i)
     u_total = r.u_ram + r.u_th + r.u_B + r.u_E
-    ax.semilogy(x, r.u_ram, label="Ram")
-    ax.semilogy(x, r.u_th, label="Thermal")
-    ax.semilogy(x, r.u_B, label=f"B field ({r.field_mode})")
-    ax.semilogy(x, r.u_E, label="E field")
-    ax.semilogy(x, u_total, color="k", ls="--", lw=1.5, label="Total")
-    ax.axvline(x_ds, color="gray", ls="--", lw=1, label=f"downstream start {x_ds:.0f}")
-    ax.axvline(x_shock, color="k", ls="--", lw=1, label=f"shock {x_shock:.1f}")
-    ax.axvspan(x.min(), x_ds, color="gray", alpha=0.12, label="piston")
+    ax.semilogy(xd, r.u_ram, label="Ram")
+    ax.semilogy(xd, r.u_th, label="Thermal")
+    ax.semilogy(xd, r.u_B, label=f"B field ({r.field_mode})")
+    ax.semilogy(xd, r.u_E, label="E field")
+    ax.semilogy(xd, u_total, color="k", ls="--", lw=1.5, label="Total")
+    ax.axvline(disp.x(x_ds), color="gray", ls="--", lw=1, label=f"downstream start {x_ds:.0f}")
+    ax.axvline(disp.x(x_shock), color="k", ls="--", lw=1, label=f"shock {x_shock:.1f}")
+    ax.axvspan(disp.x(x.min()), disp.x(x_ds), color="gray", alpha=0.12, label="piston")
 
-    ax.set_xlabel("x [c/ωpe]")
+    ax.set_xlabel(disp.xlabel())
     ax.set_ylabel("Energy density [n₀ mₑ c²]")
-    ax.set_title(f"Energy density profiles, t={r.t_val}")
+    ax.set_title(f"Energy density profiles, dump {r.t_val}  {disp.time_title(r.t_sim)}")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
-    ax.set_xlim(x_ds, x_shock + 100)
+    ax.set_xlim(disp.x(x_ds), disp.x(x_shock + 100))
 
     downstream = (x >= x_ds) & (x <= x_shock)
     if downstream.any():
@@ -235,10 +231,10 @@ def _plot_partition_bars(r: EnergyPartitionResult, ax: plt.Axes) -> None:
     ax.grid(axis="y", alpha=0.3)
 
 
-def plot(r: EnergyPartitionResult, output_dir: str) -> str:
+def plot(r: EnergyPartitionResult, output_dir: str, disp) -> str:
     """Render the two-panel figure (profiles + partition bars) and save a .png."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    _plot_profiles(r, axes[0])
+    _plot_profiles(r, axes[0], disp)
     _plot_partition_bars(r, axes[1])
     plt.tight_layout()
     os.makedirs(output_dir, exist_ok=True)
@@ -263,7 +259,10 @@ def main():
                         help="Output .npz path (default results/<run>/energy_partition_t{t:06d}.npz).")
     parser.add_argument("--output-dir", default=None, dest="output_dir",
                         help="Directory for the figure (default: alongside the .npz).")
+    plot_style.add_publication_arg(parser)
+    plot_style.add_units_arg(parser)
     args = parser.parse_args()
+    plot_style.apply(args.publication)
 
     cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]
@@ -281,8 +280,9 @@ def main():
     print(f"\nSaved → {out_path}")
 
     if not args.no_plot:
+        disp = plot_style.build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
         out_dir = args.output_dir or os.path.dirname(os.path.abspath(out_path))
-        fig_path = plot(result, out_dir)
+        fig_path = plot(result, out_dir, disp)
         print(f"Saved → {fig_path}")
 
 

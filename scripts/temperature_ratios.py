@@ -41,6 +41,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+import plot_style
 from analysis_utils import axis_values
 import temperature_anisotropy as ta
 
@@ -149,19 +150,19 @@ def _print_summary(r: TemperatureRatiosResult) -> None:
 # Plot (matplotlib only — reads the result, draws nothing new)
 # ---------------------------------------------------------------------------
 
-def _region_spans(ax, r: TemperatureRatiosResult) -> None:
-    ax.axvline(r.x_downstream_start, color="gray", ls="--", lw=1)
-    ax.axvline(r.x_shock, color="k", ls="--", lw=1)
-    ax.axvspan(r.x_axis.min(), r.x_downstream_start, color="gray", alpha=0.10)
+def _region_spans(ax, r: TemperatureRatiosResult, disp) -> None:
+    ax.axvline(disp.x(r.x_downstream_start), color="gray", ls="--", lw=1)
+    ax.axvline(disp.x(r.x_shock), color="k", ls="--", lw=1)
+    ax.axvspan(disp.x(r.x_axis.min()), disp.x(r.x_downstream_start), color="gray", alpha=0.10)
 
 
-def _xlim(r: TemperatureRatiosResult):
-    return r.x_downstream_start, r.x_shock + 150
+def _xlim(r: TemperatureRatiosResult, disp):
+    return disp.x(r.x_downstream_start), disp.x(r.x_shock + 150)
 
 
 def _roi_mask(r: TemperatureRatiosResult):
-    xlo, xhi = _xlim(r)
-    return (r.x_axis >= xlo) & (r.x_axis <= xhi)
+    # native-coordinate window (indexes r.x_axis); display rescaling is for axes only.
+    return (r.x_axis >= r.x_downstream_start) & (r.x_axis <= r.x_shock + 150)
 
 
 def _set_semilogy_ylim(ax, arrs, mask, pad=3.0):
@@ -180,55 +181,58 @@ def _set_linear_ylim(ax, arrs, mask, pad=0.15):
         ax.set_ylim(lo - margin, hi + margin)
 
 
-def _plot_T_parallel(r, ax):
-    ax.semilogy(r.x_axis, r.T_par_e, label="electrons", color="tab:blue")
-    ax.semilogy(r.x_axis, r.T_par_al, label="Al ions", color="tab:orange")
-    _region_spans(ax, r)
-    ax.set_xlim(*_xlim(r))
+def _plot_T_parallel(r, ax, disp):
+    xd = disp.x(r.x_axis)
+    ax.semilogy(xd, r.T_par_e, label="electrons", color="tab:blue")
+    ax.semilogy(xd, r.T_par_al, label="Al ions", color="tab:orange")
+    _region_spans(ax, r, disp)
+    ax.set_xlim(*_xlim(r, disp))
     _set_semilogy_ylim(ax, [r.T_par_e, r.T_par_al], _roi_mask(r))
-    ax.set_xlabel("x [c/ωpe]")
+    ax.set_xlabel(disp.xlabel())
     ax.set_ylabel(r"T [$m_e c^2$]")
     ax.set_title(r"$T_\parallel$ (along shock normal, p1)")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3, which="both")
 
 
-def _plot_T_perp(r, ax):
-    ax.semilogy(r.x_axis, r.T_perp_e, label="electrons", color="tab:blue")
-    ax.semilogy(r.x_axis, r.T_perp_al, label="Al ions", color="tab:orange")
-    _region_spans(ax, r)
-    ax.set_xlim(*_xlim(r))
+def _plot_T_perp(r, ax, disp):
+    xd = disp.x(r.x_axis)
+    ax.semilogy(xd, r.T_perp_e, label="electrons", color="tab:blue")
+    ax.semilogy(xd, r.T_perp_al, label="Al ions", color="tab:orange")
+    _region_spans(ax, r, disp)
+    ax.set_xlim(*_xlim(r, disp))
     _set_semilogy_ylim(ax, [r.T_perp_e, r.T_perp_al], _roi_mask(r))
-    ax.set_xlabel("x [c/ωpe]")
+    ax.set_xlabel(disp.xlabel())
     ax.set_ylabel(r"T [$m_e c^2$]")
     ax.set_title(r"$T_\perp$ (transverse, p2)")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3, which="both")
 
 
-def _plot_Te_Tal_ratio(r, ax):
-    ax.semilogy(r.x_axis, r.T_e_al_par, label=r"$T_{\parallel,e}/T_{\parallel,\mathrm{Al}}$",
+def _plot_Te_Tal_ratio(r, ax, disp):
+    xd = disp.x(r.x_axis)
+    ax.semilogy(xd, r.T_e_al_par, label=r"$T_{\parallel,e}/T_{\parallel,\mathrm{Al}}$",
                 color="tab:purple")
-    ax.semilogy(r.x_axis, r.T_e_al_perp, label=r"$T_{\perp,e}/T_{\perp,\mathrm{Al}}$",
+    ax.semilogy(xd, r.T_e_al_perp, label=r"$T_{\perp,e}/T_{\perp,\mathrm{Al}}$",
                 color="tab:red", ls="--")
     ax.axhline(1, color="k", ls=":", lw=0.8)
-    _region_spans(ax, r)
-    ax.set_xlim(*_xlim(r))
+    _region_spans(ax, r, disp)
+    ax.set_xlim(*_xlim(r, disp))
     _set_semilogy_ylim(ax, [r.T_e_al_par, r.T_e_al_perp], _roi_mask(r))
-    ax.set_xlabel("x [c/ωpe]")
+    ax.set_xlabel(disp.xlabel())
     ax.set_ylabel(r"$T_e / T_\mathrm{Al}$")
     ax.set_title(r"Electron-to-ion temperature ratio")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3, which="both")
 
 
-def _plot_anisotropy(r, ax, arr, color, species_label):
-    ax.plot(r.x_axis, arr, color=color)
+def _plot_anisotropy(r, ax, arr, color, species_label, disp):
+    ax.plot(disp.x(r.x_axis), arr, color=color)
     ax.axhline(1, color="k", ls=":", lw=0.8)
-    _region_spans(ax, r)
-    ax.set_xlim(*_xlim(r))
+    _region_spans(ax, r, disp)
+    ax.set_xlim(*_xlim(r, disp))
     _set_linear_ylim(ax, [arr], _roi_mask(r))
-    ax.set_xlabel("x [c/ωpe]")
+    ax.set_xlabel(disp.xlabel())
     ax.set_ylabel(r"$T_\parallel / T_\perp$")
     ax.set_title(rf"{species_label} anisotropy $T_\parallel/T_\perp$")
     ax.grid(alpha=0.3)
@@ -259,17 +263,18 @@ def _plot_summary_bars(r, ax):
     ax.grid(axis="y", alpha=0.3)
 
 
-def plot(r: TemperatureRatiosResult, output_dir: str) -> str:
+def plot(r: TemperatureRatiosResult, output_dir: str, disp) -> str:
     """Render the 2×3 figure (profiles, ratios, anisotropy, bars) and save a .png."""
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    _plot_T_parallel(r, axes[0, 0])
-    _plot_T_perp(r, axes[0, 1])
-    _plot_Te_Tal_ratio(r, axes[0, 2])
-    _plot_anisotropy(r, axes[1, 0], r.anis_e, "tab:blue", "Electron")
-    _plot_anisotropy(r, axes[1, 1], r.anis_al, "tab:orange", "Al ion")
+    _plot_T_parallel(r, axes[0, 0], disp)
+    _plot_T_perp(r, axes[0, 1], disp)
+    _plot_Te_Tal_ratio(r, axes[0, 2], disp)
+    _plot_anisotropy(r, axes[1, 0], r.anis_e, "tab:blue", "Electron", disp)
+    _plot_anisotropy(r, axes[1, 1], r.anis_al, "tab:orange", "Al ion", disp)
     _plot_summary_bars(r, axes[1, 2])
 
-    fig.suptitle(f"Temperature analysis, t={r.t_val}  (shock at x={r.x_shock:.1f} c/ωpe)",
+    fig.suptitle(f"Temperature analysis, dump {r.t_val}  {disp.time_title(r.t_sim)}  "
+                 f"(shock at {disp.x(r.x_shock):.1f} ${disp.length_label}$)",
                  fontsize=12)
     plt.tight_layout()
     os.makedirs(output_dir, exist_ok=True)
@@ -294,7 +299,10 @@ def main():
                         help="Output .npz path (default results/<run>/temperature_ratios_t{t:06d}.npz).")
     parser.add_argument("--output-dir", default=None, dest="output_dir",
                         help="Directory for the figure (default: alongside the .npz).")
+    plot_style.add_publication_arg(parser)
+    plot_style.add_units_arg(parser)
     args = parser.parse_args()
+    plot_style.apply(args.publication)
 
     cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]
@@ -312,8 +320,9 @@ def main():
     print(f"\nSaved → {out_path}")
 
     if not args.no_plot:
+        disp = plot_style.build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
         out_dir = args.output_dir or os.path.dirname(os.path.abspath(out_path))
-        fig_path = plot(result, out_dir)
+        fig_path = plot(result, out_dir, disp)
         print(f"Saved → {fig_path}")
 
 

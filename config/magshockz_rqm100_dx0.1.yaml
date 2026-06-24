@@ -21,7 +21,7 @@ times:
 
 # Linear shock-front fit (overview.py refits from per-frame detection).
 shock:
-  v_shock: 0.04      # shock velocity in c (overview detected fit, M_A=8.28)
+  v_shock: 0.043      # shock velocity in c (overview detected fit, M_A=8.28)
   x_shock_0: 750     # shock position at t_sim=0 [c/ωpe]
 
 # Per-dump manually inspected values, keyed by dump index (file suffix).
@@ -29,11 +29,17 @@ shock:
 #   x_shock            : overrides x_shock_0 + v_shock * t_sim         (optional)
 dump_params:
   400:
-    x_shock: 1111.7          # overview-detected front at t=400 (t_sim=17176)
-    x_downstream_start: 930.0  # compressed downstream behind the front
+    x_shock: 1500          # overview-detected front at t=400 (t_sim=17176)
+    x_downstream_start: 1300  # compressed downstream behind the front
   512:
-    x_shock: 1234.0          # detected front at t=512 (run not yet at this dump)
-    x_downstream_start: 1050.0
+    x_shock: 1670          # detected front at t=512 (run not yet at this dump)
+    x_downstream_start: 1400
+  240:
+    x_shock: 1160  # set by tune_shock
+    x_downstream_start: 1050  # set by tune_shock
+  0:
+    x_shock: 800  # set by tune_shock
+    x_downstream_start: 650  # set by tune_shock
 
 # Notable dump indices worth plotting/inspecting (optional, free-form).
 # interesting_times: [128, 256, 512]
@@ -42,3 +48,4 @@ dump_params:
 # field_mode: full
 # upstream_window_ncells: 200
 # downstream_window_ncells: 200
+t_ci: 9845.96  # set by tune_shock

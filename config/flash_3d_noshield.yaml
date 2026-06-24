@@ -1,0 +1,98 @@
+# FLASH-side analysis config for the FLASH_3D_noshield run, as extracted along the
+# perlmutter_1.3.1d OSIRIS line-of-sight.
+#
+# This file holds ONLY FLASH annotations obtained by inspecting the data (the
+# hand-placed shock fronts, the v_shock estimate, gamma). Run parameters
+# (FLASH data_path, line-of-sight, reference_density, charge states) live in the
+# run's single source of truth and are read via analysis_utils.RunSpec — never
+# duplicated here. RunSpec resolves <sim_dir>/run.yaml, then run_manifest.yaml,
+# then runme*.sh.
+#
+# Used by the FLASH scripts: flash_overview.py, flash_rh_prediction.py,
+# tune_flash_shock.py, run_flash_energy_partition.py.
+#
+# Distances/velocities are PHYSICAL CGS (cm, cm/s) unless noted.
+
+# Points at the OSIRIS run whose run.yaml records the FLASH data_path + the LOS
+# (start_point/end_point) the FLASH front was extracted along. Override with
+# $MAGSHOCKZ_SIM_DIR.
+sim_dir: /pscratch/sd/d/dschnei/perlmutter_1.3.1d
+
+# Adiabatic index for the perpendicular-MHD jump (flash_rh_prediction.py).
+# gamma=(f+2)/f: 5/3 (3 DOF), 2 (2 DOF), 3 (1 DOF). Default 5/3 if omitted.
+# gamma: 1.6667
+
+# FLASH detection seeds / trajectory fit (physical units).
+#   v_shock_est_cms : shock velocity along the LOS [cm/s] (trajectory fit; also
+#                     the default v_shock for flash_rh_prediction.py).
+#   x_shock_0_cm    : shock position along the LOS at the IC dump time [cm].
+flash:
+  v_shock_est_cms: 97000000   # cm/s
+  x_shock_0_cm:   0.185      # position at IC dump [cm]
+
+# Per-dump hand-placed front, keyed by the plot-file index (set by
+# scripts/tune_flash_shock.py --mode regions). Indices 1-6 are "no shock yet"
+# (x_shock_cm = 0 / degenerate); the shock forms around index 7 (t ~ 2 ns).
+#   x_shock_cm            : shock-front position along the LOS [cm]
+#   x_downstream_start_cm : left edge of the downstream region [cm]
+flash_dump_params:
+  1:
+    x_shock_cm: 0  # set by tune_shock
+    x_downstream_start_cm: 0  # set by tune_shock
+  2:
+    x_shock_cm: 0  # set by tune_shock
+    x_downstream_start_cm: 0  # set by tune_shock
+  3:
+    x_shock_cm: 0  # set by tune_shock
+    x_downstream_start_cm: 0  # set by tune_shock
+  4:
+    x_shock_cm: 0  # set by tune_shock
+    x_downstream_start_cm: 0.018082  # set by tune_shock
+  5:
+    x_shock_cm: 0  # set by tune_shock
+    x_downstream_start_cm: 0.036995  # set by tune_shock
+  6:
+    x_shock_cm: 0.021  # set by tune_shock
+    x_downstream_start_cm: 0.021  # set by tune_shock
+  7:
+    x_shock_cm: 0.132  # set by tune_shock
+    x_downstream_start_cm: 0.11  # set by tune_shock
+  8:
+    x_shock_cm: 0.16  # set by tune_shock
+    x_downstream_start_cm: 0.132  # set by tune_shock
+  9:
+    x_shock_cm: 0.185  # set by tune_shock
+    x_downstream_start_cm: 0.155  # set by tune_shock
+  10:
+    x_shock_cm: 0.212  # set by tune_shock
+    x_downstream_start_cm: 0.178  # set by tune_shock
+  11:
+    x_shock_cm: 0.237  # set by tune_shock
+    x_downstream_start_cm: 0.2  # set by tune_shock
+  12:
+    x_shock_cm: 0.237  # set by tune_shock
+    x_downstream_start_cm: 0.2  # set by tune_shock
+  13:
+    x_shock_cm: 0.26  # set by tune_shock
+    x_downstream_start_cm: 0.23  # set by tune_shock
+  14:
+    x_shock_cm: 0.285  # set by tune_shock
+    x_downstream_start_cm: 0.246011  # set by tune_shock
+  15:
+    x_shock_cm: 0.309  # set by tune_shock
+    x_downstream_start_cm: 0.265079  # set by tune_shock
+  16:
+    x_shock_cm: 0.333  # set by tune_shock
+    x_downstream_start_cm: 0.29  # set by tune_shock
+  17:
+    x_shock_cm: 0.357  # set by tune_shock
+    x_downstream_start_cm: 0.32  # set by tune_shock
+  18:
+    x_shock_cm: 0.38  # set by tune_shock
+    x_downstream_start_cm: 0.34  # set by tune_shock
+  19:
+    x_shock_cm: 0.463  # set by tune_shock
+    x_downstream_start_cm: 0.42  # set by tune_shock
+  20:
+    x_shock_cm: 0.504  # set by tune_shock
+    x_downstream_start_cm: 0.45  # set by tune_shock
