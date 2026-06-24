@@ -103,6 +103,113 @@ class TestSpeciesEnergyProfiles:
 
 
 # ---------------------------------------------------------------------------
+# species_momentum_fluxes  (the conserved pressure channels)
+# ---------------------------------------------------------------------------
+
+class TestSpeciesMomentumFluxes:
+    p_arr = np.linspace(-10.0, 10.0, 2001)
+    x_arr = np.linspace(0.0, 50.0, 20)
+
+    def test_ram_pressure_is_twice_ram_energy(self):
+        """p_ram = n|rqm|U² = 2·u_ram (no ½)."""
+        ps = gaussian_phase_space(0.5, 1.0, self.p_arr, self.x_arr)
+        u_ram, _ = ep.species_energy_profiles(ps, rqm=3.0, v_shock=0.1)
+        p_ram, _ = ep.species_momentum_fluxes(ps, rqm=3.0, v_shock=0.1)
+        np.testing.assert_allclose(p_ram, 2.0 * u_ram, rtol=1e-6)
+
+    def test_normal_pressure_value(self):
+        """p_th = n|rqm|σ_p1²; n=1, |rqm|=1, σ²=1 → 1.0 (= 2·u_th one-direction)."""
+        ps = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
+        _, p_th = ep.species_momentum_fluxes(ps, rqm=1.0, v_shock=0.0)
+        np.testing.assert_allclose(p_th, 1.0, rtol=1e-3)
+
+    def test_ram_zero_when_bulk_equals_shock(self):
+        mu = 0.3
+        ps = gaussian_phase_space(mu, 0.5, self.p_arr, self.x_arr)
+        p_ram, _ = ep.species_momentum_fluxes(ps, rqm=1.0, v_shock=mu)
+        np.testing.assert_allclose(p_ram, 0.0, atol=1e-6)
+
+    def test_pressure_uses_only_normal_direction(self):
+        """p_th depends solely on the p1 phase space (no perp argument exists)."""
+        ps = gaussian_phase_space(0.0, 1.5, self.p_arr, self.x_arr)  # σ²=2.25
+        _, p_th = ep.species_momentum_fluxes(ps, rqm=2.0, v_shock=0.0)
+        np.testing.assert_allclose(p_th, 2.0 * 2.25, rtol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# transverse_magnetic_pressure
+# ---------------------------------------------------------------------------
+
+class TestTransverseMagneticPressure:
+    def test_excludes_normal_field(self):
+        """Only b2,b3 enter; the normal field b1 is not an argument."""
+        b2 = np.full(10, 2.0)
+        b3 = np.full(10, 0.0)
+        p_mag = ep.transverse_magnetic_pressure(b2, b3)
+        np.testing.assert_allclose(p_mag, 0.5 * 4.0)
+
+    def test_two_components(self):
+        b2 = np.full(5, 3.0)
+        b3 = np.full(5, 4.0)
+        np.testing.assert_allclose(
+            ep.transverse_magnetic_pressure(b2, b3), 0.5 * (9.0 + 16.0)
+        )
+
+    def test_equals_full_transverse_energy_density(self):
+        """For a transverse field, magnetic pressure == magnetic energy density."""
+        zeros = np.zeros(8)
+        b2, b3 = np.full(8, 1.5), np.full(8, 2.5)
+        u_B, _ = ep.field_energy_profiles(
+            zeros, b2, b3, zeros, zeros, zeros, np.arange(8.0), x_shock=4.0
+        )
+        np.testing.assert_allclose(ep.transverse_magnetic_pressure(b2, b3), u_B)
+
+
+# ---------------------------------------------------------------------------
+# momentum_partition_by_region + continuity_check
+# ---------------------------------------------------------------------------
+
+class TestMomentumPartitionAndContinuity:
+    x = np.linspace(0.0, 100.0, 101)
+    x_shock = 60.0
+    x_ds = 20.0
+
+    def _partition(self, up_total, dn_total, keys=("p_ram", "p_th_e", "p_th_i", "p_mag")):
+        up_each, dn_each = up_total / len(keys), dn_total / len(keys)
+        arr = np.where(self.x > self.x_shock, up_each, dn_each)
+        channels = {k: arr for k in keys}
+        return ep.momentum_partition_by_region(channels, self.x, self.x_shock, self.x_ds)
+
+    def test_structure(self):
+        result = self._partition(4.0, 4.0)
+        for side in ("upstream", "downstream"):
+            assert set(result[side]) == {"means", "fractions", "total"}
+        assert sum(result["upstream"]["fractions"].values()) == pytest.approx(1.0)
+
+    def test_conserved_flux_ratio_is_one(self):
+        chk = ep.continuity_check(self._partition(8.0, 8.0))
+        assert chk["ratio"] == pytest.approx(1.0, rel=1e-9)
+        assert chk["rel_imbalance"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_ratio_reports_imbalance(self):
+        chk = ep.continuity_check(self._partition(4.0, 5.0))
+        assert chk["ratio"] == pytest.approx(1.25, rel=1e-9)
+        for r in chk["channels"].values():
+            assert r == pytest.approx(1.25, rel=1e-9)
+
+    def test_summary_is_string(self):
+        s = ep.continuity_summary(ep.continuity_check(self._partition(8.0, 8.0)))
+        assert isinstance(s, str) and "dn/up" in s
+
+    def test_raises_on_empty_region(self):
+        with pytest.raises(ValueError, match="Empty region"):
+            ep.momentum_partition_by_region(
+                {"p_ram": np.ones_like(self.x)}, self.x,
+                x_shock=200.0, x_downstream_start=0.0,
+            )
+
+
+# ---------------------------------------------------------------------------
 # field_energy_profiles
 # ---------------------------------------------------------------------------
 

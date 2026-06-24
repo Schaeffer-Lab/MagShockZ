@@ -1,6 +1,6 @@
 """scripts/tune_shock.py — interactively tune a run's shock parameters.
 
-The analysis suite (overview / energy_partition / temperature_ratios /
+The analysis suite (overview / pressure_partition / temperature_ratios /
 dimensionless_params) reads the shock kinematics from the run's analysis config:
 
     shock:        v_shock, x_shock_0          (the linear front trajectory)

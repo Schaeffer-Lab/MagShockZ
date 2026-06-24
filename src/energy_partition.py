@@ -74,6 +74,41 @@ def species_energy_profiles(
     return u_ram, u_th
 
 
+def species_momentum_fluxes(
+    phase_space,
+    rqm: float,
+    v_shock: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (p_ram, p_th) shock-normal momentum-flux channels for one species.
+
+    These are the **pressure** companions of :func:`species_energy_profiles`: the
+    conserved Rankine--Hugoniot quantity across a steady shock is the normal
+    momentum flux ``Π_xx = ρ U² + P_xx + B_t²/2`` (continuous up/downstream),
+    not the energy density.  In OSIRIS units (``n_0 m_e c²``, ``u = v/c``):
+
+        p_ram = n |rqm| U²        ram (dynamic) pressure   [= 2 · u_ram]
+        p_th  = n |rqm| σ_p1²     shock-normal pressure P_xx
+
+    Only the shock-normal direction enters (unlike the energy thermal channel,
+    which sums every momentum direction): the *normal* momentum flux carries the
+    normal bulk velocity ``U = ⟨u_p1⟩ − v_shock`` and the normal pressure
+    ``P_xx``.  Transverse phase spaces are therefore not used here (they feed the
+    *tangential* momentum balance, not this normal one).  For an isotropic
+    plasma ``P_xx = (2/3) u_th``.
+
+    Parameters mirror :func:`species_energy_profiles` (sans ``perp_phase_spaces``).
+    """
+    mass_factor = abs(rqm)
+
+    n_norm = np.abs(moments.moment(phase_space, axis="p1", order=0))
+    u_norm = moments.moment(phase_space, axis="p1", order=1) - v_shock
+    sx2 = np.maximum(moments.moment(phase_space, axis="p1", order=2), 0.0)
+
+    p_ram = n_norm * u_norm**2 * mass_factor
+    p_th = n_norm * sx2 * mass_factor
+    return p_ram, p_th
+
+
 def field_energy_profiles(
     b1: np.ndarray,
     b2: np.ndarray,
@@ -131,6 +166,20 @@ def field_energy_profiles(
     return 0.5 * B2, 0.5 * E2
 
 
+def transverse_magnetic_pressure(b2: np.ndarray, b3: np.ndarray) -> np.ndarray:
+    """Transverse magnetic pressure ½(b2² + b3²) in OSIRIS units (n_0 m_e c²).
+
+    The magnetic contribution to the *normal* momentum flux is the transverse
+    field pressure B_t²/8π → ½(b2² + b3²) here (x1 is the shock normal, so b1 is
+    the normal field, which is continuous and carries magnetic *tension* — not
+    normal momentum flux — and is excluded).  The electric momentum flux
+    (Maxwell stress ∝ E²) is negligible for this non-relativistic shock and is
+    dropped, matching the MHD jump condition ρU² + p + B_t²/8π.
+    """
+    b2, b3 = np.asarray(b2), np.asarray(b3)
+    return 0.5 * (np.square(b2) + np.square(b3))
+
+
 def partition_by_region(
     u_ram: np.ndarray,
     u_th: np.ndarray,
@@ -176,3 +225,77 @@ def partition_by_region(
         }
 
     return {"upstream": _side(upstream), "downstream": _side(downstream)}
+
+
+def momentum_partition_by_region(
+    channels: dict,
+    x_axis: np.ndarray,
+    x_shock: float,
+    x_downstream_start: float,
+) -> dict:
+    """Average an arbitrary set of momentum-flux channels over each region.
+
+    Generic companion to :func:`partition_by_region` for the pressure channels
+    (:func:`species_momentum_fluxes`, :func:`transverse_magnetic_pressure`).
+    Pass a dict ``{name: profile}`` of simulation-unit arrays on a common grid.
+
+    Returns
+    -------
+    dict with "upstream"/"downstream", each ``{means, fractions, total}`` (so
+    the total is the conserved momentum flux — feed it to :func:`continuity_check`).
+    """
+    upstream, downstream = region_masks(x_axis, x_shock, x_downstream_start)
+
+    if not downstream.any() or not upstream.any():
+        raise ValueError(
+            f"Empty region mask — check x_shock={x_shock:.1f} and "
+            f"x_downstream_start={x_downstream_start:.1f} vs "
+            f"x_axis=[{x_axis.min():.1f}, {x_axis.max():.1f}]"
+        )
+
+    def _side(mask):
+        means = {k: float(np.nanmean(v[mask])) for k, v in channels.items()}
+        total = sum(means.values())
+        fracs = {k: (v / total if total else float("nan")) for k, v in means.items()}
+        return {"means": means, "fractions": fracs, "total": total}
+
+    return {"upstream": _side(upstream), "downstream": _side(downstream)}
+
+
+def continuity_check(result: dict) -> dict:
+    """Downstream/upstream ratio of the total (and each channel) momentum flux.
+
+    For the conserved momentum flux (:func:`momentum_partition_by_region`) the
+    total ``dn/up`` ≈ 1 across a steady shock — the quantitative continuity test.
+
+    Returns ``{total_up, total_dn, ratio, rel_imbalance, channels}`` where
+    ``channels`` is the per-channel dn/up dict.
+    """
+    up = result["upstream"]["total"]
+    dn = result["downstream"]["total"]
+    channels = {
+        ch: (result["downstream"]["means"][ch] / result["upstream"]["means"][ch]
+             if result["upstream"]["means"][ch] else float("nan"))
+        for ch in result["upstream"]["means"]
+    }
+    return {
+        "total_up": up,
+        "total_dn": dn,
+        "ratio": dn / up if up else float("nan"),
+        "rel_imbalance": (dn - up) / up if up else float("nan"),
+        "channels": channels,
+    }
+
+
+def continuity_summary(check: dict, unit: str = "n₀ mₑ c²") -> str:
+    """Return a formatted continuity-check table from :func:`continuity_check`."""
+    sep = "-" * 56
+    return "\n".join([
+        sep,
+        "  Momentum-flux continuity  (conserved if dn/up ≈ 1)",
+        sep,
+        f"  total upstream   = {check['total_up']:.3e} {unit}",
+        f"  total downstream = {check['total_dn']:.3e} {unit}",
+        f"  dn/up = {check['ratio']:.3f}   ({100 * check['rel_imbalance']:+.1f}%)",
+        sep,
+    ])
