@@ -56,7 +56,7 @@ class RunSpec:
 
     Resolution order for a ``sim_dir`` (first hit wins):
 
-      1. ``<sim_dir>/run.yaml``          — frozen by FLASH_OSIRIS_define.py
+      1. ``<sim_dir>/run.yaml``          — frozen by the flash2osiris generator
       2. ``<sim_dir>/run_manifest.yaml`` — parse its ``cli_command``
       3. ``<sim_dir>/runme*.sh``         — parse the python-invocation flags (legacy)
 

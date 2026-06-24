@@ -14,10 +14,12 @@ produces:
   1. heating curves  T_up(t)/T_up(0)  vs t, one per run  -> when/whether it heats
   2. threshold plot  heating metric   vs dx (and vs cells-per-lambda_De)
                      -> the dx/ppc below which the upstream stays cold
-  3. T(x) profiles   one figure per run, ion + electron T(x) at several times,
-                     upstream window shaded  -> *where* the heating appears
-                     (a clean run stays flat-and-cold ahead of the shock; an
-                     under-resolved one heats across the whole upstream)
+  3. T(x) profiles   two figures per run (linear + log y), ion + electron T(x)
+                     at several times, upstream window shaded  -> *where* the
+                     heating appears (a clean run stays flat-and-cold ahead of
+                     the shock; an under-resolved one heats across the whole
+                     upstream).  The log-y version spreads the small, bunched
+                     upstream values so slow upstream heating is legible.
 
 It reuses the established analysis paradigm: osh5io for reads,
 analysis_utils.detect_layout for dimension-agnostic layout, MagShockZRun for
@@ -56,6 +58,7 @@ import osh5io
 import osh5def
 import osh5vis
 import analysis_utils
+import plot_style
 from analysis_utils import diag_path, axis_values, detect_layout
 import temperature_anisotropy as ta
 
@@ -187,34 +190,72 @@ def collect_profiles(sim_dir, sp, rqm, idx_list):
     return np.array(times), xref, profs
 
 
-def window_means(x, profs, up_lo, up_hi):
-    """T_up(t) averaged over the fixed upstream window [up_lo, up_hi]*L."""
+def shock_x(cfg, t_sim):
+    """Shock-front position [c/wpe] from the config's linear trajectory.
+
+    Uses the tuned ``shock.x_shock_0`` + ``shock.v_shock`` * t_sim (the same
+    trajectory tune_shock.py writes), so the upstream window can follow the front
+    at *every* dump without needing a per-dump ``dump_params`` entry.
+    """
+    sh = cfg["shock"]
+    return sh["x_shock_0"] + sh["v_shock"] * t_sim
+
+
+def upstream_medians(x, profs, times, *, cfg=None, up_lo=0.55, up_hi=0.90):
+    """T_up(t): the *median* T over the upstream window, one value per dump.
+
+    The median (not the mean) is used so the upstream estimate is robust to the
+    occasional hot-particle spike / noisy cell in the under-resolved runs, which
+    would otherwise drag a mean upward and mimic heating.
+
+    With ``cfg`` the window *tracks the shock*: a fixed-width band of
+    ``upstream_window_ncells`` cells just ahead of ``shock_x(cfg, t_sim)``
+    (via :func:`analysis_utils.window_masks`).  Without a config it falls back to
+    the legacy fixed fraction ``[up_lo, up_hi] * L`` of the box.
+    """
     if x is None or not profs:
         return np.array([])
+    if cfg is not None:
+        up_ncells = int(cfg.get("upstream_window_ncells", 200))
+        dx = float(x[1] - x[0])
+        vals = []
+        for T, t_sim in zip(profs, times):
+            up, _ = analysis_utils.window_masks(x, shock_x(cfg, t_sim), dx, up_ncells, 0)
+            vals.append(float(np.nanmedian(np.asarray(T)[up])) if up.any() else np.nan)
+        return np.array(vals)
     L = x.max()
     win = (x >= up_lo * L) & (x <= up_hi * L)
     if not win.any():
         return np.array([])
-    return np.array([float(np.nanmean(np.asarray(T)[win])) for T in profs])
+    return np.array([float(np.nanmedian(np.asarray(T)[win])) for T in profs])
 
 
-def plot_profiles_over_time(r, xE, tE, profE, xI, tI, profI,
-                            up_lo, up_hi, n_profiles, out, rqm_i):
+def plot_profiles_over_time(r, xE, tE, profE, xI, tI, profI, n_profiles, out,
+                            *, gyro_e, gyro_i, unit_e, unit_i,
+                            cfg=None, up_lo=0.55, up_hi=0.90, logy=False):
     """One figure per run: ion + electron T(x) [eV] at several times.
 
     Times are sampled evenly across the available dumps and colored by time, so
-    the spatial signature of any upstream heating is visible directly.  Each
-    panel's time labels use *its own* gyroperiod: the ion gyroperiod is rqm_i
-    times the electron one, so the ion panel reads in ion gyroperiods.
+    the spatial signature of any upstream heating is visible directly.  Each panel
+    is labelled in its own gyroperiod (``gyro_i``/``unit_i`` for the ions,
+    ``gyro_e``/``unit_e`` for the electrons).
+
+    The upstream region is drawn the way it is *measured*: with ``cfg`` the shock
+    front (and the window just ahead of it) is marked per plotted time with a
+    vertical line in that time's colour, so you see the window advance with the
+    shock; without a config a static ``[up_lo, up_hi]*L`` band is shaded instead.
+
+    With ``logy=True`` the temperature axis is logarithmic and the figure is
+    saved as ``tprofiles_logy_<run>.png``; this spreads out the small, bunched
+    upstream values so the slow upstream heating is legible (the linear version
+    is dominated by the hot shock/downstream peak).
     """
     fig, (axI, axE) = plt.subplots(1, 2, figsize=(13, 5), sharex=True)
     cmap = plt.get_cmap("plasma")
-    gyro_e = r["gyrotime"] or 1.0
-    gyro_i = gyro_e * abs(rqm_i)
 
     for ax, x, t, profs, ttl, gyro, unit in (
-            (axI, xI, tI, profI, "ion (ambient)", gyro_i, "ion gyro"),
-            (axE, xE, tE, profE, "electron", gyro_e, "e gyro")):
+            (axI, xI, tI, profI, "ion (ambient)", gyro_i, unit_i),
+            (axE, xE, tE, profE, "electron", gyro_e, unit_e)):
         if x is None or len(profs) == 0:
             ax.set_title(f"{ttl}: no data")
             continue
@@ -226,18 +267,28 @@ def plot_profiles_over_time(r, xE, tE, profE, xI, tI, profI,
         for j in pick:
             # Re-label a copy in eV for display; osh5vis sources the x-axis label
             # from the profile's own spatial axis and the y-axis from data_attrs.
+            color = cmap((t[j] - tmin) / span)
             Tj = profs[j] * ME_C2_EV
             Tj.data_attrs = dict(Tj.data_attrs, UNITS="eV")
-            osh5vis.osplot1d(Tj, ax=ax, color=cmap((t[j] - tmin) / span),
-                             label=f"t={t[j] / gyro:.2f} {unit}",
+            osh5vis.osplot1d(Tj, ax=ax, color=color,
+                             label=fr"$t={t[j] / gyro:.2f}\ {unit}$",
                              title=title, show_time=False)
-        ax.axvspan(up_lo * L, up_hi * L, color="grey", alpha=0.12, label="upstream window")
+            if cfg is not None:                      # shock-tracked upstream window
+                ax.axvline(shock_x(cfg, t[j]), color=color, lw=0.8, ls="--")
+        if cfg is not None:
+            ax.axvline(np.nan, color="grey", lw=0.8, ls="--",
+                       label="shock front (upstream = right of line)")
+        else:
+            ax.axvspan(up_lo * L, up_hi * L, color="grey", alpha=0.12, label="upstream window")
+        if logy:
+            ax.set_yscale("log")
         ax.legend(fontsize=7, ncol=2)
         ax.grid(alpha=0.3)
 
-    fig.suptitle(f"{r['name']}  (dx={r['dx']:.4g}, ppc={r['ppc']}, N={r['node']})")
+    suffix = " (log y)" if logy else ""
+    fig.suptitle(f"{r['name']}  (dx={r['dx']:.4g}, ppc={r['ppc']}, N={r['node']}){suffix}")
     fig.tight_layout()
-    fpath = os.path.join(out, f"tprofiles_{r['name']}.png")
+    fpath = os.path.join(out, f"tprofiles{'_logy' if logy else ''}_{r['name']}.png")
     fig.savefig(fpath, dpi=150)
     plt.close(fig)
     return fpath
@@ -250,6 +301,11 @@ def plot_profiles_over_time(r, xE, tE, profE, xI, tI, profI,
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--config", default=None,
+                    help="Analysis config YAML for a SINGLE run (e.g. "
+                         "config/magshockz_rqm100_dx0.1.yaml).  In this mode the ion "
+                         "time axis uses the config's T_ci (cached t_ci or measured) and "
+                         "the upstream window tracks the shock front; --glob is ignored.")
     ap.add_argument("--glob", default="input_files/magshockz_rqm100_dx*_ppc500_g20.1d",
                     help="Glob (relative to project root) for the scan run dirs.")
     ap.add_argument("--stride", type=int, default=4,
@@ -271,15 +327,32 @@ def main():
                          "blow-ups whose under-resolved upstream is not a convergence data point "
                          "(default excludes the dx0.3 run, which blew up nonphysically).")
     ap.add_argument("--output-dir", default=None)
+    plot_style.add_publication_arg(ap)
     args = ap.parse_args()
+    plot_style.apply(args.publication)
 
     proj = os.path.abspath(os.path.join(_HERE, ".."))
-    out = args.output_dir or os.path.join(proj, "results", "convergence")
+
+    # Config mode: a single run, with the shock-tracked upstream window and the
+    # T_ci ion clock both sourced from the analysis config (the machinery built in
+    # plot_style.build_units + analysis_utils.window_masks).
+    cfg = T_ci = None
+    if args.config:
+        cfg = analysis_utils.load_config(os.path.abspath(args.config))
+        disp = plot_style.build_units("ion", cfg=cfg, config_path=os.path.abspath(args.config))
+        T_ci = disp.time_factor                       # upstream ion gyroperiod [1/wpe]
+        runs = discover_runs(cfg["sim_dir"])
+        default_out = os.path.join(proj, "results", "convergence",
+                                   os.path.splitext(os.path.basename(args.config))[0])
+    else:
+        runs = discover_runs(os.path.join(proj, args.glob))
+        default_out = os.path.join(proj, "results", "convergence")
+
+    out = args.output_dir or default_out
     os.makedirs(out, exist_ok=True)
 
-    runs = discover_runs(os.path.join(proj, args.glob))
     if not runs:
-        print(f"No runs matched {args.glob!r}")
+        print(f"No runs matched {args.config or args.glob!r}")
         return
     if args.exclude:
         keep = [r for r in runs if not any(x in r["name"] for x in args.exclude)]
@@ -316,39 +389,54 @@ def main():
             except Exception:
                 rqm[args.i_species] = {"al": 38.0, "si": 36.0}.get(args.i_species, 1.0)
 
+        rqm_i = abs(rqm[args.i_species] or 1.0)
+        if T_ci is not None:                          # config: T_ci ion clock
+            gyro_i, gyro_e = T_ci, T_ci / rqm_i
+            unit_i, unit_e = r"T_{ci}", r"T_{ce}"
+        else:                                         # glob: manifest electron gyro
+            gyro_e = r["gyrotime"] or 1.0
+            gyro_i = gyro_e * rqm_i
+            unit_i, unit_e = r"\mathrm{ion\,gyro}", r"\mathrm{e\,gyro}"
+        r["_gyro_e"], r["_gyro_i"] = gyro_e, gyro_i   # reused in the heating-curve pass
+
         tE, xE, profE = collect_profiles(sim_dir, args.e_species, rqm[args.e_species], idx)
         tI, xI, profI = collect_profiles(sim_dir, args.i_species, rqm[args.i_species], idx)
-        TE = window_means(xE, profE, args.up_lo, args.up_hi)
-        TI = window_means(xI, profI, args.up_lo, args.up_hi)
+        TE = upstream_medians(xE, profE, tE, cfg=cfg, up_lo=args.up_lo, up_hi=args.up_hi)
+        TI = upstream_medians(xI, profI, tI, cfg=cfg, up_lo=args.up_lo, up_hi=args.up_hi)
         if TE.size < 2:
             print(f"  skip {r['name']}: <2 usable dumps")
             continue
         series.append((r, tE, TE, tI, TI))
 
-        fp = plot_profiles_over_time(r, xE, tE, profE, xI, tI, profI,
-                                     args.up_lo, args.up_hi, args.n_profiles, out,
-                                     rqm[args.i_species] or 1.0)
-        print(f"  wrote {os.path.basename(fp)}")
+        for logy in (False, True):
+            fp = plot_profiles_over_time(r, xE, tE, profE, xI, tI, profI,
+                                         args.n_profiles, out,
+                                         gyro_e=gyro_e, gyro_i=gyro_i,
+                                         unit_e=unit_e, unit_i=unit_i,
+                                         cfg=cfg, up_lo=args.up_lo, up_hi=args.up_hi,
+                                         logy=logy)
+            print(f"  wrote {os.path.basename(fp)}")
 
     if not series:
         print("No runs had usable data yet.")
         return
 
-    # Ion gyroperiod = rqm_i * electron gyroperiod (B and charge are common); the
-    # ion heating is a slow process, so it must be judged on the ion clock.
-    rqm_i = abs(rqm[args.i_species] or 1.0)
-    gyro_e0 = series[0][0]["gyrotime"] or 1.0
+    # The ion clock (gyro_i) is the upstream ion gyroperiod: T_ci from the config
+    # in --config mode, else rqm_i * the manifest electron gyroperiod.  Both were
+    # resolved per run in pass 1 and stashed on the run dict.
+    gyro_e0, gyro_i0 = series[0][0]["_gyro_e"], series[0][0]["_gyro_i"]
+    unit_e0, unit_i0 = (r"T_{ce}", r"T_{ci}") if T_ci is not None \
+        else (r"\mathrm{e\,gyro}", r"\mathrm{ion\,gyro}")
 
     # Fair comparison: evaluate the heating factor at a time reached by ALL runs.
     t_common = min(tE[-1] for (_, tE, _, _, _) in series)
     print(f"\n  common comparison time t = {t_common:.0f} 1/wpe "
-          f"({t_common / gyro_e0:.2f} e-gyroperiods = {t_common / (gyro_e0 * rqm_i):.2f} ion gyroperiods)")
+          f"({t_common / gyro_e0:.2f} e-gyroperiods = {t_common / gyro_i0:.2f} ion gyroperiods)")
 
     # ---- pass 2: plot heating curves (log y -- heating spans orders of magnitude) ----
     for k, (r, tE, TE, tI, TI) in enumerate(series):
         color = cmap(k / max(len(series) - 1, 1))
-        gyro_e = r["gyrotime"] or 1.0
-        gyro_i = gyro_e * rqm_i
+        gyro_e, gyro_i = r["_gyro_e"], r["_gyro_i"]
         lab = f"dx={r['dx']:.4g} ppc={r['ppc']} (N={r['node']})"
         TE0, TI0 = TE[0], (TI[0] if TI.size else np.nan)
         cells_per_lambdaDe = np.sqrt(TE0) / r["dx"]          # lambda_De/dx = v_te/dx
@@ -366,12 +454,12 @@ def main():
         print(f"  {lab}: T_e0={TE0*ME_C2_EV:.1f} eV, lambda_De/dx={cells_per_lambdaDe:.3f} cells, "
               f"upstream heated T_e x{heatE:.3g}, T_i x{heatI:.3g} at t_common")
 
-    for ax, ttl, gyro, xunit in ((axE, "electron", gyro_e0, r"electron gyroperiods"),
-                                 (axI, "ion (ambient)", gyro_e0 * rqm_i, r"ion gyroperiods")):
+    for ax, ttl, gyro, xunit in ((axE, "electron", gyro_e0, unit_e0),
+                                 (axI, "ion (ambient)", gyro_i0, unit_i0)):
         ax.axhline(1.0, color="k", lw=0.8, ls=":")
         ax.axvline(t_common / gyro, color="grey", lw=0.8, ls="--",
                    label="common compare time")
-        ax.set_xlabel(rf"$t$ [{xunit}]")
+        ax.set_xlabel(rf"$t\ [{xunit}]$")
         ax.set_ylabel(r"$T_\mathrm{up}(t)\,/\,T_\mathrm{up}(0)$")
         ax.set_title(f"upstream {ttl} anomalous heating")
         ax.legend(fontsize=8)
@@ -403,7 +491,8 @@ def main():
 
     np.savez(os.path.join(out, "convergence_summary.npz"), summary=np.array(summary, dtype=object))
     print(f"\nWrote:\n  {f1}\n  {f2}\n  {os.path.join(out, 'convergence_summary.npz')}"
-          f"\n  {len(series)} x tprofiles_<run>.png (ion+electron T(x) over time) in {out}")
+          f"\n  {len(series)} x tprofiles_<run>.png + tprofiles_logy_<run>.png "
+          f"(ion+electron T(x) over time, linear & log y) in {out}")
 
 
 if __name__ == "__main__":

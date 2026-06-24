@@ -19,9 +19,11 @@ num_threads: 1
 n_dump_total: 512
 restart: false
 
-# Physical ion charge states (FLASH-derived rqm is used by the generator; these are
-# carried through to analysis, which needs Z per species).
-charge_states: {al: 13, si: 14}
+# Ion populations are separated by FLASH material (this dump is species=cham,targ,vac;
+# cham=Al chamber, targ=Si target). species_names renames them to the historical al/si;
+# the flash2osiris generator derives rqm/mass from FLASH and uses neither map below.
+species_names: {cham: al, targ: si}
+charge_states: {al: 13, si: 14}   # analysis-only metadata (Z per species)
 
 # 1D lineout endpoints in cm (x y z of the z-midplane).
 geometry:

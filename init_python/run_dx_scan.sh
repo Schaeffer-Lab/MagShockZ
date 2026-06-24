@@ -34,8 +34,9 @@ PY=/global/homes/d/dschnei/.conda/envs/osiris2/bin/python
 # Absolute path to this runme, captured before the cd so we can copy it into
 # each generated run folder as a provenance record of how the deck was made.
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-cd "$(dirname "$0")"
 PROJ=/pscratch/sd/d/dschnei/MagShockZ
+# Generate from the repo root so the package's outputs land in $PROJ/input_files/.
+cd "$PROJ"
 
 # n_ave grows gently with refinement (~doubles per decade in dx) so finer runs get a
 # bit more diagnostic averaging without the window collapsing or n_ave blowing up.
@@ -51,41 +52,10 @@ CONFIGS=(
 ONLY="${1:-}"   # optional single nominal dx to (re)generate
 
 # ---- arguments shared by every point of the scan ----
-common_args() {
-  cat <<EOF
---data_path /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009
---dim 1
---reference_density 5e18
---rqm_factor 100
---ppc 500
---tmax_gyroperiods 80
---algorithm cuda
---start_point 0 0.07 0
---end_point 0 0.70 0
---num_threads 1
---n_dump_total 512
---restart false
---vpml_bnd_size 100
---emf_boundary pmc vpml
---part_boundary thermal thermal
---interpolation cubic
---smooth_type binomial
---smooth_order 2
---emf_reports b1 b2 b3 e1 e2 e3
---reports charge
---rep_udist uth1 uth2 ufl1 ufl2
---phasespaces p1x1 p2x1 p3x1 gx1
---e_ps_pmin -1 -1 -0.5
---e_ps_pmax 1 1 0.5
---i_ps_pmin -0.1 -0.1 -0.05
---i_ps_pmax 0.1 0.1 0.05
---ps_np 4096 4096 4096
---ps_ngamma 128
---ps_gammamax 3.0
---ps_nx 1024
---ps_ny 512
-EOF
-}
+# These now come from the version-controlled run spec (single source of truth); the
+# scan only overrides the per-point knobs (inputfile_name, dx, node_number, n_ave).
+# species_names:{cham:al,targ:si} in the spec keeps the OSIRIS species named al/si.
+BASE_CONFIG="$PROJ/runs/perlmutter_1d.run.yaml"
 
 # ---- write the sbatch script into a generated run folder ----
 write_sbatch() {
@@ -151,12 +121,12 @@ gen_one() {
   echo "  START dx=${nom} (exact ${dx}), node_number=${node}, n_ave=${nave}, wall=${wall}  -> ${log}"
   {
     echo "=== dx=${nom} (exact ${dx}), node_number=${node}, n_ave=${nave}, wall=${wall} ==="
-    $PY FLASH_OSIRIS_define.py \
+    $PY -m flash_osiris.generator \
+      --config "${BASE_CONFIG}" \
       --inputfile_name "${name}" \
       --dx "${dx}" \
       --node_number "${node}" \
-      --n_ave "${nave}" \
-      $(common_args)
+      --n_ave "${nave}"
     write_sbatch "${name}" "${node}" "${wall}"
     # Drop a copy of this runme next to the deck/manifest/run.sh so the directory
     # is a self-contained record of exactly how the deck was generated.

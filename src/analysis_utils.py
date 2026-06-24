@@ -643,118 +643,55 @@ def resolve_dump_params(cfg: dict, t_val: int, t_sim: float) -> dict:
     return params
 
 
-def fit_shock_trajectory(cfg: dict, deg: int = 2, species: str = "e",
-                         search_halfwidth: float = 400.0,
-                         transverse_hw: float = 5.0) -> dict:
-    """Detect the shock front across every configured dump and fit ``x_shock(t)``.
+def upstream_field_magnitude(cfg: dict, *, t_val=None, up_ncells="config",
+                             layout=None) -> float:
+    """Median |B'| over the config's upstream region at one dump [OSIRIS B_0 units].
 
-    Reuses the same density leading-edge detection as ``scripts/overview.py``
-    (``shock.detect_front_edge``), seeded per dump by the config shock fit
-    (``shock.v_shock`` / ``shock.x_shock_0``), then fits the trajectory with a
-    degree-``deg`` polynomial (:func:`shock.robust_polyfit`) so the velocity can
-    be taken as its analytic time-derivative.
+    Reads b1/b2/b3 at dump ``t_val`` (default: the first configured dump, where the
+    box is least shocked) and medians |B| over the upstream side of the shock front.
+    The front position is the config's ``x_shock`` for that dump (``x_shock_0 +
+    v_shock*t_sim`` unless ``dump_params[t_val]`` overrides it).
 
-    Like the overview, **frames before one ion gyroperiod are excluded from the
-    fit**: the front is not magnetically organised until the upstream ions have
-    gyrated once, and those early detections (piston/driver edge) otherwise
-    corrupt the trajectory — especially its derivative.  ``T_ci`` is computed
-    from the t=0 upstream |B| (in OSIRIS units the field equals ω_ce, so
-    ω_ci = |B|/|rqm_i| and T_ci = 2π|rqm_i|/|B|); override with
-    ``shock.fit_t_min`` in the config.  ``deg`` is reduced automatically if too
-    few post-gyro frames are detected.
+    ``up_ncells`` selects the upstream extent:
 
-    Returns a dict with the polynomial ``coeffs`` (np.polyfit convention), the
-    per-dump ``t_sim`` / ``x_det`` arrays, the boolean ``fit_mask`` of frames
-    actually fit, ``t_min`` used, and the ``deg`` actually used.
-    """
-    import osh5io
-    from shock import detect_front_edge, robust_polyfit
+      - ``"config"`` (default): the fixed-cell band ``(x_shock, x_shock + N*dx]``
+        with ``N = cfg.get("upstream_window_ncells", 200)`` — the same window the
+        dimensionless-parameter analysis averages over (:func:`window_masks`);
+      - ``None``: the whole upstream half-space ``x > x_shock`` (the legacy
+        :func:`_ion_gyroperiod` behaviour);
+      - ``int``: an explicit window width in cells.
 
-    sim_dir = cfg["sim_dir"]
-    layout = detect_layout(sim_dir)
-    v_cfg = float(cfg["shock"]["v_shock"])
-    x0 = float(cfg["shock"]["x_shock_0"])
-
-    t_sim, x_det = [], []
-    for t in cfg["times"]:
-        ne_h5 = osh5io.read_h5(diag_path(sim_dir, layout.charge_quantity, t, species))
-        prof = transverse_profile(np.abs(ne_h5), layout.normal_axis, transverse_hw)
-        x = axis_values(prof, ax_idx=0)
-        ts = float(ne_h5.run_attrs["TIME"][0])
-        x_pred = x0 + v_cfg * ts
-        t_sim.append(ts)
-        x_det.append(detect_front_edge(x, np.asarray(prof), x_pred, search_halfwidth))
-
-    t_sim = np.asarray(t_sim, dtype=float)
-    x_det = np.asarray(x_det, dtype=float)
-
-    # Skip the first ion gyroperiod (front not yet magnetically organised).
-    t_min = cfg.get("shock", {}).get("fit_t_min")
-    if t_min is None:
-        t_min = _ion_gyroperiod(cfg, layout, x0)
-    t_min = float(t_min)
-
-    fit_mask = np.isfinite(x_det) & (t_sim >= t_min)
-    if fit_mask.sum() < 2:  # too few post-gyro detections -> fall back to all detected
-        fit_mask = np.isfinite(x_det)
-        t_min = 0.0
-    if fit_mask.sum() < 2:
-        raise ValueError(
-            f"shock-trajectory fit needs >=2 detected frames, got {int(fit_mask.sum())}"
-        )
-    deg_used = int(min(deg, fit_mask.sum() - 1))  # need deg+1 points for a deg-poly
-    coeffs = robust_polyfit(t_sim[fit_mask], x_det[fit_mask], deg=deg_used)
-    return {"coeffs": coeffs, "t_sim": t_sim, "x_det": x_det,
-            "fit_mask": fit_mask, "t_min": t_min, "deg": deg_used}
-
-
-def _ion_gyroperiod(cfg: dict, layout, x_shock_0: float) -> float:
-    """Ion gyroperiod T_ci = 2π|rqm_i|/|B| [1/ωpe] from the t=0 upstream field.
-
-    Mirrors ``scripts/overview.py``: |B| is the median of the first frame ahead
-    of the t=0 predicted front; |rqm_i| comes from the run's input deck.
+    Falls back to the whole-frame median if the selected window holds no cells.
+    Indexing mirrors the legacy recipe (axis 0 of the field), so it is exact for 1D
+    runs and row-masks the shock-normal axis for the 2D layout.
     """
     import osh5io
     sim_dir = cfg["sim_dir"]
-    t0 = cfg["times"][0]
-    b = {n: osh5io.read_h5(diag_path(sim_dir, layout.field_quantity(n), t0))
+    if layout is None:
+        layout = detect_layout(sim_dir)
+    if t_val is None:
+        times = cfg.get("times")
+        t_val = int(times[0]) if times else 0
+    b = {n: osh5io.read_h5(diag_path(sim_dir, layout.field_quantity(n), t_val))
          for n in ("b1", "b2", "b3")}
     x = axis_values(b["b1"], ax_idx=0)
     Bmag = np.sqrt(sum(np.asarray(b[n]) ** 2 for n in ("b1", "b2", "b3")))
-    upstream = x > x_shock_0
-    B_up = float(np.median(Bmag[upstream])) if upstream.any() else float(np.median(Bmag))
-    rqm_i = abs(run_from_config(cfg).rqm)
-    return 2.0 * np.pi * rqm_i / B_up
+    t_sim = float(b["b1"].run_attrs["TIME"][0])
 
+    shock = cfg["shock"]
+    per = cfg.get("dump_params", {}).get(t_val, {})
+    x_shock = float(per.get("x_shock", shock["x_shock_0"] + shock["v_shock"] * t_sim))
 
-def resolve_shock_velocity(cfg: dict, t_sim: float, deg: int = 2,
-                           species: str = "e", **fit_kw) -> dict:
-    """Instantaneous shock velocity = d/dt of the fitted front trajectory at ``t_sim``.
-
-    For the energy-partition / heating analyses the relevant frame boost is the
-    *instantaneous* shock speed at the analyzed dump, which a curved fit captures
-    (the front decelerates).  The single ``shock.v_shock`` in the analysis YAML is
-    kept only as the detection seed and as the fallback if the fit fails; the
-    degree can be set with ``shock.fit_degree`` in the config (default 2).
-
-    Returns a dict: ``v_shock`` [c], ``x_shock_fit`` [c/ωpe] at ``t_sim``,
-    ``source`` ("fit" or "config"), ``deg``, ``n_det``, plus the config value as
-    ``v_shock_cfg``.
-    """
-    from shock import trajectory_at
-
-    v_cfg = float(cfg["shock"]["v_shock"])
-    deg = int(cfg.get("shock", {}).get("fit_degree", deg))
-    try:
-        traj = fit_shock_trajectory(cfg, deg=deg, species=species, **fit_kw)
-        x_fit, v_fit = trajectory_at(traj["coeffs"], t_sim)
-        return {"v_shock": float(v_fit), "x_shock_fit": float(x_fit),
-                "source": "fit", "deg": traj["deg"],
-                "n_det": int(traj["fit_mask"].sum()), "v_shock_cfg": v_cfg}
-    except Exception as exc:  # detection/fit failed -> fall back to config seed
-        return {"v_shock": v_cfg, "x_shock_fit": float("nan"),
-                "source": f"config ({type(exc).__name__})", "deg": 0,
-                "n_det": 0, "v_shock_cfg": v_cfg}
+    if up_ncells == "config":
+        up_ncells = int(cfg.get("upstream_window_ncells", 200))
+    if up_ncells is None:
+        upstream = x > x_shock
+    else:
+        dx = float(x[1] - x[0])
+        upstream, _ = window_masks(x, x_shock, dx, up_ncells, up_ncells)
+    if not upstream.any():
+        return float(np.median(Bmag))
+    return float(np.median(Bmag[upstream]))
 
 
 # ---------------------------------------------------------------------------

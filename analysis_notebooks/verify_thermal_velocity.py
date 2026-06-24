@@ -1,7 +1,8 @@
 # %% [markdown]
-# Verify the my_plugins thermal-velocity fields against the FLASH temperatures
+# Verify the yt-plugin thermal-velocity fields against the FLASH temperatures
 #
-# `src/my_plugins.py` builds thermal-velocity fields that OSIRIS uses to load particles:
+# The flash2osiris yt plugin (`flash_osiris/yt_plugin.py`, symlinked to
+# ~/.config/yt/my_plugins.py) builds thermal-velocity fields OSIRIS uses to load particles:
 #   vthele = sqrt(k_B tele / m_e)            (electron, full electron mass)
 #   vthion = sqrt(k_B tion / (m_p / ye))     (ion, MASS-PER-CHARGE  m_eff = m_p/ye = m_i/Z)
 #
@@ -26,8 +27,8 @@ import yt
 
 warnings.filterwarnings("ignore")
 yt.set_log_level(50)
-yt.enable_plugins()  # registers load_for_osiris + vthele/vthion from src/my_plugins.py
-# ~/.config/yt/my_plugins.py is symlinked to src/my_plugins.py, so this pulls in the edits.
+yt.enable_plugins()  # registers load_for_osiris + vthele/vthion from the flash2osiris plugin
+# ~/.config/yt/my_plugins.py is symlinked to flash2osiris/flash_osiris/yt_plugin.py.
 
 FLASH_FILE = "/mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2026-03/MagShockZ_hdf5_plt_cnt_0009"
 LINE_START = (0.0, 0.07, 0.0)  # cm

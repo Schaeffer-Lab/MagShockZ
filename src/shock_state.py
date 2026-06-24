@@ -94,20 +94,17 @@ def _region_primitives(state_arrays: dict, mask: np.ndarray) -> dict:
 
 def load_shock_state(cfg: dict, timestep_idx: int = -1,
                      species: Sequence[str] = ("al", "e"), ion: str = "al",
-                     load_fields: Sequence[str] = EMF_FIELDS,
-                     v_shock_from_fit: bool = True) -> ShockState:
+                     load_fields: Sequence[str] = EMF_FIELDS) -> ShockState:
     """Load one dump into a :class:`ShockState`.
 
     Parameters mirror ``dimensionless_params.py``: averaging windows
     come from ``upstream_window_ncells`` / ``downstream_window_ncells`` in the
     config (default 200 cells each, measured from ``x_shock``).
 
-    With ``v_shock_from_fit=True`` (default) the shock-frame boost velocity is
-    the *instantaneous* derivative of the fitted front trajectory at this dump
-    (``analysis_utils.resolve_shock_velocity``); the single config
-    ``shock.v_shock`` is kept as the detection seed / fallback.  Pass
-    ``v_shock_from_fit=False`` to use the config value directly (e.g. so
-    ``dimensionless_params`` reports M_A from the one YAML Mach number).
+    The shock-frame boost velocity is the tuned config ``shock.v_shock`` (set with
+    ``scripts/tune_shock.py``), used directly — there is no auto-fit of the front
+    trajectory; ``x_shock`` likewise comes from the config (per-dump override or the
+    ``x_shock_0 + v_shock*t_sim`` formula in ``resolve_dump_params``).
     """
     sim_dir = cfg["sim_dir"]
     t_val = cfg["times"][timestep_idx]
@@ -145,10 +142,6 @@ def load_shock_state(cfg: dict, timestep_idx: int = -1,
     x_shock = dump["x_shock"]
     v_shock_cfg = v_shock
     v_shock_source = "config"
-    if v_shock_from_fit:
-        vfit = analysis_utils.resolve_shock_velocity(cfg, t_sim)
-        v_shock = vfit["v_shock"]
-        v_shock_source = vfit["source"]
 
     T_par = {sp: ta.temperature_profile(pha_p1[sp], species_rqm[sp], "p1") for sp in species}
     T_perp = {sp: ta.temperature_profile(pha_p2[sp], species_rqm[sp], "p2") for sp in species}

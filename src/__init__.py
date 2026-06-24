@@ -6,11 +6,29 @@ from .flash_energy_partition import (
     energy_densities as flash_energy_densities,
     partition_by_region as flash_partition_by_region,
     partition_summary,
+    compression_check as flash_compression_check,
+    compression_summary as flash_compression_summary,
+)
+from .perpendicular_shock import (
+    plasma_beta,
+    shock_exists,
+    compression_ratio as perp_shock_compression_ratio,
+    pressure_ratio as perp_shock_pressure_ratio,
+    sound_speed as perp_shock_sound_speed,
+    alfven_speed as perp_shock_alfven_speed,
+    mass_flux_shock_speed as perp_shock_mass_flux_shock_speed,
+    solve as perp_shock_solve,
+    solve_from_speeds as perp_shock_solve_from_speeds,
+    solve_from_upstream as perp_shock_solve_from_upstream,
+    predict_downstream as perp_shock_predict_downstream,
 )
 from .rankine_hugoniot import (
     shock_normal_angle,
     is_quasi_perpendicular,
+    gamma_from_dof,
+    compression_ratio,
     perp_compression_ratio,
+    tangential_field_ratio,
     solve_jump,
     anomalous_heating,
 )

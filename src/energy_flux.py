@@ -24,7 +24,21 @@ available and dropped; the bulk transport keeps only U_x.
 Units: everything is OSIRIS-normalised.  Velocities are in c, so the fluxes come
 out in n_0 m_e c² — i.e. the physical flux divided by c — and thus share units
 with the energy *densities* in ``energy_partition.py``.  In the Gaussian-based
-OSIRIS normalization the Poynting flux S_x/c reduces to E2·B3 − E3·B2.
+OSIRIS normalization the lab-frame Poynting flux S_x/c reduces to E2·B3 − E3·B2.
+
+Frame consistency (important): the kinetic channels use the shock-frame velocity
+U = v − v_shock, so the electromagnetic flux must be evaluated in the *same*
+frame to make ``F_up ≈ F_dn`` a valid steady-shock conservation check.  The
+non-relativistic field transformation to a frame moving at +v_shock·x̂ is
+E2' = E2 − (v_shock/c)·B3,  E3' = E3 + (v_shock/c)·B2 (Gaussian, E' = E +
+(V/c)×B), which gives
+
+    S_x'/c = E2'·B3 − E3'·B2 = (E2·B3 − E3·B2) − (v_shock/c)·(B2² + B3²).
+
+The extra −(v_shock/c)·B_perp² term is the advection of the perpendicular
+magnetic enthalpy (U·B²/4π in CGS) — a *leading-order* O(v_shock/c) term, the
+field analog of the kinetic bulk/pressure advection, NOT an O(v²/c²) correction.
+``poynting_flux`` takes ``v_shock`` and defaults to 0 (pure lab frame).
 """
 
 import numpy as np
@@ -77,10 +91,20 @@ def species_energy_flux(phase_space, rqm: float, v_shock: float,
     return U * bulk_ke, U * eps, U * P_xx
 
 
-def poynting_flux(e2, e3, b2, b3):
-    """Shock-normal Poynting flux S_x/c = E2·B3 − E3·B2 [n_0 m_e c²].
+def poynting_flux(e2, e3, b2, b3, v_shock: float = 0.0):
+    """Shock-normal Poynting flux S_x/c [n_0 m_e c²], in the shock frame.
 
-    The x-component of (c/4π)(E×B) in OSIRIS Gaussian-based units; divided by c
-    so it shares units with the kinetic fluxes and the energy densities.
+    The x-component of (c/4π)(E×B) in OSIRIS Gaussian-based units, divided by c
+    so it shares units with the kinetic fluxes and the energy densities, with the
+    fields boosted to the frame moving at ``v_shock``·x̂ (see the module docstring
+    for the derivation)::
+
+        S_x'/c = (E2·B3 − E3·B2) − (v_shock/c)·(B2² + B3²)
+
+    ``v_shock`` is in units of c.  ``v_shock = 0`` returns the lab-frame flux.
+    The second term is the perpendicular magnetic-enthalpy advection and is the
+    field analog of the kinetic advective channels in :func:`species_energy_flux`.
     """
-    return np.asarray(e2) * np.asarray(b3) - np.asarray(e3) * np.asarray(b2)
+    e2, e3, b2, b3 = map(np.asarray, (e2, e3, b2, b3))
+    lab = e2 * b3 - e3 * b2
+    return lab - v_shock * (b2**2 + b3**2)

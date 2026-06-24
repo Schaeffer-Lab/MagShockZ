@@ -46,6 +46,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+import plot_style
 from analysis_utils import axis_values
 import shock_state
 import rankine_hugoniot as rh
@@ -86,8 +87,11 @@ class HeatingDecompositionResult:
     fpc_net_rate_i: np.ndarray         # ∫C_E du vs x (ions)
     # --- RH / heating scalars ---
     theta_bn_deg: float                # shock-normal angle [deg]
+    gamma: float                       # adiabatic index used for the RH baseline
     r_measured: float                  # measured compression n_dn/n_up
-    r_RH: float                        # RH-predicted compression
+    r_RH: float                        # RH-predicted (oblique) compression
+    b_t_measured: float                # measured tangential-field ratio |Bt_dn|/|Bt_up|
+    b_t_RH: float                      # RH-predicted tangential-field ratio Bt2/Bt1
     mach_a: float                      # Alfvénic Mach number
     mach_s: float                      # sonic Mach number
     T_factor: float                    # RH predicted total T2/T1
@@ -146,20 +150,25 @@ def _velocity_signature(pha, e1_on_x, rqm, layer_mask):
 # Compute (orchestration only — every formula lives in the five src/ modules)
 # ---------------------------------------------------------------------------
 
-def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "") -> HeatingDecompositionResult:
+def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "",
+            gamma: float = rh.GAMMA_DEFAULT) -> HeatingDecompositionResult:
     """Load one dump via shock_state, run the five decompositions, return the result."""
     print("Loading HDF5 files...")
     st = shock_state.load_shock_state(cfg, timestep_idx)
     ion = st.ion
     up_p, dn_p = st.prim_up, st.prim_dn
 
-    # 1. Rankine--Hugoniot baseline.
+    # 1. Rankine--Hugoniot baseline (oblique: uses theta_Bn and the chosen gamma).
     theta_bn = rh.shock_normal_angle(up_p["b1"], up_p["b2"], up_p["b3"])
     v_inflow = st.v_shock - up_p["u_bulk_i"]          # shock-frame inflow speed [c]
     jump = rh.solve_jump(up_p["n_e"], up_p["T_e"], up_p["T_i"], up_p["B2"],
-                         st.abs_rqm_i, v_inflow)
+                         st.abs_rqm_i, v_inflow, theta=theta_bn, gamma=gamma)
     T_factor = jump["T_factor"]
+    # Compression measured two ways: density (= r) and transverse field (= Bt2/Bt1).
     r_measured = dn_p["n_e"] / up_p["n_e"] if up_p["n_e"] > 0 else float("nan")
+    bt_up = float(np.hypot(up_p["b2"], up_p["b3"]))
+    bt_dn = float(np.hypot(dn_p["b2"], dn_p["b3"]))
+    b_t_measured = bt_dn / bt_up if bt_up > 0 else float("nan")
 
     # MHD predicts one total post-shock T; the measured e/i split is collisionless.
     T_tot_up = up_p["T_e"] + up_p["T_i"]
@@ -223,8 +232,9 @@ def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "") -> Heating
         u_ram_total=u_ram_tot, u_th_e=u_th["e"], u_th_i=u_th[ion], u_B=u_B, u_E=u_E,
         fpc_u_e=u_e, fpc_spectrum_e=fpc_spec_e, fpc_net_rate_e=fpc_net_e,
         fpc_u_i=u_i, fpc_spectrum_i=fpc_spec_i, fpc_net_rate_i=fpc_net_i,
-        theta_bn_deg=float(np.degrees(theta_bn)),
+        theta_bn_deg=float(np.degrees(theta_bn)), gamma=float(gamma),
         r_measured=float(r_measured), r_RH=float(jump["r"]),
+        b_t_measured=float(b_t_measured), b_t_RH=float(jump["B_ratio"]),
         mach_a=float(jump["mach_a"]), mach_s=float(jump["mach_s"]),
         T_factor=float(T_factor), T_tot_up=float(T_tot_up), T_tot_dn=float(T_tot_dn),
         dT_e=float(dT_e), dT_i=float(dT_i),
@@ -248,8 +258,9 @@ def _print_summary(r: HeatingDecompositionResult) -> None:
     print("  Shock heating decomposition")
     print("=" * 72)
     quasi = "quasi-perp" if rh.is_quasi_perpendicular(np.radians(r.theta_bn_deg)) else "quasi-par"
-    print(f"  theta_Bn        = {r.theta_bn_deg:6.1f} deg  ({quasi})")
-    print(f"  compression r   = {r.r_measured:6.3f} (measured)   {r.r_RH:6.3f} (RH)")
+    print(f"  theta_Bn        = {r.theta_bn_deg:6.1f} deg  ({quasi})   gamma = {r.gamma:.4f}")
+    print(f"  compression  r  = {r.r_measured:6.3f} (density)  {r.r_RH:6.3f} (RH oblique)")
+    print(f"  field ratio Bt  = {r.b_t_measured:6.3f} (meas.)   {r.b_t_RH:6.3f} (RH oblique)")
     print(f"  M_A, M_s        = {r.mach_a:6.2f}, {r.mach_s:6.2f}")
     print(f"  RH T-jump       = {r.T_factor:6.3f}  (predicted total T2/T1)")
     print(f"\n{sep}")
@@ -283,21 +294,22 @@ def _window(x, x_shock, half):
     return (x >= x_shock - half) & (x <= x_shock + half)
 
 
-def _plot_temperatures(r, ax, half):
+def _plot_temperatures(r, ax, half, disp):
     m = _window(r.x_axis, r.x_shock, half)
-    ax.semilogy(r.x_axis[m], r.T_iso_e[m], label="T_e (measured)")
-    ax.semilogy(r.x_axis[m], r.T_iso_i[m], label="T_i (measured)")
+    xd = disp.x(r.x_axis)
+    ax.semilogy(xd[m], r.T_iso_e[m], label="T_e (measured)")
+    ax.semilogy(xd[m], r.T_iso_i[m], label="T_i (measured)")
     ax.axhline(r.heat_tot["adiabatic"], color="k", ls=":", lw=1.2, label="RH total T (MHD)")
-    ax.axvline(r.x_shock, color="0.4", ls="--", lw=1)
-    ax.set_xlabel("x [c/ωpe]"); ax.set_ylabel("T [mₑc²]")
+    ax.axvline(disp.x(r.x_shock), color="0.4", ls="--", lw=1)
+    ax.set_xlabel(disp.xlabel()); ax.set_ylabel("T [mₑc²]")
     ax.set_title("Temperatures vs MHD baseline"); ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
 
-def _plot_potential(r, ax, half):
+def _plot_potential(r, ax, half, disp):
     m = _window(r.x_axis, r.x_shock, half)
-    ax.plot(r.x_axis[m], r.e_phi_profile[m], color="C3")
-    ax.axvline(r.x_shock, color="0.4", ls="--", lw=1)
-    ax.set_xlabel("x [c/ωpe]"); ax.set_ylabel("e·φ [mₑc²]")
+    ax.plot(disp.x(r.x_axis)[m], r.e_phi_profile[m], color="C3")
+    ax.axvline(disp.x(r.x_shock), color="0.4", ls="--", lw=1)
+    ax.set_xlabel(disp.xlabel()); ax.set_ylabel("e·φ [mₑc²]")
     ax.set_title(f"Cross-shock potential  (e·Δφ/½m_iv² = {r.reflection_parameter:.2f})")
     ax.grid(alpha=0.3)
 
@@ -332,11 +344,11 @@ def _plot_partition(r, ax):
     ax.grid(axis="y", alpha=0.3)
 
 
-def plot(r: HeatingDecompositionResult, output_dir: str, half_window: float = 250.0) -> str:
+def plot(r: HeatingDecompositionResult, output_dir: str, disp, half_window: float = 250.0) -> str:
     """Render the 2×3 decomposition figure and save a .png."""
     fig, ax = plt.subplots(2, 3, figsize=(18, 9))
-    _plot_temperatures(r, ax[0, 0], half_window)
-    _plot_potential(r, ax[0, 1], half_window)
+    _plot_temperatures(r, ax[0, 0], half_window, disp)
+    _plot_potential(r, ax[0, 1], half_window, disp)
     _plot_budget(r, ax[0, 2])
     _plot_fpc(r, ax[1, 0], "e")
     _plot_fpc(r, ax[1, 1], "i")
@@ -366,17 +378,28 @@ def main():
                         help="Compute and save the .npz only; skip the figure.")
     parser.add_argument("--half-window", type=float, default=250.0, dest="half_window",
                         help="Half-width [c/ωpe] of the near-shock plotting window.")
+    parser.add_argument("--gamma", type=float, default=None,
+                        help="Adiabatic index for the RH baseline (default: config "
+                             "'gamma' key, else 5/3). gamma=(f+2)/f: 5/3 (3 DOF), "
+                             "2 (2 DOF), 3 (1 DOF) — sweep to read off the effective index.")
     parser.add_argument("--output", default=None,
                         help="Output .npz path (default results/<run>/heating_decomposition_t{t:06d}.npz).")
     parser.add_argument("--output-dir", default=None, dest="output_dir",
                         help="Directory for the figure (default: alongside the .npz).")
+    plot_style.add_publication_arg(parser)
+    plot_style.add_units_arg(parser)
     args = parser.parse_args()
+    plot_style.apply(args.publication)
 
     cfg = analysis_utils.load_config(args.config)
     print(f"Config  : {args.config}")
     print(f"sim_dir : {cfg['sim_dir']}")
 
-    result = compute(cfg, args.timestep_idx, config_path=os.path.abspath(args.config))
+    # gamma: CLI overrides config 'gamma' key overrides the module default.
+    gamma = args.gamma if args.gamma is not None else float(cfg.get("gamma", rh.GAMMA_DEFAULT))
+
+    result = compute(cfg, args.timestep_idx, config_path=os.path.abspath(args.config),
+                     gamma=gamma)
     _print_summary(result)
 
     out_path = analysis_utils.default_output_path(args.output, cfg["sim_dir"],
@@ -385,8 +408,9 @@ def main():
     print(f"\nSaved → {out_path}")
 
     if not args.no_plot:
+        disp = plot_style.build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
         out_dir = args.output_dir or os.path.dirname(os.path.abspath(out_path))
-        fig_path = plot(result, out_dir, args.half_window)
+        fig_path = plot(result, out_dir, disp, args.half_window)
         print(f"Saved → {fig_path}")
 
 

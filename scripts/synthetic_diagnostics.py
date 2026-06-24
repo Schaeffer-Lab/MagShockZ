@@ -47,6 +47,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+import plot_style
 import shock_state
 import moments as mom
 import synthetic_diagnostics as sd
@@ -151,10 +152,11 @@ def _print_summary(r: SyntheticDiagnosticsResult) -> None:
 # Plot (matplotlib only — reads the result, draws nothing new)
 # ---------------------------------------------------------------------------
 
-def plot(r: SyntheticDiagnosticsResult, output_dir: str, half_window: float = 300.0) -> str:
+def plot(r: SyntheticDiagnosticsResult, output_dir: str, disp, half_window: float = 300.0) -> str:
     """Render the true-vs-instrument profiles (n_e, |B|, X-ray) and save a .png."""
     x, xs = r.x_axis, r.x_shock
     m = (x >= xs - half_window) & (x <= xs + half_window)
+    xd = disp.x(x)
 
     panels = [
         ("n_e", "n_e [n₀]", r.n_e, r.n_e_obs),
@@ -163,16 +165,16 @@ def plot(r: SyntheticDiagnosticsResult, output_dir: str, half_window: float = 30
     ]
     fig, ax = plt.subplots(1, 3, figsize=(18, 5))
     for a, (name, ylab, full, obs) in zip(ax, panels):
-        a.plot(x[m], full[m], color="0.6", lw=1, label="true (full res)")
-        a.plot(x[m], obs[m], color="C3", lw=2, label=f"instrument ({r.resolution_um:.0f} µm)")
-        a.axvline(xs, color="0.4", ls="--", lw=1)
-        a.set_xlabel("x [c/ωpe]"); a.set_ylabel(ylab); a.set_title(name)
+        a.plot(xd[m], full[m], color="0.6", lw=1, label="true (full res)")
+        a.plot(xd[m], obs[m], color="C3", lw=2, label=f"instrument ({r.resolution_um:.0f} µm)")
+        a.axvline(disp.x(xs), color="0.4", ls="--", lw=1)
+        a.set_xlabel(disp.xlabel()); a.set_ylabel(ylab); a.set_title(name)
         a.legend(fontsize=8); a.grid(alpha=0.3)
 
     # Mark the B-probe sample points on the |B| panel.
-    ax[1].scatter(r.probe_x, r.B_probe, color="k", zorder=5, label="B-probe")
+    ax[1].scatter(disp.x(r.probe_x), r.B_probe, color="k", zorder=5, label="B-probe")
 
-    fig.suptitle(f"Synthetic diagnostics  t={r.t_val}  "
+    fig.suptitle(f"Synthetic diagnostics  dump {r.t_val}  {disp.time_title(r.t_sim)}  "
                  f"resolution {r.resolution_um:.0f} µm = {r.resolution_norm:.1f} c/ωpe",
                  fontsize=13)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
@@ -202,7 +204,10 @@ def main():
                         help="Output .npz path (default results/<run>/synthetic_diagnostics_t{t:06d}.npz).")
     parser.add_argument("--output-dir", default=None, dest="output_dir",
                         help="Directory for the figure (default: alongside the .npz).")
+    plot_style.add_publication_arg(parser)
+    plot_style.add_units_arg(parser)
     args = parser.parse_args()
+    plot_style.apply(args.publication)
 
     cfg = analysis_utils.load_config(args.config)
     print(f"Config  : {args.config}\nsim_dir : {cfg['sim_dir']}")
@@ -217,8 +222,9 @@ def main():
     print(f"\nSaved → {out_path}")
 
     if not args.no_plot:
+        disp = plot_style.build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
         out_dir = args.output_dir or os.path.dirname(os.path.abspath(out_path))
-        fig_path = plot(result, out_dir, args.half_window)
+        fig_path = plot(result, out_dir, disp, args.half_window)
         print(f"Saved → {fig_path}")
 
 

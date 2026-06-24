@@ -46,6 +46,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+import plot_style
 import shock_state
 import energy_flux as ef
 
@@ -104,9 +105,11 @@ def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "") -> EnergyF
         F_internal += fi
         F_pressure += fp
 
-    # Electromagnetic (Poynting) flux on the phase grid (fields already there).
+    # Electromagnetic (Poynting) flux on the phase grid, boosted to the shock
+    # frame so it shares the frame of the kinetic channels (fields already there).
     F_poynting = ef.poynting_flux(
-        st.fields["e2"], st.fields["e3"], st.fields["b2"], st.fields["b3"])
+        st.fields["e2"], st.fields["e3"], st.fields["b2"], st.fields["b3"],
+        v_shock=st.v_shock)
     F_total = F_bulk + F_internal + F_pressure + F_poynting
 
     # Upstream vs. downstream window averages (masks from shock_state).
@@ -160,26 +163,27 @@ _PLOT_CHANNELS = [
 ]
 
 
-def _plot_profiles(r: EnergyFluxResult, ax: plt.Axes) -> None:
+def _plot_profiles(r: EnergyFluxResult, ax: plt.Axes, disp) -> None:
     x = r.x_axis
+    xd = disp.x(x)
     xs = r.x_shock
     x_up = xs + r.up_ncells * r.dx
     x_dn = xs - r.dn_ncells * r.dx
 
     for attr, label, color in _PLOT_CHANNELS:
-        ax.plot(x, getattr(r, attr), color=color, lw=1.2, label=label)
-    ax.plot(x, r.F_total, color="k", lw=2.0, label="Total")
+        ax.plot(xd, getattr(r, attr), color=color, lw=1.2, label=label)
+    ax.plot(xd, r.F_total, color="k", lw=2.0, label="Total")
     ax.axhline(0.0, color="0.6", lw=0.8)
-    ax.axvline(xs, color="k", ls="--", lw=1, label=f"shock {xs:.0f}")
-    ax.axvspan(xs, x_up, color="C0", alpha=0.08, label="upstream window")
-    ax.axvspan(x_dn, xs, color="C3", alpha=0.08, label="downstream window")
+    ax.axvline(disp.x(xs), color="k", ls="--", lw=1, label=f"shock {xs:.0f}")
+    ax.axvspan(disp.x(xs), disp.x(x_up), color="C0", alpha=0.08, label="upstream window")
+    ax.axvspan(disp.x(x_dn), disp.x(xs), color="C3", alpha=0.08, label="downstream window")
 
-    ax.set_xlabel("x [c/ωpe]")
+    ax.set_xlabel(disp.xlabel())
     ax.set_ylabel("Energy flux  F / c  [n₀ mₑ c²]")
-    ax.set_title(f"Shock-frame energy flux, t={r.t_val}")
+    ax.set_title(f"Shock-frame energy flux, dump {r.t_val}  {disp.time_title(r.t_sim)}")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
-    ax.set_xlim(x_dn - 50, x_up + 50)
+    ax.set_xlim(disp.x(x_dn - 50), disp.x(x_up + 50))
     win = (x >= x_dn - 50) & (x <= x_up + 50)
     if win.any():
         lo, hi = np.nanmin(r.F_total[win]), np.nanmax(r.F_total[win])
@@ -213,10 +217,10 @@ def _plot_bars(r: EnergyFluxResult, ax: plt.Axes) -> None:
     ax.grid(axis="y", alpha=0.3)
 
 
-def plot(r: EnergyFluxResult, output_dir: str) -> str:
+def plot(r: EnergyFluxResult, output_dir: str, disp) -> str:
     """Render the two-panel figure (flux profiles + conservation bars), save a .png."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    _plot_profiles(r, axes[0])
+    _plot_profiles(r, axes[0], disp)
     _plot_bars(r, axes[1])
     plt.tight_layout()
     os.makedirs(output_dir, exist_ok=True)
@@ -241,7 +245,10 @@ def main():
                         help="Output .npz path (default results/<run>/energy_flux_t{t:06d}.npz).")
     parser.add_argument("--output-dir", default=None, dest="output_dir",
                         help="Directory for the figure (default: alongside the .npz).")
+    plot_style.add_publication_arg(parser)
+    plot_style.add_units_arg(parser)
     args = parser.parse_args()
+    plot_style.apply(args.publication)
 
     cfg = analysis_utils.load_config(args.config)
     print(f"Config  : {args.config}")
@@ -255,8 +262,9 @@ def main():
     print(f"\nSaved → {out_path}")
 
     if not args.no_plot:
+        disp = plot_style.build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
         out_dir = args.output_dir or os.path.dirname(os.path.abspath(out_path))
-        fig_path = plot(result, out_dir)
+        fig_path = plot(result, out_dir, disp)
         print(f"Saved → {fig_path}")
 
 

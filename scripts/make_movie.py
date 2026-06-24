@@ -50,11 +50,9 @@ Usage
 """
 
 import argparse
-import glob
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from multiprocessing import Pool
 
@@ -68,74 +66,33 @@ import osh5vis
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-from analysis_utils import axis_values, detect_layout, diag_path, run_from_config
-from dimensionless_params import ion_gyroperiod, ion_skin_depth
+import plot_style
+from analysis_utils import axis_values, load_config
 
 
 # ---------------------------------------------------------------------------
-# Normalisation — the only physics, sourced once per run from src/ functions
+# Normalisation — the only physics — lives in src/plot_style.py (DisplayUnits),
+# shared with the analysis scripts and the --units flag.  build_units() resolves
+# d_i / T_ci from the run dir (honouring a cached t_ci), so make_movie just maps
+# its movie run dir + optional --config onto that helper below.
 # ---------------------------------------------------------------------------
 
-@dataclass
-class Normalization:
-    """How to map on-disk OSIRIS units to the chosen display units.
-
-    ``length_factor`` divides the coordinates of every *length* axis for display
-    (1.0 for electron / c/wpe; d_i for ion).  ``time_factor`` divides the dump
-    time for the title (1.0 for electron / 1-over-wpe; T_ci for ion).  The labels
-    are TeX fragments used on the axis / in the title.
-    """
-
-    units: str
-    length_factor: float
-    time_factor: float
-    length_label: str   # appended to length-axis labels (display unit)
-    time_label: str     # the title's time unit
-
-
-def _electron_normalization() -> Normalization:
-    return Normalization("electron", 1.0, 1.0, r"c/\omega_{pe}", r"\omega_{pe}^{-1}")
-
-
-def _upstream_field_magnitude(sim_dir: str) -> float:
-    """Median |B'| over the earliest available field dump [OSIRIS B_0 units].
-
-    Mirrors ``analysis_utils._ion_gyroperiod``: the first dump is the least-shocked
-    state, so the whole-frame median is the upstream field — no shock fit or config
-    needed.  Reads b1/b2/b3 via the run's layout-aware field names.
-    """
-    layout = detect_layout(sim_dir)
-    b2_sum = None
-    for name in ("b1", "b2", "b3"):
-        diag_dir = os.path.dirname(diag_path(sim_dir, layout.field_quantity(name), 0))
-        files = sorted(glob.glob(os.path.join(diag_dir, "*.h5")))
-        if not files:
-            raise ValueError(
-                f"--units ion needs the B field, but no {name} dumps were found "
-                f"under {diag_dir}."
-            )
-        arr = np.asarray(osh5io.read_h5(files[0]), dtype=float)
-        b2_sum = arr ** 2 if b2_sum is None else b2_sum + arr ** 2
-    return float(np.median(np.sqrt(b2_sum)))
-
-
-def _build_normalization(units: str, sim_dir: str) -> Normalization:
-    """Resolve the display normalisation for ``units`` from the run directory."""
-    if units == "electron":
-        return _electron_normalization()
-
-    abs_rqm_i = abs(run_from_config({"sim_dir": sim_dir}).rqm)
-    d_i = ion_skin_depth(abs_rqm_i)
-    B_up = _upstream_field_magnitude(sim_dir)
-    T_ci = ion_gyroperiod(abs_rqm_i, B_up)
-    if not np.isfinite(T_ci) or not np.isfinite(d_i):
-        raise ValueError(
-            f"--units ion could not be resolved (|rqm_i|={abs_rqm_i}, |B'|={B_up}); "
-            "check the run directory has a parseable deck and a non-zero upstream field."
-        )
-    print(f"ion units: |rqm_i|={abs_rqm_i:.4g}  d_i={d_i:.4g} c/wpe  "
-          f"|B'|_up={B_up:.4g}  T_ci={T_ci:.4g} 1/wpe", flush=True)
-    return Normalization("ion", d_i, T_ci, r"d_i", r"T_{ci}")
+def _movie_units(units, sim_dir, config_path):
+    """DisplayUnits for the movie: like plot_style.build_units, but the --config is
+    only borrowed for its tuned upstream region/cached t_ci while the *fields* read
+    come from this movie's own run dir (a movie may target a different run)."""
+    units = plot_style.resolve_units(units)  # auto -> ion in publication mode, else electron
+    if units == "electron" or config_path is None:
+        return plot_style.build_units(units, sim_dir=sim_dir)
+    cfg = load_config(config_path)
+    cfg_run = os.path.basename(cfg["sim_dir"].rstrip("/"))
+    movie_run = os.path.basename(sim_dir.rstrip("/"))
+    if cfg_run != movie_run:
+        print(f"  ! --config is for run {cfg_run!r} but this movie is run "
+              f"{movie_run!r}; using the movie run's fields with the config's "
+              "shock params.", flush=True)
+    cfg["sim_dir"] = sim_dir  # read this run's fields, but use the config's regions / t_ci
+    return plot_style.build_units(units, cfg=cfg)
 
 
 def _value_to_index(axis_vals, lo, hi):
@@ -178,7 +135,7 @@ class MovieMaker:
 
     def __init__(self, root_dir):
         self.root_dir = Path(root_dir)
-        self.norm = _electron_normalization()
+        self.norm = plot_style.electron_units()
         self.dpi = 100
         self.cmap = "inferno"
         self.log = False
@@ -518,8 +475,11 @@ def main():
                    help="MS tree (interactive) or a single diagnostic dir (non-interactive)")
     p.add_argument("-o", "--output", default=None,
                    help="Output movie name without .mp4 (non-interactive)")
-    p.add_argument("--units", choices=("electron", "ion"), default="electron",
-                   help="Display normalisation: electron (c/wpe, 1/wpe) or ion (d_i, T_ci)")
+    plot_style.add_units_arg(p)
+    p.add_argument("--config", default=None,
+                   help="Analysis YAML config; with --units ion, T_ci comes from the "
+                        "config's cached t_ci (or is measured over its tuned upstream "
+                        "region) instead of the whole box.")
     p.add_argument("-f", "--fps", type=int, default=40, help="Frames per second")
     p.add_argument("-s", "--skip-frames", type=int, default=1,
                    help="Render every Nth frame")
@@ -541,13 +501,15 @@ def main():
                    help="Annotate the reference density on the x-label")
     p.add_argument("--no-interactive", action="store_true",
                    help="Force non-interactive rendering from flags only")
+    plot_style.add_publication_arg(p)
     args = p.parse_args()
+    plot_style.apply(args.publication)  # before the render Pool forks, so workers inherit
 
     data_path = args.data or input("Path to OSIRIS MS directory (or diagnostic dir): ").strip()
     n_jobs = args.n_jobs or _default_n_jobs()
 
     maker = MovieMaker(data_path)
-    maker.norm = _build_normalization(args.units, _resolve_sim_dir(data_path))
+    maker.norm = _movie_units(args.units, _resolve_sim_dir(data_path), args.config)
     maker.dpi = args.dpi
     maker.cmap = args.cmap
     maker.title = args.title
