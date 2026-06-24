@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from conftest import make_phase_space
+from conftest import make_phase_space, FakeAxis, FakeH5Data
 import energy_partition as ep
 
 
@@ -11,6 +11,14 @@ def gaussian_phase_space(mu, sigma, p_arr, x_arr):
     f_p = np.exp(-0.5 * ((p_arr - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
     values = np.outer(f_p, np.ones(len(x_arr)))
     return make_phase_space(p_arr, x_arr, values)
+
+
+def gaussian_phase_space_axis(mu, sigma, p_arr, x_arr, axis_name):
+    """Gaussian phase space whose momentum axis is named ``axis_name`` (p2/p3)."""
+    f_p = np.exp(-0.5 * ((p_arr - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
+    values = np.outer(f_p, np.ones(len(x_arr)))
+    axes = [FakeAxis(axis_name, p_arr), FakeAxis("x1", x_arr)]
+    return FakeH5Data(values, axes)
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +61,45 @@ class TestSpeciesEnergyProfiles:
         u_ram_n, u_th_n = ep.species_energy_profiles(ps, rqm=-50.0, v_shock=0.0)
         np.testing.assert_allclose(u_ram_p, u_ram_n, rtol=1e-10)
         np.testing.assert_allclose(u_th_p, u_th_n, rtol=1e-10)
+
+    def test_thermal_carries_one_half(self):
+        """u_th = 0.5 * n * |rqm| * sigma^2 (one direction); n=1, sigma=1 -> 0.5."""
+        ps = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
+        _, u_th = ep.species_energy_profiles(ps, rqm=1.0, v_shock=0.0)
+        np.testing.assert_allclose(u_th, 0.5, rtol=1e-3)
+
+    def test_perp_phase_space_adds_thermal(self):
+        """A transverse phase space adds 0.5 * n * |rqm| * sigma_perp^2."""
+        ps1 = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)            # sigma^2 = 1
+        ps2 = gaussian_phase_space_axis(0.0, 2.0, self.p_arr, self.x_arr, "p2")  # sigma^2 = 4
+        _, u_th_1d = ep.species_energy_profiles(ps1, rqm=1.0, v_shock=0.0)
+        _, u_th_2d = ep.species_energy_profiles(
+            ps1, rqm=1.0, v_shock=0.0, perp_phase_spaces=[ps2]
+        )
+        np.testing.assert_allclose(u_th_2d - u_th_1d, 0.5 * 4.0, rtol=1e-3)
+
+    def test_isotropic_three_directions_equals_three_halves_nT(self):
+        """Three equal directions -> u_th = (3/2) n T with T = |rqm| sigma^2."""
+        ps1 = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
+        ps2 = gaussian_phase_space_axis(0.0, 1.0, self.p_arr, self.x_arr, "p2")
+        ps3 = gaussian_phase_space_axis(0.0, 1.0, self.p_arr, self.x_arr, "p3")
+        _, u_th = ep.species_energy_profiles(
+            ps1, rqm=1.0, v_shock=0.0, perp_phase_spaces=[ps2, ps3]
+        )
+        np.testing.assert_allclose(u_th, 1.5, rtol=1e-3)
+
+    def test_perp_variance_is_frame_independent(self):
+        """Transverse bulk offset must not change the (central-moment) thermal sum."""
+        ps1 = gaussian_phase_space(0.0, 1.0, self.p_arr, self.x_arr)
+        ps2_centered = gaussian_phase_space_axis(0.0, 1.5, self.p_arr, self.x_arr, "p2")
+        ps2_shifted = gaussian_phase_space_axis(0.4, 1.5, self.p_arr, self.x_arr, "p2")
+        _, u_th_c = ep.species_energy_profiles(
+            ps1, rqm=1.0, v_shock=0.0, perp_phase_spaces=[ps2_centered]
+        )
+        _, u_th_s = ep.species_energy_profiles(
+            ps1, rqm=1.0, v_shock=0.0, perp_phase_spaces=[ps2_shifted]
+        )
+        np.testing.assert_allclose(u_th_c, u_th_s, rtol=1e-3)
 
 
 # ---------------------------------------------------------------------------

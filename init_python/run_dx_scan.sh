@@ -58,7 +58,7 @@ common_args() {
 --reference_density 5e18
 --rqm_factor 100
 --ppc 500
---tmax_gyroperiods 20
+--tmax_gyroperiods 80
 --algorithm cuda
 --start_point 0 0.07 0
 --end_point 0 0.70 0

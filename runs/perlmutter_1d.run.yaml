@@ -10,9 +10,9 @@ dim: 1
 inputfile_name: magshockz_rqm100_dx0.3_ppc500_g20
 reference_density: 5.0e18      # cm^-3 (dot required so YAML parses as float)
 rqm_factor: 100
-dx: 0.3                         # c/omega_pe
+dx: 0.1                         # c/omega_pe
 ppc: 500
-tmax_gyroperiods: 20
+tmax_gyroperiods: 80
 algorithm: cuda
 node_number: [4]
 num_threads: 1
