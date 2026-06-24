@@ -15,12 +15,18 @@ grid is preserved; the order-1/2 means are then taken over the masked
 sub-population.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-import osh5def
 import scipy.integrate
 
+if TYPE_CHECKING:
+    import osh5def
 
-def moment(data: osh5def.H5Data, order: int, axis: str,
+
+def moment(data: "osh5def.H5Data", order: int, axis: str,
            p_mask: np.ndarray = None, debug: bool = False):
     if not data.has_axis(axis):
         raise ValueError(f"Data does not have axis '{axis}'")

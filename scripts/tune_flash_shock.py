@@ -47,15 +47,14 @@ Env: analysis (yt / unyt).  Examples:
 """
 
 import argparse
-import functools
 import os
 import sys
-from multiprocessing import Pool
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import unyt as u
 import yt
 from matplotlib.colors import LogNorm
 
@@ -68,87 +67,19 @@ import analysis_utils
 import plot_style
 import flash_utils as fu
 import yaml_edit
-# Reuse the overview's streak assembly + pickle-able dump loader so the streak the
-# tuner draws is byte-for-byte the one the analysis produces.
-from flash_overview import assemble_streak, _load_one
+# Reuse the overview's streak assembly so the streak the tuner draws is byte-for-byte
+# the one the analysis produces; dumps load via the shared fu.load_lineouts.
+from flash_overview import assemble_streak
 
-_CM_TO_UM  = 1e4      # cm → µm
-_UM_TO_CM  = 1e-4     # µm → cm
-_S_TO_NS   = 1e9      # s  → ns
-_CM_TO_KMS = 1e-5     # cm/s → km/s
-_KMS_TO_CMS = 1e5     # km/s → cm/s
+
+# The interactive write-back plumbing (out_dir / confirm_write / …) is shared with
+# scripts/tune_shock.py and lives in src/yaml_edit.py; confirm_write routes the
+# ``flash_dump_params.<idx>.<key>`` paths to set_dump_param automatically.
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers  (mirror scripts/tune_shock.py)
+# FLASH run-spec resolution
 # ---------------------------------------------------------------------------
-
-def _out_dir(cfg, override, flash_dir):
-    out = override or os.path.join(_HERE, "..", "results",
-                                   os.path.basename(flash_dir.rstrip("/")))
-    os.makedirs(out, exist_ok=True)
-    return out
-
-
-def _ask_yes(prompt):
-    try:
-        return input(prompt).strip().lower() in ("y", "yes")
-    except EOFError:
-        return False
-
-
-def _normalize(val):
-    """Match yaml_edit's compact rendering when verifying the round-trip."""
-    if isinstance(val, float) and val.is_integer():
-        return int(val)
-    return val
-
-
-def _aligned_diff(old, new):
-    n = max(len(old), len(new))
-    old = old + [""] * (n - len(old))
-    new = new + [""] * (n - len(new))
-    return list(zip(old, new))
-
-
-def _confirm_write(config_path, edits, no_write):
-    """Apply each (dotted_path, value) edit to the YAML text, show the diff, ask y/N.
-
-    A path under ``flash_dump_params`` routes to ``set_dump_param`` (custom section);
-    everything else is a plain ``set_scalar``.  Each edit is verified to round-trip
-    before the file is touched.  Returns True if written.
-    """
-    if no_write:
-        print("  [--no-write] would write:")
-        for path, val in edits:
-            print(f"    {path} = {val}")
-        return False
-
-    with open(config_path) as f:
-        text = f.read()
-    new_text = text
-    for path, val in edits:
-        parts = path.split(".")
-        if parts[0] == "flash_dump_params":
-            new_text = yaml_edit.set_dump_param(
-                new_text, int(parts[1]), parts[2], val, section="flash_dump_params")
-        else:
-            new_text = yaml_edit.set_scalar(new_text, path, val)
-        yaml_edit.assert_roundtrip(new_text, path, _normalize(val))
-
-    print("  pending edits:")
-    for a, b in _aligned_diff(text.split("\n"), new_text.split("\n")):
-        if a != b:
-            print(f"    - {a}")
-            print(f"    + {b}")
-    if not _ask_yes(f"  write these to {os.path.basename(config_path)}? [y/N] "):
-        print("  not written.")
-        return False
-    with open(config_path, "w") as f:
-        f.write(new_text)
-    print(f"  wrote → {config_path}")
-    return True
-
 
 def _run_paths(cfg):
     """Resolve (flash_dir, sorted plot files, LOS endpoints, IC index/time) from the spec."""
@@ -167,23 +98,6 @@ def _run_paths(cfg):
     return flash_dir, all_files, line_start, line_end, ic_index, t_ic_s
 
 
-def _load_lineouts(paths, line_start, line_end, nprocs):
-    """Load a list of dumps' lineouts, in input order, optionally in parallel."""
-    worker = functools.partial(_load_one, line_start=line_start, line_end=line_end)
-    if nprocs <= 1:
-        out = []
-        for i, p in enumerate(paths):
-            print(f"  [{i + 1:3d}/{len(paths)}] {os.path.basename(p)}", flush=True)
-            out.append(worker(p))
-        return out
-    with Pool(nprocs) as pool:
-        out = []
-        for i, lo in enumerate(pool.imap(worker, paths)):
-            print(f"  [{i + 1:3d}/{len(paths)}] {os.path.basename(paths[i])}", flush=True)
-            out.append(lo)
-        return out
-
-
 # ---------------------------------------------------------------------------
 # Trajectory mode
 # ---------------------------------------------------------------------------
@@ -195,7 +109,7 @@ class TrajectoryTuner:
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
          ic_index, self.t_ic_s) = _run_paths(cfg)
-        self.out_dir = _out_dir(cfg, args.output_dir, self.flash_dir)
+        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir)
         self.png = os.path.join(self.out_dir, "tune_flash_trajectory.png")
 
         idx_range = range(args.t_start,
@@ -212,20 +126,21 @@ class TrajectoryTuner:
         nprocs = min(max(1, nprocs), len(paths))
         print(f"Loading nₑ, |B| over {len(paths)} dumps "
               f"({nprocs} process{'es' if nprocs > 1 else ''}) …", flush=True)
-        lineouts = _load_lineouts(paths, line_start, line_end, nprocs)
+        lineouts = fu.load_lineouts(paths, line_start, line_end, nprocs)
 
         self.ne_streak, self.time_ns, self.x_um = assemble_streak(lineouts, "ne")
         self.B_streak,  _,            _         = assemble_streak(lineouts, "B_mag")
-        self.t_s = self.time_ns / _S_TO_NS
+        self.t_s = (self.time_ns * u.ns).to("s").value
 
         # Trial trajectory seeded from the config flash: block.
         flash = cfg.get("flash", {})
         self.v_cms  = float(flash.get("v_shock_est_cms", 0.0))
-        self.x0_cm  = float(flash.get("x_shock_0_cm", float(self.x_um.mean()) * _UM_TO_CM))
+        self.x0_cm  = float(flash.get("x_shock_0_cm",
+                                      (float(self.x_um.mean()) * u.um).to("cm").value))
 
     def _front_um(self):
         # x(t) = x_shock_0 + v_shock·(t − t_IC), exactly as flash_overview plots it.
-        return (self.x0_cm + self.v_cms * (self.t_s - self.t_ic_s)) * _CM_TO_UM
+        return ((self.x0_cm + self.v_cms * (self.t_s - self.t_ic_s)) * u.cm).to("um").value
 
     def _fit_fronts(self):
         """Per-dump hand-fit shock fronts (config flash_dump_params) mapped onto the
@@ -240,28 +155,28 @@ class TrajectoryTuner:
             if idx not in idx_to_t or "x_shock_cm" not in p:
                 continue
             t.append(idx_to_t[idx])
-            x.append(float(p["x_shock_cm"]) * _CM_TO_UM)
+            x.append((float(p["x_shock_cm"]) * u.cm).to("um").value)
         return np.array(t), np.array(x)
 
     def render(self):
         fig, axes = plt.subplots(2, 1, figsize=(13, 9), sharex=True)
         x_line = self._front_um()
         t_fit, x_fit = self._fit_fronts()
-        leg = (f"trial  v={self.v_cms * _CM_TO_KMS:.1f} km/s  "
-               f"x₀={self.x0_cm * _CM_TO_UM:.1f} µm")
+        leg = (f"trial  v={(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s  "
+               f"x₀={(self.x0_cm * u.cm).to('um').value:.1f} µm")
         self._panel(axes[0], self.ne_streak, self.x_um, r"$n_e$ [cm$^{-3}$]",
                     "magma", True, x_line, leg, t_fit, x_fit)
         self._panel(axes[1], self.B_streak, self.x_um, r"$|B|$ [G]",
                     "viridis", False, x_line, leg, t_fit, x_fit)
         axes[1].set_xlabel("$t$ [ns]")
         fig.suptitle(f"FLASH trajectory tuning — {os.path.basename(self.flash_dir)}\n"
-                     f"trial v_shock={self.v_cms * _CM_TO_KMS:.1f} km/s, "
-                     f"x_shock_0={self.x0_cm * _CM_TO_UM:.1f} µm", fontsize=12)
+                     f"trial v_shock={(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s, "
+                     f"x_shock_0={(self.x0_cm * u.cm).to('um').value:.1f} µm", fontsize=12)
         fig.tight_layout()
         fig.savefig(self.png, dpi=130, bbox_inches="tight")
         plt.close(fig)
-        print(f"  v_shock = {self.v_cms * _CM_TO_KMS:.1f} km/s   "
-              f"x_shock_0 = {self.x0_cm * _CM_TO_UM:.2f} µm ({self.x0_cm:.4g} cm)")
+        print(f"  v_shock = {(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s   "
+              f"x_shock_0 = {(self.x0_cm * u.cm).to('um').value:.2f} µm ({self.x0_cm:.4g} cm)")
         print(f"  ↻ wrote {self.png} — refresh in your IDE")
 
     def _panel(self, ax, streak, x_um, label, cmap, log, x_line_um, leg,
@@ -306,13 +221,13 @@ class TrajectoryTuner:
             if cmd in ("q", "quit", "exit"):
                 break
             elif cmd == "v" and rest:
-                self.v_cms = float(rest[0]) * _KMS_TO_CMS; self.render()
+                self.v_cms = (float(rest[0]) * u.km / u.s).to("cm/s").value; self.render()
             elif cmd == "x" and rest:
-                self.x0_cm = float(rest[0]) * _UM_TO_CM; self.render()
+                self.x0_cm = (float(rest[0]) * u.um).to("cm").value; self.render()
             elif cmd == "save":
                 edits = [("flash.v_shock_est_cms", round(self.v_cms)),
                          ("flash.x_shock_0_cm", round(self.x0_cm, 6))]
-                _confirm_write(config_path, edits, no_write)
+                yaml_edit.confirm_write(config_path, edits, no_write)
             else:
                 print("  ? commands: v <km/s> | x <µm> | save | q")
 
@@ -328,7 +243,7 @@ class RegionsTuner:
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
          _ic_index, t_ic_s) = _run_paths(cfg)
-        self.out_dir = _out_dir(cfg, args.output_dir, self.flash_dir)
+        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir)
 
         self.idx = args.snapshot_idx % len(all_files)   # positive plot-file index = config key
         snap_file = all_files[self.idx]
@@ -337,8 +252,8 @@ class RegionsTuner:
         print(f"Loading lineout for dump idx {self.idx} "
               f"({os.path.basename(snap_file)}) …", flush=True)
         self.lo = fu.flash_lineout(snap_file, line_start, line_end)
-        self.x_um  = np.asarray(self.lo["x"].to("cm")) * _CM_TO_UM
-        self.t_ns  = float(self.lo["t_s"] * _S_TO_NS)
+        self.x_um  = self.lo["x"].to("um").value
+        self.t_ns  = float((self.lo["t_s"] * u.s).to("ns").value)
         self.snap_name = os.path.basename(snap_file)
 
         # 2D density slice through the LOS (static image; only the markers move).
@@ -356,15 +271,15 @@ class RegionsTuner:
         per = cfg.get("flash_dump_params", {}).get(self.idx, {})
         flash = cfg.get("flash", {})
         if "x_shock_cm" in per:
-            self.x_shock_um = float(per["x_shock_cm"]) * _CM_TO_UM
+            self.x_shock_um = (float(per["x_shock_cm"]) * u.cm).to("um").value
         else:
             v_cms = float(flash.get("v_shock_est_cms", 0.0))
             x0_cm = float(flash.get("x_shock_0_cm", 0.0))
             # x0_cm is the front at the IC dump time; project to this dump's time
             # exactly as flash_overview does (x0 + v·(t − t_IC)).
-            self.x_shock_um = (x0_cm + v_cms * (self.lo["t_s"] - t_ic_s)) * _CM_TO_UM \
+            self.x_shock_um = ((x0_cm + v_cms * (self.lo["t_s"] - t_ic_s)) * u.cm).to("um").value \
                 if (v_cms or x0_cm) else float(self.x_um.mean())
-        self.x_down_um = float(per["x_downstream_start_cm"]) * _CM_TO_UM \
+        self.x_down_um = (float(per["x_downstream_start_cm"]) * u.cm).to("um").value \
             if "x_downstream_start_cm" in per else self.x_shock_um - 200.0
 
     def _load_slice(self, snap_file, line_start, line_end, slice_axis, halfwidth_um):
@@ -389,7 +304,7 @@ class RegionsTuner:
         ax_v = ds.coordinates.y_axis[ax_idx]   # in-plane vertical   data-axis index
         tr_axis = ax_h if ax_v == los_axis else ax_v        # the transverse in-plane axis
 
-        hw_cm = (halfwidth_um or 0.0) * _UM_TO_CM
+        hw_cm = ((halfwidth_um or 0.0) * u.um).to("cm").value
         def _span(a):  # (width_cm, center_cm) for in-plane axis a
             if a == los_axis:
                 return abs(end[a] - start[a]), 0.5 * (start[a] + end[a])
@@ -416,10 +331,10 @@ class RegionsTuner:
             disp, (los_lo, los_hi), (tr_lo, tr_hi) = img.T, (b[2], b[3]), (b[0], b[1])
 
         los0 = start[los_axis]                              # lineout x is distance from start
-        extent = [(los_lo - los0) * _CM_TO_UM, (los_hi - los0) * _CM_TO_UM,
-                  tr_lo * _CM_TO_UM, tr_hi * _CM_TO_UM]
+        edges_cm = np.array([los_lo - los0, los_hi - los0, tr_lo, tr_hi]) * u.cm
+        extent = list(edges_cm.to("um").value)
         return dict(img=disp, extent=extent,
-                    los_tr_um=float(start[tr_axis]) * _CM_TO_UM,
+                    los_tr_um=(float(start[tr_axis]) * u.cm).to("um").value,
                     tr_label=f"transverse {'xyz'[tr_axis]} [$\\mu$m]")
 
     def render(self):
@@ -467,8 +382,8 @@ class RegionsTuner:
         fig.savefig(self.png, dpi=130, bbox_inches="tight")
         plt.close(fig)
         print(f"  shock={self.x_shock_um:.1f} µm, down={self.x_down_um:.1f} µm  "
-              f"(shock={self.x_shock_um * _UM_TO_CM:.4g} cm, "
-              f"down={self.x_down_um * _UM_TO_CM:.4g} cm)")
+              f"(shock={(self.x_shock_um * u.um).to('cm').value:.4g} cm, "
+              f"down={(self.x_down_um * u.um).to('cm').value:.4g} cm)")
         # Region widths so the user can sanity-check the averaging windows.
         n_dn = int(((self.x_um >= self.x_down_um) & (self.x_um <= self.x_shock_um)).sum())
         n_up = int((self.x_um > self.x_shock_um).sum())
@@ -524,11 +439,11 @@ class RegionsTuner:
             elif cmd == "save":
                 edits = [
                     (f"flash_dump_params.{self.idx}.x_shock_cm",
-                     round(self.x_shock_um * _UM_TO_CM, 6)),
+                     round((self.x_shock_um * u.um).to("cm").value, 6)),
                     (f"flash_dump_params.{self.idx}.x_downstream_start_cm",
-                     round(self.x_down_um * _UM_TO_CM, 6)),
+                     round((self.x_down_um * u.um).to("cm").value, 6)),
                 ]
-                _confirm_write(config_path, edits, no_write)
+                yaml_edit.confirm_write(config_path, edits, no_write)
             else:
                 print("  ? commands: shock <µm> | down <µm> | save | q")
 

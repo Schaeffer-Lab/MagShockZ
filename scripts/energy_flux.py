@@ -39,6 +39,8 @@ import os
 import sys
 from dataclasses import dataclass
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -262,7 +264,7 @@ def main():
     print(f"\nSaved → {out_path}")
 
     if not args.no_plot:
-        disp = plot_style.build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
+        disp = plot_style.build_units_from_args(args, cfg)
         out_dir = args.output_dir or os.path.dirname(os.path.abspath(out_path))
         fig_path = plot(result, out_dir, disp)
         print(f"Saved → {fig_path}")

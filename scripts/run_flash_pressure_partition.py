@@ -44,14 +44,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 sys.path.insert(0, os.path.join(_HERE, "..", "init_nopython"))
 
+import unyt as u
+
 import analysis_utils
 import plot_style
 import flash_utils as fu
 import flash_energy_partition as fep
-
-_CM_TO_UM  = 1e4
-_S_TO_NS   = 1e9
-_CM_TO_KMS = 1e-5
 
 # Momentum-flux (total-pressure) channels — the conserved RH quantity.
 CHANNELS = ["p_ram", "p_th_e", "p_th_i", "p_mag"]
@@ -134,7 +132,7 @@ def main():
                 x_shock_cm = float(d["x_shock_det_cm"][snap_idx_mod])
             if np.isnan(x_shock_cm) and "x_shock_0_cm" in d.files:
                 # Fit stored as x_shock(t) = x_shock_0_cm + v_shock_cms * t[s].
-                t_snap_s = float(d["time_ns"][snap_idx_mod]) / _S_TO_NS
+                t_snap_s = (float(d["time_ns"][snap_idx_mod]) * u.ns).to("s").value
                 x_shock_cm = (float(d["x_shock_0_cm"])
                               + float(d["v_shock_cms"]) * t_snap_s)
             if "v_shock_cms" in d.files:
@@ -162,9 +160,9 @@ def main():
     print(f"Config         : {args.config}")
     print(f"FLASH dir      : {flash_dir}")
     print(f"Snapshot       : {os.path.basename(snap_file)}")
-    print(f"x_shock        : {x_shock_cm * _CM_TO_UM:.2f} µm")
-    print(f"x_downstream   : {x_ds_start * _CM_TO_UM:.2f} µm")
-    print(f"v_shock        : {v_shock_cms * _CM_TO_KMS:.2f} km/s")
+    print(f"x_shock        : {(x_shock_cm * u.cm).to('um').value:.2f} µm")
+    print(f"x_downstream   : {(x_ds_start * u.cm).to('um').value:.2f} µm")
+    print(f"v_shock        : {(v_shock_cms * u.cm / u.s).to('km/s').value:.2f} km/s")
 
     # ------------------------------------------------------------------
     # Lineout
@@ -173,8 +171,8 @@ def main():
     lo = fu.flash_lineout(snap_file, line_start, line_end)
 
     x_cm   = lo["x"].to("cm").value
-    x_um   = x_cm * _CM_TO_UM
-    t_ns   = lo["t_s"] * _S_TO_NS
+    x_um   = lo["x"].to("um").value
+    t_ns   = (lo["t_s"] * u.s).to("ns").value
 
     # ------------------------------------------------------------------
     # Momentum-flux (pressure) channels  (unyt arrays in dyn/cm²)
@@ -230,7 +228,7 @@ def main():
 
     # Panel A: stacked-area momentum flux vs distance from the front
     # (0 = shock, +ve upstream/ambient, −ve downstream/shocked).
-    x_rel_um = (x_cm - x_shock_cm) * _CM_TO_UM
+    x_rel_um = ((x_cm - x_shock_cm) * u.cm).to("um").value
     order    = np.argsort(x_rel_um)
     x_sorted = x_rel_um[order]
     stack = np.zeros_like(x_sorted)
@@ -244,7 +242,7 @@ def main():
     axA.set_ylabel(r"momentum flux [dyn cm$^{-2}$]")
     axA.set_title(
         f"Momentum-flux partition (shock rest frame, "
-        f"$v_{{sh}}$ = {v_shock_cms * _CM_TO_KMS:.0f} km/s)\n"
+        f"$v_{{sh}}$ = {(v_shock_cms * u.cm / u.s).to('km/s').value:.0f} km/s)\n"
         f"{os.path.basename(snap_file)}  (t = {t_ns:.2f} ns)"
     )
     axA.legend(loc="upper right", fontsize=9)

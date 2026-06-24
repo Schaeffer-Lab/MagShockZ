@@ -56,7 +56,7 @@ npm-debug.log
 *.swo
 
 
-# Derived analysis results (regenerate with scripts/compute_energy_partition.py)
+# Derived analysis results (regenerate with the scripts/ analysis suite)
 results/
 
 # Simulation data #
@@ -71,5 +71,5 @@ results/
 */tmp/
 *.mp4
 *.png
-# Generated OSIRIS input files (regenerate with init_python/FLASH_OSIRIS_define.py)
+# Generated OSIRIS input files (regenerate with `python -m flash_osiris.generator`)
 input_files/

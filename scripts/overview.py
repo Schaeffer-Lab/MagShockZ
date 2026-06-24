@@ -176,7 +176,7 @@ def main():
 
     cfg = analysis_utils.load_config(args.config)
     sim_dir = cfg["sim_dir"]
-    disp = plot_style.build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
+    disp = plot_style.build_units_from_args(args, cfg)
 
     layout = analysis_utils.detect_layout(sim_dir)
     hw = args.transverse_hw

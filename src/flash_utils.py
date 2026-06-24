@@ -16,8 +16,10 @@ The lineout returns **unyt arrays** (yt.units) so the units travel with the data
   time       : s    (scalar float, not an array)
 """
 
+import functools
 import glob
 import os
+from multiprocessing import Pool
 
 import numpy as np
 import yt
@@ -122,6 +124,38 @@ def flash_lineout(
         "rho":    rho,
         "t_s":    t_s,
     }
+
+
+# ---------------------------------------------------------------------------
+# Multi-dump lineout loading
+# ---------------------------------------------------------------------------
+
+def _load_one(path, start_pt, end_pt):
+    """Picklable multiprocessing worker: one independent dump → its lineout dict."""
+    return flash_lineout(path, start_pt, end_pt)
+
+
+def load_lineouts(paths: list, start_pt: tuple, end_pt: tuple, nprocs: int = 1) -> list:
+    """Load each dump's lineout (in input order), fanning the dumps across processes.
+
+    ``paths`` is a list of FLASH plot-file paths; ``start_pt`` / ``end_pt`` are the LOS
+    endpoints in cm.  Each dump is independent, so with ``nprocs > 1`` they load in
+    parallel via :class:`multiprocessing.Pool` (``imap`` preserves order, so ``out[i]``
+    still matches ``paths[i]``).  Returns the list of per-dump dicts from
+    :func:`flash_lineout`, printing a ``[i/N] <file>`` progress line per dump.
+    """
+    worker = functools.partial(_load_one, start_pt=start_pt, end_pt=end_pt)
+    out = []
+    if nprocs <= 1:
+        for i, p in enumerate(paths):
+            print(f"  [{i + 1:3d}/{len(paths)}] {os.path.basename(p)}", flush=True)
+            out.append(worker(p))
+        return out
+    with Pool(nprocs) as pool:
+        for i, lo in enumerate(pool.imap(worker, paths)):
+            print(f"  [{i + 1:3d}/{len(paths)}] {os.path.basename(paths[i])}", flush=True)
+            out.append(lo)
+    return out
 
 
 # ---------------------------------------------------------------------------
