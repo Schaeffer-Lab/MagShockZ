@@ -163,6 +163,18 @@ class MovieMaker:
         """True if ``path`` directly contains ``*.h5`` frames."""
         return any(Path(path).glob("*.h5"))
 
+    @staticmethod
+    def _maybe_flip(arr):
+        """Return ``-arr`` if every element is ≤ 0 (e.g. electron phase-space p1x1).
+
+        This keeps log-scale plotting viable for diagnostics whose values are
+        conventionally negative (flipped sign is physically equivalent for the
+        visualisation, and the title will still show the correct field name).
+        """
+        if np.all(arr <= 0):
+            return -arr
+        return arr
+
     def _auto_vminmax(self, frames):
         """Set vmin/vmax from the middle frame unless already overridden.
 
@@ -171,7 +183,9 @@ class MovieMaker:
         """
         if self.vmin is not None and self.vmax is not None:
             return
-        arr = np.asarray(osh5io.read_h5(str(frames[len(frames) // 2])), dtype=float)
+        arr = self._maybe_flip(
+            np.asarray(osh5io.read_h5(str(frames[len(frames) // 2])), dtype=float)
+        )
         if self.log:
             pos = arr[arr > 0]
             lo = float(pos.min()) if pos.size else 1e-12
@@ -260,6 +274,8 @@ class MovieMaker:
 
         try:
             data = self._crop_and_normalize(osh5io.read_h5(path_to_frame))
+            if np.all(np.asarray(data, dtype=float) <= 0):
+                data = -data
             label_kw = self._label_kwargs(data)
 
             if data.ndim == 1:
