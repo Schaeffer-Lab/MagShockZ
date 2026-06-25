@@ -10,7 +10,7 @@ dim: 1
 inputfile_name: magshockz_rqm1_dx0.3_ppc500_g20
 reference_density: 5.0e18
 rqm_factor: 1
-dx: 0.3
+dx: 0.1
 ppc: 500
 tmax_gyroperiods: 20
 algorithm: cuda
@@ -44,8 +44,8 @@ diagnostics:
   phasespaces: [p1x1, p2x1, p3x1, gx1]
   e_ps_pmin: [-1, -1, -0.5]
   e_ps_pmax: [1, 1, 0.5]
-  i_ps_pmin: [-0.1, -0.1, -0.05]
-  i_ps_pmax: [0.1, 0.1, 0.05]
+  i_ps_pmin: [-0.15, -0.15, -0.05]
+  i_ps_pmax: [0.15, 0.15, 0.05]
   ps_np: [4096, 4096, 4096]
   ps_ngamma: 128
   ps_gammamax: 3.0

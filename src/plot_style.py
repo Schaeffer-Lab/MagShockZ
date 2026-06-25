@@ -248,6 +248,18 @@ def build_units(units, *, cfg=None, sim_dir=None, config_path=None) -> DisplayUn
     return DisplayUnits("ion", d_i, T_ci, r"d_i", r"T_{ci}")
 
 
+def build_units_from_args(args, cfg) -> DisplayUnits:
+    """:func:`build_units` for a script's parsed ``args`` + its ``cfg``.
+
+    Wraps the one idiom every ``--config``-driven analysis script repeats —
+    ``build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))`` —
+    so call sites drop the repeated ``os.path.abspath`` boilerplate.  ``args`` must
+    carry ``.units`` (from :func:`add_units_arg`) and ``.config`` (the config path).
+    """
+    import os
+    return build_units(args.units, cfg=cfg, config_path=os.path.abspath(args.config))
+
+
 def _wholebox_field_magnitude(sim_dir) -> float:
     """Median |B'| over the earliest available field dump [OSIRIS B_0 units].
 

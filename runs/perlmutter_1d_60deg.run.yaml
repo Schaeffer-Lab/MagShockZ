@@ -1,0 +1,78 @@
+# Off-channel angled-lineout run: rqm_factor = 100 (reduced ion mass), consistent with
+# the production 90 deg lineout (perlmutter_1d.run.yaml). The 1D lineout is tilted to
+# 60 deg from the x-axis (instead of the original 90 deg / pure +y) so it does NOT pass
+# through the laser channel. The laser propagates along y at x ~= 0, leaving an evacuated
+# low-density column there; the original lineout sat exactly on x=0 and ran straight up
+# that channel. Rotating the ray to 60 deg sweeps it off-axis into +x as it climbs in y,
+# missing the channel for most of its length.
+#
+# Geometry: same start point (0, 0.07) cm and same lineout distance (0.63 cm) as the
+# original, rotated about the start point to theta = 60 deg:
+#   end.x = 0    + 0.63*cos(60) = 0.315
+#   end.y = 0.07 + 0.63*sin(60) = 0.6156
+# theta = arctan2(dy, dx) and distance = hypot(dx, dy) are derived by the generator.
+#
+#   conda activate osiris2
+#   python -m flash_osiris.generator --config ../runs/perlmutter_1d_60deg.run.yaml
+
+data_path: /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009
+dim: 1
+inputfile_name: magshockz_rqm100_dx0.1_ppc500_g40_60deg
+reference_density: 5.0e18
+rqm_factor: 100
+dx: 0.1
+ppc: 500
+tmax_gyroperiods: 40
+algorithm: cuda
+node_number: [4]
+num_threads: 1
+n_dump_total: 1024
+restart: false
+
+# Populations separated by FLASH material; rename to the historical al/si
+# (cham=Al chamber, targ=Si target). See perlmutter_1d.run.yaml for details.
+species_names: {cham: al, targ: si}
+# Analysis-only metadata (mean charge Z per species). NOTE: does NOT affect the deck --
+# the generator derives ion rqm straight from FLASH ye/sumy, so ionization is already
+# correct in the run. These are labels for downstream analysis only.
+#
+# The original {al: 13, si: 14} were taken from the on-channel (90 deg) lineout, where
+# the laser-heated chamber Al is fully stripped (Z=13). OFF-channel, the cold chamber
+# gas is only partially ionized -- measured here from FLASH (Z = ye/sumy, edens-weighted)
+# along THIS 60 deg ray:
+#   Si (target): Z = 14.0 everywhere (stays fully stripped) -> unchanged
+#   Al (chamber): full-ray Z ~= 9.8 | upstream-half ~= 6.7 | far-upstream ~= 5.7 (range 5.1-13.3)
+#                 (downstream/compressed Al re-ionizes toward ~13, lifting the full-ray mean)
+# al: 6  -> upstream (pre-shock) chamber mean, the physically relevant value for shock analysis
+# al: 10 -> whole-ray edens-weighted effective value (matches the deck's ~50x100 rqm)
+charge_states: {al: 6, si: 14}   # upstream chamber mean; see note above for full-ray ~10
+
+# 1D lineout endpoints in cm (x y z of the z-midplane). 60 deg off-channel ray:
+# start on-axis at the upstream edge, end offset in +x to clear the laser channel.
+geometry:
+  start_point: [0, 0.07, 0]
+  end_point: [0.315, 0.6156, 0]
+
+solver:
+  vpml_bnd_size: 100
+  emf_boundary: [pmc, vpml]
+  part_boundary: [thermal, thermal]
+  interpolation: cubic
+  smooth_type: binomial
+  smooth_order: 2
+
+diagnostics:
+  n_ave: 6
+  emf_reports: [b1, b2, b3, e1, e2, e3]
+  reports: [charge, j1, j2, j3, q1, q2, q3]
+  rep_udist: [uth1, uth2, ufl1, ufl2]
+  phasespaces: [p1x1, p2x1, p3x1, gx1]
+  e_ps_pmin: [-1, -1, -0.5]
+  e_ps_pmax: [1, 1, 0.5]
+  i_ps_pmin: [-0.15, -0.15, -0.05]
+  i_ps_pmax: [0.15, 0.15, 0.05]
+  ps_np: [4096, 4096, 4096]
+  ps_ngamma: 128
+  ps_gammamax: 3.0
+  ps_nx: 1024
+  ps_ny: 512

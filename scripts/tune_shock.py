@@ -60,78 +60,9 @@ import plot_style
 import yaml_edit
 
 
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-def _out_dir(cfg, override):
-    sim_dir = cfg["sim_dir"]
-    out = override or os.path.join(_HERE, "..", "results",
-                                   os.path.basename(sim_dir.rstrip("/")))
-    os.makedirs(out, exist_ok=True)
-    return out
-
-
-def _ask_yes(prompt):
-    try:
-        return input(prompt).strip().lower() in ("y", "yes")
-    except EOFError:
-        return False
-
-
-def _confirm_write(config_path, edits, no_write):
-    """Show each (dotted_path, value) edit, apply to the YAML text, ask y/N, write.
-
-    Each edit is applied via the comment-preserving yaml_edit functions and verified
-    to round-trip before the file is touched.  Returns True if written.
-    """
-    if no_write:
-        print("  [--no-write] would write:")
-        for path, val in edits:
-            print(f"    {path} = {val}")
-        return False
-
-    with open(config_path) as f:
-        text = f.read()
-    new_text = text
-    for path, val in edits:
-        parts = path.split(".")
-        if parts[0] == "dump_params":
-            new_text = yaml_edit.set_dump_param(new_text, int(parts[1]), parts[2], val)
-        else:
-            new_text = yaml_edit.set_scalar(new_text, path, val)
-        yaml_edit.assert_roundtrip(new_text, path, _normalize(val))
-
-    # Show the line-level diff for the user to confirm.
-    print("  pending edits:")
-    old_lines = text.split("\n")
-    new_lines = new_text.split("\n")
-    for i, (a, b) in enumerate(_aligned_diff(old_lines, new_lines)):
-        if a != b:
-            print(f"    - {a}")
-            print(f"    + {b}")
-    if not _ask_yes(f"  write these to {os.path.basename(config_path)}? [y/N] "):
-        print("  not written.")
-        return False
-    with open(config_path, "w") as f:
-        f.write(new_text)
-    print(f"  wrote → {config_path}")
-    return True
-
-
-def _normalize(val):
-    """Match yaml_edit's compact rendering when verifying the round-trip."""
-    if isinstance(val, float) and val.is_integer():
-        return int(val)
-    return val
-
-
-def _aligned_diff(old, new):
-    """Pair lines for display; insertions show against an empty old line."""
-    n = max(len(old), len(new))
-    old = old + [""] * (n - len(old))
-    new = new + [""] * (n - len(new))
-    return list(zip(old, new))
+# The interactive write-back plumbing (out_dir / confirm_write / …) is shared with
+# scripts/tune_flash_shock.py and lives in src/yaml_edit.py next to the comment-
+# preserving scalar editors it wraps.
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +76,7 @@ class TrajectoryTuner:
         self.cfg = cfg
         self.sim_dir = cfg["sim_dir"]
         self.layout = analysis_utils.detect_layout(self.sim_dir)
-        self.out_dir = _out_dir(cfg, args.output_dir)
+        self.out_dir = yaml_edit.out_dir(cfg["sim_dir"], args.output_dir)
         self.png = os.path.join(self.out_dir, "tune_trajectory.png")
 
         sim = analysis_utils.run_from_config(cfg)
@@ -264,7 +195,7 @@ class TrajectoryTuner:
                          ("shock.x_shock_0", round(self.x_shock_0, 1))]
                 if np.isfinite(self.T_ci):
                     edits.append(("t_ci", round(float(self.T_ci), 2)))
-                _confirm_write(config_path, edits, no_write)
+                yaml_edit.confirm_write(config_path, edits, no_write)
             else:
                 print("  ? commands: v <val> | x <val> | save | q")
 
@@ -280,7 +211,7 @@ class RegionsTuner:
         self.cfg = cfg
         self.sim_dir = cfg["sim_dir"]
         self.layout = analysis_utils.detect_layout(self.sim_dir)
-        self.out_dir = _out_dir(cfg, args.output_dir)
+        self.out_dir = yaml_edit.out_dir(cfg["sim_dir"], args.output_dir)
         self.t_val = args.dump
         self.png = os.path.join(self.out_dir, f"tune_regions_t{self.t_val:06d}.png")
 
@@ -362,7 +293,7 @@ class RegionsTuner:
                 if self.x_up is not None:
                     ncells = int(round(abs(self.x_up - self.x_shock) / self.dx))
                     edits.append(("upstream_window_ncells", ncells))
-                _confirm_write(config_path, edits, no_write)
+                yaml_edit.confirm_write(config_path, edits, no_write)
             else:
                 print("  ? commands: shock <x> | down <x> | up <x> | save | q")
 

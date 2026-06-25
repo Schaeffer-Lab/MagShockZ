@@ -32,10 +32,8 @@ Usage
 """
 
 import argparse
-import functools
 import os
 import sys
-from multiprocessing import Pool
 
 import matplotlib
 matplotlib.use("Agg")
@@ -49,26 +47,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 sys.path.insert(0, os.path.join(_HERE, "..", "init_nopython"))
 
+import unyt as u
+
 import analysis_utils
 import plot_style
 import flash_utils as fu
 import perpendicular_shock as ps
-
-# Unit conversion factors
-_CM_TO_UM  = 1e4      # cm → µm
-_S_TO_NS   = 1e9      # s  → ns
-_CM_TO_KMS = 1e-5     # cm/s → km/s
-
-
-# ---------------------------------------------------------------------------
-# Parallel lineout loading
-# ---------------------------------------------------------------------------
-
-def _load_one(path, line_start, line_end):
-    """Module-level worker so multiprocessing can pickle it.  Each call loads
-    one FLASH dump and extracts its lineout — fully independent of every other
-    dump, so the dumps fan out across worker processes."""
-    return fu.flash_lineout(path, line_start, line_end)
 
 
 # ---------------------------------------------------------------------------
@@ -81,10 +65,10 @@ def assemble_streak(lineouts: list, field: str):
     Handles differing spatial grid sizes by interpolating all lineouts onto a
     common grid (the first dump's grid, which covers the range of all dumps).
     """
-    times = np.array([lo["t_s"] * _S_TO_NS for lo in lineouts])
+    times = np.array([(lo["t_s"] * u.s).to("ns").value for lo in lineouts])
 
     # lineouts hold unyt arrays; np.asarray gives the plain CGS magnitude.
-    xs = [np.asarray(lo["x"]) for lo in lineouts]   # cm
+    xs = [np.asarray(lo["x"].to("cm")) for lo in lineouts]   # cm
 
     # Find the common spatial range and resolution
     x_min = min(x.min() for x in xs)
@@ -100,7 +84,7 @@ def assemble_streak(lineouts: list, field: str):
         Z_list.append(y_interp)
 
     Z = np.stack(Z_list, axis=0)   # [n_dumps, n_x]
-    x_um = x_common * _CM_TO_UM
+    x_um = (x_common * u.cm).to("um").value
     return Z, times, x_um
 
 
@@ -302,7 +286,8 @@ def main():
     print(f"Line of sight: {line_start}  →  {line_end}  [cm]")
     print(f"n₀         : {ref_density:.2e} cm⁻³")
     print(f"rqm_factor : {rqm_factor}")
-    print(f"v_shock_est: {v_shock_est * _CM_TO_KMS:.1f} km/s   x_shock_0: {x_shock_0_cm * _CM_TO_UM:.1f} µm  (from config flash:)")
+    print(f"v_shock_est: {(v_shock_est * u.cm / u.s).to('km/s').value:.1f} km/s   "
+          f"x_shock_0: {(x_shock_0_cm * u.cm).to('um').value:.1f} µm  (from config flash:)")
     print(f"Dumps      : {len(dump_files)}  ({os.path.basename(dump_files[0])} … {os.path.basename(dump_files[-1])})")
 
     # ------------------------------------------------------------------
@@ -317,22 +302,7 @@ def main():
     nprocs = min(nprocs, len(dump_files))
 
     print(f"\nLoading lineouts … ({nprocs} process{'es' if nprocs > 1 else ''})", flush=True)
-    worker = functools.partial(
-        _load_one,
-        line_start=line_start, line_end=line_end,
-    )
-    if nprocs == 1:
-        lineouts = []
-        for i, path in enumerate(dump_files):
-            print(f"  [{i+1:3d}/{len(dump_files)}]  {os.path.basename(path)}", flush=True)
-            lineouts.append(worker(path))
-    else:
-        # imap preserves input order, so lineouts[i] still matches dump_files[i].
-        with Pool(nprocs) as pool:
-            lineouts = []
-            for i, lo in enumerate(pool.imap(worker, dump_files)):
-                print(f"  [{i+1:3d}/{len(dump_files)}]  {os.path.basename(dump_files[i])}", flush=True)
-                lineouts.append(lo)
+    lineouts = fu.load_lineouts(dump_files, line_start, line_end, nprocs)
 
     # ------------------------------------------------------------------
     # Assemble streaks
@@ -342,7 +312,7 @@ def main():
     Te_streak, _,       _    = assemble_streak(lineouts, "Te")
     Ti_streak, _,       _    = assemble_streak(lineouts, "Ti")
 
-    x_cm = x_um / _CM_TO_UM
+    x_cm = (x_um * u.um).to("cm").value
 
     # ------------------------------------------------------------------
     # Shock-front detection + trajectory fit
@@ -374,7 +344,7 @@ def main():
     x_det_cm      = x_pred_cm.copy()      # front at each dump = the config line
 
     # Shock velocity in km/s for display
-    v_shock_kms = v_shock_fit * _CM_TO_KMS
+    v_shock_kms = (v_shock_fit * u.cm / u.s).to("km/s").value
 
     # ------------------------------------------------------------------
     # Mach numbers (from upstream average at the snapshot dump)
@@ -399,7 +369,7 @@ def main():
 
     print("\n--- Shock front (from config flash:) ---")
     print(f"  v_shock = {v_shock_kms:.2f} km/s   "
-          f"x₀(t=0) = {x_shock_0_fit * _CM_TO_UM:.2f} µm")
+          f"x₀(t=0) = {(x_shock_0_fit * u.cm).to('um').value:.2f} µm")
     print("\n--- Upstream Mach numbers ---")
     print(f"  n₀  = {up_ne:.3e} cm⁻³   B  = {up_B:.2f} G   "
           f"Tₑ = {up_Te:.1f} eV   Tᵢ = {up_Ti:.1f} eV")
@@ -422,7 +392,7 @@ def main():
     src = "hand-fit regions, median" if use_hand_fit else "auto front, median"
     print(f"\n--- Mass-continuity shock speed (per dump; {src}) ---")
     if mc_finite.sum():
-        vsh_kms_all = mc["v_sh"][mc_finite] * _CM_TO_KMS
+        vsh_kms_all = (mc["v_sh"][mc_finite] * u.cm / u.s).to("km/s").value
         print(f"  v_sh = {np.median(vsh_kms_all):.1f} km/s (median)  "
               f"(range {vsh_kms_all.min():.0f}–{vsh_kms_all.max():.0f}, "
               f"{mc_finite.sum()}/{len(lineouts)} dumps)")
@@ -450,16 +420,16 @@ def main():
 
     print(f"\n--- Shock speed over the {lo_ns:.1f}–{hi_ns:.1f} ns window ---")
     if np.isfinite(v_traj_cms):
-        print(f"  hand-fit trajectory   v_shock = {v_traj_cms * _CM_TO_KMS:.1f} km/s   "
-              f"x0(t=0) = {x0_traj_cm * _CM_TO_UM:.1f} µm   ({in_win.sum()} fronts)")
+        print(f"  hand-fit trajectory   v_shock = {(v_traj_cms * u.cm / u.s).to('km/s').value:.1f} km/s   "
+              f"x0(t=0) = {(x0_traj_cm * u.cm).to('um').value:.1f} µm   ({in_win.sum()} fronts)")
     else:
         print("  hand-fit trajectory   : <2 fronts in window, no linear fit")
     if np.isfinite(mc_med_win_cms):
-        print(f"  mass-continuity median v_shock = {mc_med_win_cms * _CM_TO_KMS:.1f} km/s   "
+        print(f"  mass-continuity median v_shock = {(mc_med_win_cms * u.cm / u.s).to('km/s').value:.1f} km/s   "
               f"({mc_in_win.sum()} dumps)")
 
     # Shock front line (config trajectory) in µm units for the streak plots.
-    x_um_pred   = x_pred_cm * _CM_TO_UM
+    x_um_pred   = (x_pred_cm * u.cm).to("um").value
     config_line = (time_ns, x_um_pred,
                    dict(color="white", ls="-", lw=1.6),
                    f"config  v={v_shock_kms:.1f} km/s  $M_A$={float(mach['M_A']):.2f}")
@@ -501,22 +471,25 @@ def main():
     # ------------------------------------------------------------------
     figv, (axv, axin) = plt.subplots(1, 2, figsize=(15, 5.5))
     t_fin   = time_ns[mc_finite]
-    vsh_fin = mc["v_sh"][mc_finite] * _CM_TO_KMS
+    vsh_fin = (mc["v_sh"][mc_finite] * u.cm / u.s).to("km/s").value
+    v_shock_est_kms = (v_shock_est * u.cm / u.s).to("km/s").value
 
     axv.axvspan(lo_ns, hi_ns, color="0.88", zorder=0,
                 label=f"fit window {lo_ns:.0f}–{hi_ns:.0f} ns")
     axv.plot(t_fin, vsh_fin, "o-", color="tab:red", label=r"mass-continuity $v_{sh}$")
-    axv.axhline(v_shock_est * _CM_TO_KMS, color="0.5", ls="--",
-                label=f"config $v_{{sh}}$ = {v_shock_est * _CM_TO_KMS:.0f} km/s")
+    axv.axhline(v_shock_est_kms, color="0.5", ls="--",
+                label=f"config $v_{{sh}}$ = {v_shock_est_kms:.0f} km/s")
     if np.isfinite(v_traj_cms):
-        axv.axhline(v_traj_cms * _CM_TO_KMS, color="tab:blue", ls="-", lw=1.8,
-                    label=f"hand-fit trajectory = {v_traj_cms * _CM_TO_KMS:.0f} km/s")
+        v_traj_kms = (v_traj_cms * u.cm / u.s).to("km/s").value
+        axv.axhline(v_traj_kms, color="tab:blue", ls="-", lw=1.8,
+                    label=f"hand-fit trajectory = {v_traj_kms:.0f} km/s")
     if np.isfinite(mc_med_win_cms):
-        axv.axhline(mc_med_win_cms * _CM_TO_KMS, color="tab:red", ls=":", lw=1.8,
-                    label=f"mass-cont. median = {mc_med_win_cms * _CM_TO_KMS:.0f} km/s")
+        mc_med_win_kms = (mc_med_win_cms * u.cm / u.s).to("km/s").value
+        axv.axhline(mc_med_win_kms, color="tab:red", ls=":", lw=1.8,
+                    label=f"mass-cont. median = {mc_med_win_kms:.0f} km/s")
     accel_note = ""
     if mc_in_win.sum() >= 2:                     # is the front constant-velocity?
-        tw, vw = time_ns[mc_in_win], mc["v_sh"][mc_in_win] * _CM_TO_KMS
+        tw, vw = time_ns[mc_in_win], (mc["v_sh"][mc_in_win] * u.cm / u.s).to("km/s").value
         b, a = np.polyfit(tw, vw, 1)             # v_sh = a + b·t  [km/s, ns]
         accel_note = f"   window slope = {b:+.1f} km/s/ns ({'accel' if b > 0 else 'decel'}.)"
     axv.set_xlabel("$t$ [ns]")
@@ -526,8 +499,10 @@ def main():
     axv.legend(fontsize=9)
 
     # Inputs panel: the region-averaged velocities and compression that feed v_sh.
-    axin.plot(t_fin, mc["v_up"][mc_finite] * _CM_TO_KMS, "o-", color="tab:blue",  label=r"$v_{up}$")
-    axin.plot(t_fin, mc["v_dn"][mc_finite] * _CM_TO_KMS, "o-", color="tab:green", label=r"$v_{dn}$")
+    axin.plot(t_fin, (mc["v_up"][mc_finite] * u.cm / u.s).to("km/s").value,
+              "o-", color="tab:blue",  label=r"$v_{up}$")
+    axin.plot(t_fin, (mc["v_dn"][mc_finite] * u.cm / u.s).to("km/s").value,
+              "o-", color="tab:green", label=r"$v_{dn}$")
     axin.set_xlabel("$t$ [ns]")
     axin.set_ylabel(r"$v$ [km/s]")
     axin.grid(alpha=0.3)
@@ -552,9 +527,9 @@ def main():
     # ------------------------------------------------------------------
     snap_file = dump_files[snap_idx]
     snap_lo   = lineouts[snap_idx]
-    snap_t_ns = float(snap_lo["t_s"] * _S_TO_NS)
-    x_um_snap = np.asarray(snap_lo["x"]) * _CM_TO_UM
-    x_shock_um = x_shock_snap * _CM_TO_UM
+    snap_t_ns = float((snap_lo["t_s"] * u.s).to("ns").value)
+    x_um_snap = snap_lo["x"].to("um").value
+    x_shock_um = (x_shock_snap * u.cm).to("um").value
 
     # Save yt slice plots separately
     print(f"\nCreating yt slice plots …", flush=True)

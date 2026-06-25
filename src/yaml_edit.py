@@ -24,6 +24,7 @@ Supported shapes (all that the MagShockZ analysis config needs):
 block, or the ``dump_params:`` section) when it does not yet exist.
 """
 
+import os
 import re
 
 import yaml
@@ -216,4 +217,92 @@ def assert_roundtrip(text, dotted_path, expected):
             seg = int(seg)
         node = node[seg]
     assert node == expected, f"{dotted_path} = {node!r}, expected {expected!r}"
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Shared interactive-tuner helpers
+# ---------------------------------------------------------------------------
+# ``tune_shock.py`` (OSIRIS) and ``tune_flash_shock.py`` (FLASH) drive the same
+# "show a trial value, then write it back to the comment-rich config" loop, so the
+# loop's plumbing lives here next to the set_scalar / set_dump_param edits it wraps.
+# These do touch the filesystem / stdin, unlike the pure str->str editors above, but
+# they add no new dependency (stdlib only) so the module stays CI-importable.
+
+def out_dir(base_dir, override=None):
+    """Resolve (and create) a tuner's results output directory.
+
+    Defaults to ``<repo>/results/<basename of base_dir>`` (``base_dir`` is the run's
+    sim/FLASH directory whose basename names the results subdir); ``override`` wins
+    when given.
+    """
+    out = override or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "results",
+        os.path.basename(base_dir.rstrip("/")))
+    os.makedirs(out, exist_ok=True)
+    return out
+
+
+def ask_yes(prompt):
+    """Prompt for a y/N confirmation; treat EOF (piped/empty stdin) as 'no'."""
+    try:
+        return input(prompt).strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def normalize_scalar(val):
+    """Match ``_fmt``'s compact rendering when verifying a round-trip."""
+    if isinstance(val, float) and val.is_integer():
+        return int(val)
+    return val
+
+
+def aligned_diff(old, new):
+    """Pair lines for display; insertions show against an empty old line."""
+    n = max(len(old), len(new))
+    old = old + [""] * (n - len(old))
+    new = new + [""] * (n - len(new))
+    return list(zip(old, new))
+
+
+def confirm_write(config_path, edits, no_write=False):
+    """Apply ``edits`` (``(dotted_path, value)`` pairs) to a config YAML, then write.
+
+    A path whose first segment ends with ``dump_params`` (``dump_params`` for the
+    OSIRIS config, ``flash_dump_params`` for FLASH) is treated as
+    ``<section>.<idx>.<key>`` and routed to :func:`set_dump_param`; everything else is
+    a plain :func:`set_scalar`.  Each edit is verified to round-trip before the file is
+    touched; the line-level diff is shown and a y/N confirmation is asked (unless
+    ``no_write``, which only prints the would-be edits).  Returns True iff written.
+    """
+    if no_write:
+        print("  [--no-write] would write:")
+        for path, val in edits:
+            print(f"    {path} = {val}")
+        return False
+
+    with open(config_path) as f:
+        text = f.read()
+    new_text = text
+    for path, val in edits:
+        parts = path.split(".")
+        if len(parts) == 3 and parts[0].endswith("dump_params"):
+            new_text = set_dump_param(new_text, int(parts[1]), parts[2], val,
+                                      section=parts[0])
+        else:
+            new_text = set_scalar(new_text, path, val)
+        assert_roundtrip(new_text, path, normalize_scalar(val))
+
+    print("  pending edits:")
+    for a, b in aligned_diff(text.split("\n"), new_text.split("\n")):
+        if a != b:
+            print(f"    - {a}")
+            print(f"    + {b}")
+    if not ask_yes(f"  write these to {os.path.basename(config_path)}? [y/N] "):
+        print("  not written.")
+        return False
+    with open(config_path, "w") as f:
+        f.write(new_text)
+    print(f"  wrote → {config_path}")
     return True
