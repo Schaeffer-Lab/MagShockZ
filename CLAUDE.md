@@ -177,43 +177,35 @@ Consequences used throughout the analysis (`src/energy_partition.py`,
   So field and particle energies share the same `n_0 m_e c²` units and are directly
   comparable. Fields look small only because `u_ram/u_B = v²/v_A² = M_A²` (≈100 here).
 
-## FLASH magnetic-field bug (sqrt(4π)) — always load with `load_for_osiris`
+## FLASH magnetic field (unitsystem = none): the sqrt(4π) is REAL — do not strip it
 
-FLASH writes B in this setup **directly in Gauss**, but yt's FLASH frontend assumes the
-USM convention (`B_code = B_Gauss/sqrt(4π)`) and sets `ds.magnetic_unit = sqrt(4π) G`. A
-bare `yt.load(...)` therefore inflates every `.to("G")` — and every B-derived field — by
-`sqrt(4π) ≈ 3.545`, which put the upstream field at ~25 T instead of the true ~7 T. The
-fix lives in `flash2osiris/flash_osiris/yt_plugin.py::load_for_osiris`, which overrides
-`magnetic_unit` to `1 G` (raw code value taken as Gauss) at the source — so `.to("G")`,
-`Ex/Ey/Ez`, `Jx/Jy/Jz`, **and the B written into the OSIRIS deck** are all correct.
-**Always load FLASH dumps with `yt.load_for_osiris` (or `flash_utils`, which wraps it) —
-never bare `yt.load`.** All FLASH scripts/`src/flash_utils.py` already do.
+These FLASH runs set the runtime parameter `unitsystem = "none"`, i.e. the rationalized
+MHD convention where the magnetic pressure is `B_code²/2` (the 4π is absorbed into the
+field variable). The **physical Gaussian field**, whose `v_A = B/sqrt(4π ρ)` reproduces
+the Alfvén speed FLASH actually evolved, is therefore `B_Gauss = sqrt(4π)·B_code ≈
+3.545·B_code`. yt's FLASH frontend knows this: for `unitsystem="none"` it sets
+`ds.magnetic_unit = sqrt(4π) G`, so a plain `yt.load(...)` + `.to("G")` already returns
+the correct physical Gauss. **Do not override `magnetic_unit`.**
 
-The bug corrupted only **B-derived** FLASH quantities; it must not be confused with a
-fudge of the analysis. Density/temperature/pressure come straight from FLASH and were
-never affected, and **shock-front tuning is density-based, so it is unchanged**. What is
-invalidated and must be **re-run** (regenerate the npz + figures): any cached `|B|`, `v_A`,
-`M_A`, plasma `β`, `T_ci`, and the perpendicular-shock numbers that depend on them. The
-correction *raises* `M_A` and `β` by `sqrt(4π)` and `4π` respectively (smaller B → smaller
-`v_A` → larger `M_A`; e.g. dump 20: `M_A` 5.2→18, `β` 2.3→29, so the shock is much more
-super-Alfvénic / higher-β than previously reported).
-
-Why `flash_rh_prediction.py` still matched the data with the wrong `M_A` (it was *not*
-doctored): the predicted downstream density/T/P are set by the **sonic** Mach number
-`M_s` (built from densities + temperatures only, B-free) plus a weak `O(1/β)` magnetic
-correction. Across the whole range β=2.3→∞ the compression ratio only moves r≈2.93→3.29,
-so the B error could never make r wildly wrong; the corrected r=3.26 is actually *closer*
-to the measured 3.50 than the buggy 2.93. The `B_perp` panel matched because predicted
-(`r·B_up`) and measured downstream B both carried the same spurious `sqrt(4π)`, which
-cancels in the ratio. So the headline physics (strong near-perpendicular shock, MHD
-reproduces the density/T/P jumps but not the e/i split) survives; only the magnetization
-diagnostics (`M_A`, `β`, absolute `|B|`/`v_A`) change.
+History (so it is not re-introduced): a 2026-06-25 change wrongly diagnosed the sqrt(4π)
+as a yt bug and overrode `magnetic_unit → 1 G` in `load_for_osiris`, which stripped the
+factor and made every B-derived quantity (`v_A`, `M_A`, `β`, `T_ci`, **and the B written
+into the OSIRIS deck**) wrong by sqrt(4π)/4π. It was reverted 2026-06-26 after three
+independent confirmations: (1) the yt frontend applies sqrt(4π) *by design* only for
+`unitsystem="none"`; (2) the dump's `unitsystem` parameter is literally `'none'`; (3) the
+measured perpendicular-shock compression (dump 9: r≈3.12, *below* the gas-dynamic ceiling
+3.29) matches the RH prediction only with the physical, sqrt(4π)-larger field (M_A≈8.5,
+β≈6 → r=3.14), not the stripped one (M_A≈30, β≈78 → r=3.28). The correct numbers are the
+original ones: `M_A ≈ 6–8.5`, `β ≈ 2–6`, upstream `|B| ≈ 15–25 T`. **Any OSIRIS deck
+regenerated while the override was in place has its B too small by sqrt(4π) and must be
+rebuilt.**
 
 ## Conventions
 
 - FLASH analysis: yt-native + `unyt` units. No astropy, and not via the OSIRIS code path.
-- **Load FLASH dumps only via `load_for_osiris`/`flash_utils`, never bare `yt.load`** — a
-  bare load inflates B by `sqrt(4π)` (see the FLASH magnetic-field bug section above).
+- Load FLASH dumps via `load_for_osiris`/`flash_utils` (it registers the OSIRIS-derived
+  fields). It uses a plain `yt.load` — the `unitsystem="none"` sqrt(4π) on B is correct
+  and must NOT be overridden (see the FLASH magnetic field section above).
 - 2D-capable analysis treats `x2` as the shock-normal axis; use `detect_layout` /
   `transverse_profile` rather than hardcoding dimensionality.
 - Plan before implementing analysis changes; prefer adding a pure function to `src/`
