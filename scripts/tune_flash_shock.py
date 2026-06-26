@@ -299,7 +299,7 @@ class RegionsTuner:
             ax_idx = next(a for a in (2, 1, 0) if a != los_axis)
         slice_coord = float(start[ax_idx])                  # plane passes through the LOS
 
-        ds = yt.load(snap_file)
+        ds = yt.load_for_osiris(snap_file)
         ax_h = ds.coordinates.x_axis[ax_idx]   # in-plane horizontal data-axis index
         ax_v = ds.coordinates.y_axis[ax_idx]   # in-plane vertical   data-axis index
         tr_axis = ax_h if ax_v == los_axis else ax_v        # the transverse in-plane axis

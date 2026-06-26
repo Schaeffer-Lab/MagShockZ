@@ -7,28 +7,36 @@
 
 data_path: /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009
 dim: 1
-inputfile_name: magshockz_rqm100_dx0.3_ppc500_g20
+inputfile_name: magshockz_rqm100_dx0.1_ppc500_g20
 reference_density: 5.0e18      # cm^-3 (dot required so YAML parses as float)
 rqm_factor: 100
 dx: 0.1                         # c/omega_pe
 ppc: 500
-tmax_gyroperiods: 80
+tmax_gyroperiods: 20
 algorithm: cuda
-node_number: [4]
+node_number: [8]
 num_threads: 1
 n_dump_total: 512
 restart: false
 
-# Ion populations are separated by FLASH material (this dump is species=cham,targ,vac;
-# cham=Al chamber, targ=Si target). species_names renames them to the historical al/si;
-# the flash2osiris generator derives rqm/mass from FLASH and uses neither map below.
+# Ion populations are auto-detected from the FLASH materials (this dump declares
+# species=cham,targ,vac; cham=Al chamber, targ=Si target, vac=vacuum is dropped).
+# `species_names` renames the OSIRIS species from the material field to a friendly name;
+# here it reproduces the historical al/si names while separating by MATERIAL, not mass.
 species_names: {cham: al, targ: si}
-charge_states: {al: 13, si: 14}   # analysis-only metadata (Z per species)
+
+# Optional analysis-only metadata: physical ion charge states (the generator derives
+# rqm/mass from FLASH and does NOT use these; downstream analysis that needs Z does).
+charge_states: {al: 13, si: 14}
 
 # 1D lineout endpoints in cm (x y z of the z-midplane).
+# `extension` (cm, optional, default 0) appends a buffer beyond end_point whose fields are
+# held constant at the endpoint value; it grows the OSIRIS domain (nx, particle/GPU counts)
+# but adds no new physics. Must keep end_point strictly inside the FLASH domain.
 geometry:
   start_point: [0, 0.07, 0]
   end_point: [0, 0.70, 0]
+  extension: 1.0
 
 solver:
   vpml_bnd_size: 100
@@ -46,8 +54,8 @@ diagnostics:
   phasespaces: [p1x1, p2x1, p3x1, gx1]
   e_ps_pmin: [-1, -1, -0.5]
   e_ps_pmax: [1, 1, 0.5]
-  i_ps_pmin: [-0.1, -0.1, -0.05]
-  i_ps_pmax: [0.1, 0.1, 0.05]
+  i_ps_pmin: [-0.15, -0.15, -0.05]
+  i_ps_pmax: [0.15, 0.15, 0.05]
   ps_np: [4096, 4096, 4096]
   ps_ngamma: 128
   ps_gammamax: 3.0

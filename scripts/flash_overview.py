@@ -195,7 +195,7 @@ def mass_continuity_vshock(lineouts, *, hand_fit=None, gap_cm=0.003, win_cm=0.01
 
 def save_yt_slice(path, slice_axis, field, output_path, title, cmap):
     """Create a yt SlicePlot and save to file.  ``field`` is a (ftype, name) tuple."""
-    ds = yt.load(path)
+    ds = yt.load_for_osiris(path)
     slc = yt.SlicePlot(ds, slice_axis, field)
     slc.set_cmap(field, cmap)
     try:

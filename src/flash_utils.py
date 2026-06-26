@@ -24,6 +24,13 @@ from multiprocessing import Pool
 import numpy as np
 import yt
 
+# ``yt.load_for_osiris`` is registered by the flash2osiris yt plugin (symlinked into
+# ~/.config/yt/my_plugins.py). Enabling plugins here makes it available to every FLASH
+# load below and — crucially — applies the plugin's magnetic-unit fix (1 code_magnetic ==
+# 1 G), so ``.to("G")`` no longer tacks on a spurious sqrt(4π). Idempotent; runs once on
+# import and is inherited by the multiprocessing workers (fork) in ``load_lineouts``.
+yt.enable_plugins()
+
 
 def find_plot_files(data_dir: str) -> list:
     """Return sorted list of FLASH plot-file paths in data_dir."""
@@ -76,7 +83,7 @@ def flash_lineout(
         rho     : mass density [g/cm³]
         t_s     : simulation time [s]  (scalar float, not an array)
     """
-    ds = yt.load(path)
+    ds = yt.load_for_osiris(path)
 
     start  = np.asarray(start_pt, dtype=float)
     end    = np.asarray(end_pt,   dtype=float)
