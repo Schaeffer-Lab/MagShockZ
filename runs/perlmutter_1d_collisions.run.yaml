@@ -1,0 +1,75 @@
+# Python-init 1D OSIRIS run spec -- COLLISIONAL variant of perlmutter_1d.
+# Monte Carlo (binary) collisions run only in the standard CPU solver: the cuda/tiles
+# modes do not implement them, so `algorithm` MUST be `cpu` (the generator asserts this).
+# Generate with:
+#   conda activate osiris2
+#   python -m flash_osiris.generator --config ../runs/perlmutter_1d_collisions.run.yaml
+
+data_path: /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009
+dim: 1
+inputfile_name: magshockz_rqm100_dx0.1_ppc500_g20_coll
+reference_density: 5.0e18      # cm^-3 -> also the collision module's n0
+rqm_factor: 100
+dx: 0.1                         # c/omega_pe
+ppc: 500
+tmax_gyroperiods: 20
+algorithm: cpu                  # REQUIRED for collisions (no GPU/tiles support)
+node_number: [8]
+num_threads: 1
+n_dump_total: 512
+restart: false
+
+species_names: {cham: al, targ: si}
+
+# Charge states (Z). With collisions enabled these ALSO supply each ion's q_real
+# (the real charge state OSIRIS needs for the collision rate); electrons get Z=1.
+charge_states: {al: 13, si: 14}
+
+# ---- Monte Carlo collisions (optional block; omit or `enabled: false` to disable) ----
+# OSIRIS computes the physical collision rate itself from the plasma state + n0 above;
+# you do NOT set a collision frequency. `n_collide` is only the cadence (collide every
+# n_collide steps). `species` lists which OSIRIS species collide; `like_collide` is the
+# subset that also self-collides.
+#
+# REDUCED-MASS CAVEAT: rqm here is reduced by rqm_factor (100), and OSIRIS builds
+# m_real = q_real * rqm from the DECK rqm, with collision rate ~ (q_a q_b / mu)^2. So at
+# rqm_factor != 1 the ion collisionality is distorted by ~rqm_factor^2. `coulomb_log` is
+# the single scalar knob to recalibrate the overall rate (auto -> physical ln(Lambda));
+# for a faithful collisional run prefer rqm_factor: 1. See CLAUDE.md.
+collisions:
+  enabled: true
+  n_collide: 1                  # collide every step
+  model: perez                  # perez (default) | sentoku | takizuka | isotropic
+  nx_collision_cells: 1         # cells grouped per collision cell (per dim)
+  coulomb_log: 10.0             # "auto" for physical ln(Lambda), or a fixed value to calibrate
+  species: [e, al, si]          # species that collide
+  like_collide: [e, al, si]     # species that also self-collide
+
+geometry:
+  start_point: [0, 0.07, 0]
+  end_point: [0, 0.70, 0]
+  extension: 1.0
+
+solver:
+  vpml_bnd_size: 100
+  emf_boundary: [pmc, vpml]
+  part_boundary: [thermal, thermal]
+  interpolation: cubic
+  smooth_type: binomial
+  smooth_order: 2
+
+diagnostics:
+  n_ave: 6
+  emf_reports: [b1, b2, b3, e1, e2, e3]
+  reports: [charge, j1, j2, j3, q1, q2, q3]
+  rep_udist: [uth1, uth2, ufl1, ufl2]
+  phasespaces: [p1x1, p2x1, p3x1, gx1]
+  e_ps_pmin: [-1, -1, -0.5]
+  e_ps_pmax: [1, 1, 0.5]
+  i_ps_pmin: [-0.15, -0.15, -0.05]
+  i_ps_pmax: [0.15, 0.15, 0.05]
+  ps_np: [4096, 4096, 4096]
+  ps_ngamma: 128
+  ps_gammamax: 3.0
+  ps_nx: 1024
+  ps_ny: 512

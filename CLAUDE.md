@@ -200,6 +200,45 @@ original ones: `M_A ≈ 6–8.5`, `β ≈ 2–6`, upstream `|B| ≈ 15–25 T`. 
 regenerated while the override was in place has its B too small by sqrt(4π) and must be
 rebuilt.**
 
+## Collisions (Monte Carlo, CPU-only)
+
+Binary collisions are an **optional** feature of the deck generator, off by default
+(every existing deck is byte-for-byte unchanged). They run **only in the standard CPU
+solver** — OSIRIS's `cuda`/`tiles` modes do not implement Monte Carlo collisions (the
+collide step lives in the standard `sort_collide` path). So a collisional run needs
+`algorithm: cpu`; the generator asserts this and aborts otherwise.
+
+Enable via a `collisions:` block in the run spec (see `runs/perlmutter_1d_collisions.run.yaml`):
+
+```yaml
+algorithm: cpu
+charge_states: {al: 13, si: 14}   # also supplies each ion's q_real (Z); electrons = 1
+collisions:
+  enabled: true
+  n_collide: 1                    # cadence: collide every n_collide steps (NOT a frequency)
+  model: perez                    # perez (default) | sentoku | takizuka | isotropic
+  nx_collision_cells: 1
+  coulomb_log: 10.0               # "auto" for physical ln(Λ), or a fixed value to calibrate
+  species: [e, al, si]            # species that collide
+  like_collide: [e, al, si]       # subset that also self-collides
+```
+
+What the generator does when enabled: (1) emits `n0 = reference_density` into
+`nl_simulation` (the collision module reads `sim_options%n0` and **aborts if it is ≤ 0**);
+(2) adds `q_real`/`if_collide`/`if_like_collide` to each species, sourcing `q_real` from
+`charge_states` (so Z lives in one place); (3) appends the `collisions` namelist. You do
+**not** set a collision frequency — OSIRIS computes the physical rate from the plasma
+state + `n0`; `n_collide` is only the cadence. The whole block survives the frozen
+`run.yaml` round-trip (`collisions` is a `_METADATA_KEYS` group, not flattened).
+
+**Reduced-mass caveat (important for our reduced-mass decks):** OSIRIS builds the real
+ion mass as `m_real = q_real · rqm` from the **deck** `rqm`, which is reduced by
+`rqm_factor`, and the collision rate scales as `(q_a q_b / μ_ab)²`. So at `rqm_factor ≠ 1`
+the ion collisionality is distorted by ~`rqm_factor²`. `coulomb_log` is the single scalar
+knob to recalibrate the overall rate (the generator warns when `coulomb_log: auto` is used
+with `rqm_factor ≠ 1`), but it cannot independently fix different collision pairs — for a
+faithful collisional run prefer `rqm_factor: 1`.
+
 ## Conventions
 
 - FLASH analysis: yt-native + `unyt` units. No astropy, and not via the OSIRIS code path.

@@ -57,7 +57,7 @@ npm-debug.log
 
 
 # Derived analysis results (regenerate with the scripts/ analysis suite)
-results/
+results/**
 
 # Simulation data #
 **/MS/
@@ -73,3 +73,8 @@ results/
 *.png
 # Generated OSIRIS input files (regenerate with `python -m flash_osiris.generator`)
 input_files/
+
+# ...but keep the figures inside results/ (must come after the *.png/*.mp4 and
+# results/** ignores above so these re-includes win)
+!results/**/
+!results/**/*.png
