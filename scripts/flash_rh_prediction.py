@@ -39,9 +39,13 @@ Usage
 -----
     python scripts/flash_rh_prediction.py \\
         --config config/flash_3d_noshield.yaml \\
-        [--snapshot-idx -1] [--gamma 1.6667] \\
+        [--snapshot-idx N] [--gamma 1.6667] \\
         [--x-shock-cm ...] [--x-downstream-start-cm ...] [--v-shock-cms ...] \\
         [--window-um 400] [--output-dir results/FLASH_3D_noshield]
+
+--snapshot-idx defaults to the dump that seeded the OSIRIS run (RunSpec data_path), so
+the Mach numbers/predictions are directly comparable to the OSIRIS side; pass an
+explicit index (e.g. -1 for the last dump) to look at a different snapshot.
 
 Run in the `analysis` conda env (it has yt + unyt + osiris_utils).
 """
@@ -112,8 +116,11 @@ def main():
                     "(perpendicular MHD shock) and overlay it on lineouts."
     )
     parser.add_argument("--config", required=True)
-    parser.add_argument("--snapshot-idx", type=int, default=-1, dest="snapshot_idx",
-                        help="Index into the sorted plot-file list (default -1 = last dump).")
+    parser.add_argument("--snapshot-idx", type=int, default=None, dest="snapshot_idx",
+                        help="Index into the sorted plot-file list (default: the dump "
+                             "that seeded the OSIRIS run, i.e. RunSpec data_path — NOT "
+                             "the last dump, so the Mach numbers/predictions are "
+                             "directly comparable to the OSIRIS side).")
     parser.add_argument("--x-shock-cm", type=float, default=None, dest="x_shock_cm",
                         help="Shock position along LOS [cm]. Default: read from the "
                              "flash_overview .npz.")
@@ -146,7 +153,14 @@ def main():
     line_end   = tuple(float(v) for v in spec["end_point"])
 
     all_files = fu.find_plot_files(flash_dir)
-    idx       = args.snapshot_idx % len(all_files)   # config key = positive plot-file index
+    if args.snapshot_idx is None:
+        # Default: the dump that seeded the OSIRIS run, so results are directly
+        # comparable to the OSIRIS side (see mach-number-self-consistent-dump memory).
+        idx = int(os.path.basename(data_path)[-4:])
+        snapshot_idx_for_geom = idx
+    else:
+        idx = args.snapshot_idx % len(all_files)   # config key = positive plot-file index
+        snapshot_idx_for_geom = args.snapshot_idx
     snap_file = all_files[idx]
 
     out_dir = args.output_dir or os.path.join(
@@ -155,7 +169,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     x_shock_cm, x_ds_cm, v_shock_npz = _load_shock_geometry(
-        cfg, idx, out_dir, args.snapshot_idx, args.x_shock_cm, args.x_downstream_start_cm)
+        cfg, idx, out_dir, snapshot_idx_for_geom, args.x_shock_cm, args.x_downstream_start_cm)
 
     if x_shock_cm is None or not np.isfinite(x_shock_cm):
         raise ValueError(

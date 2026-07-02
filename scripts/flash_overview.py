@@ -27,8 +27,12 @@ Usage
 -----
     python scripts/flash_overview.py --config config/flash_3d_noshield.yaml \\
         [--stride 1] [--t-start 0] [--t-stop 20] \\
-        [--snapshot-idx -1] [--search-halfwidth 5e-3] \\
+        [--snapshot-idx N] [--search-halfwidth 5e-3] \\
         [--output-dir results/FLASH_3D_noshield]
+
+--snapshot-idx defaults to the dump that seeded the OSIRIS run (RunSpec data_path), so
+the reported Mach numbers are directly comparable to the OSIRIS side; pass an explicit
+index (e.g. -1 for the last dump) to look at a different snapshot.
 """
 
 import argparse
@@ -222,8 +226,11 @@ def main():
                         help="First plot-file index to include (default 0).")
     parser.add_argument("--t-stop", type=int, default=None, dest="t_stop",
                         help="Last plot-file index (inclusive; default: all available).")
-    parser.add_argument("--snapshot-idx", type=int, default=-1, dest="snapshot_idx",
-                        help="Index into the dump list for the snapshot figure (default -1).")
+    parser.add_argument("--snapshot-idx", type=int, default=None, dest="snapshot_idx",
+                        help="Index into the dump list for the snapshot figure (default: "
+                             "the dump that seeded the OSIRIS run, i.e. RunSpec data_path — "
+                             "NOT the last dump, so the Mach numbers are directly comparable "
+                             "to the OSIRIS side).")
     parser.add_argument("--slice-axis", default="z", dest="slice_axis",
                         choices=["x", "y", "z"],
                         help="Axis perpendicular to the 2D slice in the snapshot figure (default z).")
@@ -349,7 +356,17 @@ def main():
     # ------------------------------------------------------------------
     # Mach numbers (from upstream average at the snapshot dump)
     # ------------------------------------------------------------------
-    snap_idx   = args.snapshot_idx % len(lineouts)
+    if args.snapshot_idx is None:
+        # Default: the dump that seeded the OSIRIS run (flash_ic_index), mapped
+        # into the loaded dump list — so FLASH's Mach numbers are computed at the
+        # same physical moment the OSIRIS deck was built from, not an arbitrary
+        # (e.g. last) dump. See CLAUDE.md / mach-number-self-consistent-dump memory.
+        if flash_ic_index in loaded_indices:
+            snap_idx = loaded_indices.index(flash_ic_index)
+        else:
+            snap_idx = int(np.argmin(np.abs(np.asarray(loaded_indices) - flash_ic_index)))
+    else:
+        snap_idx = args.snapshot_idx % len(lineouts)
     snap_lo    = lineouts[snap_idx]
     x_shock_snap = x_det_cm[snap_idx] if np.isfinite(x_det_cm[snap_idx]) else float(x_pred_cm[snap_idx])
     upstream   = np.asarray(snap_lo["x"]) > x_shock_snap
