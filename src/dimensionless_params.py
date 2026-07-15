@@ -146,12 +146,17 @@ def magnetic_reynolds(T_e_sim: float, n_e_sim: float, v_shock: float, L_sim: flo
 
     import astropy.constants
     import astropy.units as u
-    from plasmapy.formulary import Mag_Reynolds, Spitzer_resistivity
+    from plasmapy.formulary import Mag_Reynolds
+
+    try:  # works both as a package (src.*) and as a flat module (scripts add src/ to path)
+        from .spitzer_resistivity import spitzer_resistivity
+    except ImportError:
+        from spitzer_resistivity import spitzer_resistivity
 
     m_e_c2_eV = float((astropy.constants.m_e * astropy.constants.c**2).to(u.eV).value)
-    T_e = (T_e_sim * m_e_c2_eV) * u.eV
-    n_e = (n_e_sim * norm_density).to(u.m**-3)
-    rho_m = Spitzer_resistivity(T=T_e, n=n_e, species=("e", f"{ion} {Z_i}+"), z_mean=float(Z_i))
+    T_e_eV = T_e_sim * m_e_c2_eV
+    n_e_m3 = float((n_e_sim * norm_density).to(u.m**-3).value)
+    rho_m = spitzer_resistivity(T_e_eV, n_e_m3, float(Z_i), ion=ion) * (u.ohm * u.m)
     sigma = (1.0 / rho_m).to(u.S / u.m)
     U = (v_shock * astropy.constants.c).to(u.m / u.s)
     L = (L_sim * d_e).to(u.m)

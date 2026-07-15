@@ -62,3 +62,8 @@ from .dimensionless_params import (
     compute_dimensionless,
     magnetic_reynolds,
 )
+from .spitzer_resistivity import (
+    spitzer_resistivity,
+    magnetic_diffusivity,
+    warpx_electron_temperature,
+)
