@@ -100,6 +100,25 @@ separated by **FLASH material** (target/chamber) via the yt plugin
 (`~/.config/yt/my_plugins.py` → `flash_osiris/yt_plugin.py`), not by ion mass; the run
 spec's `species_names: {cham: al, targ: si}` renames them. Units stay yt-native + `unyt`.
 
+### WarpX generation: the `flash2warpx` package (external)
+
+The same FLASH dumps also feed **WarpX hybrid-PIC** (Ohm's-law) runs via the standalone
+**`flash2warpx`** package (`/pscratch/sd/d/dschnei/flash2warpx`, pip-installed / on
+`PYTHONPATH`). `flash_warpx.extractor.extract_slice` slices a FLASH dump into SI `.npy`
+arrays + `meta.yaml`; `flash_warpx.run.HybridRunConfig`/`build_and_run` step WarpX over
+them. MagShockZ keeps only the MagShockZ-specific run assets, mirroring the OSIRIS split:
+- **configs** (the `extract:` + `run:` blocks fed to flash2warpx) → `runs/*.warpx.yaml`
+  (distinct suffix from the OSIRIS `*.run.yaml`; **not** a `RunSpec` schema).
+- **thin drivers** → `init_warpx/` (`stage_prod.py` = PHASE 1 extract+deflate in the
+  `analysis` env; `run_prod.py` + `run_{production,deeptime}.sbatch` = PHASE 2 WarpX run).
+- **generated trees + diags + movies** → `input_files/warpx/…` (gitignored, regenerable).
+
+The generic package (extractor/run/`viz/` diagnostics, the `examples/magshockz_2d.yaml`
+usage example, docs) stays in flash2warpx. Check a slice resolves the ion skin depth with
+`python -m flash_warpx.resolution input_files/warpx/<tree> [--dx <sim_dx_m>]` (pure numpy;
+`analysis` env). The MagShockZ-side Spitzer resistivity tool (`scripts/spitzer_resistivity.py`,
+`src/spitzer_resistivity.py`) reads these trees to pick `run.plasma_resistivity`.
+
 ### Analysis: library-first
 
 Pure, testable functions live in **`src/`** and are re-exported from `src/__init__.py`

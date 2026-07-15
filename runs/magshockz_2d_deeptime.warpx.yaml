@@ -1,0 +1,66 @@
+# =============================================================================
+#  DEEP-TIME PRODUCTION config -- MagShockZ 2D hybrid-PIC   (24-node / 6-hour run)
+# =============================================================================
+# Same staged domain as magshockz_2d_production.warpx.yaml (identical `extract:` block, so
+# init_warpx/stage_prod.py stages BOTH), but the run block trades the moderate 2-node run
+# for the "deep time + high ppc" regime on 24 GPU nodes (96 A100):
+#
+#   * n_steps 5000 -> 60000   (~1.56e-8 -> ~1.56e-7 s; ~6 ion gyroperiods, t_gyro ~ 26 ns)
+#     -> reaches nonlinear magnetized-shock evolution instead of ~0.5 gyroperiod.
+#   * ppc     16 -> 48        -> ~1e9 macroparticles (~10M/GPU): keeps 96 GPUs fed AND
+#     strongly cuts the field noise (why high ppc pairs with the large node count here).
+#
+# Cost is ~linear in steps (cheap) -- unlike refining dx, which in 2D costs ~dx^-4
+# (cells dx^-2 * steps dx^-1 * substeps dx^-1). So the budget is spent on TIME + PARTICLES.
+#
+# Measured (job 55789220): ~0.61 s/step on 96 GPUs => 60000 steps needs ~10.2 h, so a single
+# 6 h job reaches only ~35k steps. Checkpointing is now wired in (checkpoint_period below):
+# re-submit run_deeptime.sbatch and it auto-resumes from the latest chk* dir, so chaining
+# 6 h jobs completes the run with no lost compute. Reduce n_steps for a single-job finish.
+#
+# Workflow (same two phases/envs as production):
+#   1. STAGE (once): conda run -n analysis python init_warpx/stage_prod.py
+#   2. RUN:          sbatch init_warpx/run_deeptime.sbatch
+# =============================================================================
+
+extract:
+  normal_axis: z
+  slice_coord_m: 1.770833333333388e-05
+  level: 3
+  box_bounds_m:
+    x: [-0.005, 0.005]
+    y: [0.0005, 0.015]
+  allow_extrapolation: false
+  species_names:
+    cham: aluminum
+    targ: silicon
+
+run:
+  ppc: 48                 # high particle count: ~10M/GPU on 96 GPUs; low-noise fields.
+  gamma: 1.6666666667
+  Te_eV: null
+  fit_electron_closure: false
+  n0_per_m3: null
+  plasma_resistivity: 1.0e-6       # eta-scan choice (R_m ~ 10): sharp front, no grid hash.
+  plasma_hyper_resistivity: null
+  holmstrom_vacuum_region: true
+  substeps: 300           # whistler-CFL gate; dx (=> dt) unchanged from production so 300 holds.
+  n_floor_frac: 0.05
+  sim_dx_m: 1.0e-5        # unchanged: 1.45M PIC cells. Budget goes to time+particles, not dx.
+  dt_s: null              # auto ~2.6e-12 s
+  dt_safety: 0.5
+  n_steps: 60000          # DEEP TIME: ~1.56e-7 s ~ 6 ion gyroperiods.
+  diag_period: 500        # MEASURED ~6.7 GB/plotfile => 120 plotfiles ~= 800 GB. Raise this
+                          # (e.g. 2000) or check scratch quota before a full run.
+  checkpoint_period: 5000 # restartable chk* dirs (full state) for walltime-kill resume; ~12
+                          # checkpoints over the run. Auto-resumed by run_deeptime.sbatch.
+  restart_from: null      # set to a chk* dir to resume manually; sbatch/F2WX_RESTART overrides.
+  density_threshold_frac: 1.0e-3
+  boundary: [periodic, periodic]
+  field_boundary_lo: [periodic, dirichlet]
+  field_boundary_hi: [periodic, neumann]
+  particle_boundary_lo: [periodic, thermal]
+  particle_boundary_hi: [periodic, thermal]
+  max_grid_size: 128      # ~96 grids over 1000x1450 -> ~1 grid/rank (min comms for the substep loop)
+  diag_format: plotfile
+  diag_dir: diags_deeptime
