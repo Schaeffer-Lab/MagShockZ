@@ -19,8 +19,10 @@ scripts/overview.py for the OSIRIS run, but in physical units throughout:
     - upstream Mach numbers (M_A, M_s) and v_shock annotated
 
 Run parameters are read from two sources (never duplicated):
-    run spec (run.yaml)  : data_path, line of sight, rqm_factor, reference_density
-                           (RunSpec; falls back to run_manifest.yaml / runme*.sh)
+    FLASH data source    : the FLASH directory + line of sight, resolved by
+                           flash_source.resolve — either straight from the config
+                           (flash_data_dir + line_of_sight) or from an OSIRIS run's
+                           run.yaml (sim_dir → RunSpec data_path/start_point/end_point)
     config YAML          : derived-from-data annotations (flash.v_shock_est, shock fit)
 
 Usage
@@ -30,9 +32,10 @@ Usage
         [--snapshot-idx N] [--search-halfwidth 5e-3] \\
         [--output-dir results/FLASH_3D_noshield]
 
---snapshot-idx defaults to the dump that seeded the OSIRIS run (RunSpec data_path), so
-the reported Mach numbers are directly comparable to the OSIRIS side; pass an explicit
-index (e.g. -1 for the last dump) to look at a different snapshot.
+--snapshot-idx defaults to the source's IC dump — the dump that seeded the OSIRIS run
+(via-run mode), or ``ic_index`` (direct mode, default 0) — so the reported Mach numbers
+are directly comparable to the OSIRIS side; pass an explicit index (e.g. -1 for the last
+dump) to look at a different snapshot.
 """
 
 import argparse
@@ -55,7 +58,9 @@ import unyt as u
 
 import analysis_utils
 import plot_style
+import flash_source
 import flash_utils as fu
+import shock
 import perpendicular_shock as ps
 
 
@@ -252,22 +257,23 @@ def main():
     # Config + run parameters
     # ------------------------------------------------------------------
     cfg    = analysis_utils.load_config(args.config)
-    spec   = analysis_utils.RunSpec.from_sim_dir(cfg["sim_dir"])
+    source = flash_source.resolve(cfg, args.config)
 
-    data_path   = spec["data_path"]                       # e.g. .../plt_cnt_0009
-    flash_dir   = str(os.path.dirname(data_path))
-    file_prefix = os.path.basename(data_path)[:-4]        # strip 4-digit index
-    flash_ic_index = int(os.path.basename(data_path)[-4:])
-
-    line_start  = tuple(float(v) for v in spec["start_point"])
-    line_end    = tuple(float(v) for v in spec["end_point"])
-    rqm_factor  = float(spec.rqm_factor)
-    ref_density = spec.reference_density                   # cm⁻³
+    flash_dir      = source.flash_dir
+    flash_ic_index = source.ic_index
+    line_start     = source.line_start
+    line_end       = source.line_end
+    rqm_factor     = source.rqm_factor                     # None if not knowable
+    ref_density    = source.reference_density               # cm⁻³, or None
 
     # Shock velocity and position estimates from config (used to seed detection)
     flash_cfg    = cfg.get("flash", {})
     v_shock_est  = float(flash_cfg.get("v_shock_est_cms", 0.0))
     x_shock_0_cm = float(flash_cfg.get("x_shock_0_cm", 0.0))
+    # Trajectory anchor t₀: the time at which the front sat at x_shock_0_cm. Absent
+    # from the config it is the IC dump time, resolved once the dumps are loaded.
+    t_shock_0_ns = ((float(flash_cfg["t_shock_0_s"]) * u.s).to("ns").value
+                    if "t_shock_0_s" in flash_cfg else None)
 
     all_files = fu.find_plot_files(flash_dir)
     # Restrict to requested range
@@ -282,19 +288,18 @@ def main():
             f"in range [{args.t_start}, {args.t_stop}] with stride {args.stride}."
         )
 
-    out_dir = args.output_dir or os.path.join(
-        _HERE, "..", "results",
-        os.path.basename(flash_dir.rstrip("/"))
-    )
+    out_dir = args.output_dir or os.path.join(_HERE, "..", "results", source.name)
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"Config     : {args.config}")
-    print(f"FLASH dir  : {flash_dir}")
+    print(f"FLASH dir  : {flash_dir}   (from {source.source})")
     print(f"Line of sight: {line_start}  →  {line_end}  [cm]")
-    print(f"n₀         : {ref_density:.2e} cm⁻³")
-    print(f"rqm_factor : {rqm_factor}")
+    print(f"n₀         : {'—' if ref_density is None else f'{ref_density:.2e} cm⁻³'}")
+    print(f"rqm_factor : {'—' if rqm_factor is None else rqm_factor}")
     print(f"v_shock_est: {(v_shock_est * u.cm / u.s).to('km/s').value:.1f} km/s   "
-          f"x_shock_0: {(x_shock_0_cm * u.cm).to('um').value:.1f} µm  (from config flash:)")
+          f"x_shock_0: {(x_shock_0_cm * u.cm).to('um').value:.1f} µm"
+          f"{'' if t_shock_0_ns is None else f' @ t₀ {t_shock_0_ns:.2f} ns'}"
+          f"  (from config flash:)")
     print(f"Dumps      : {len(dump_files)}  ({os.path.basename(dump_files[0])} … {os.path.basename(dump_files[-1])})")
 
     # ------------------------------------------------------------------
@@ -326,16 +331,21 @@ def main():
     # ------------------------------------------------------------------
     t_s_arr = np.array([lo["t_s"] for lo in lineouts])
 
-    # Read the IC dump time so the prediction is relative to it, not t=0.
+    # Read the IC dump time: it is the DEFAULT anchor for the trajectory, so the
+    # prediction is relative to it rather than to t=0.
     ic_file = all_files[flash_ic_index] if flash_ic_index < len(all_files) else dump_files[0]
     try:
         t_ic_s = fu.flash_time_s(ic_file)
     except Exception:
         t_ic_s = t_s_arr[0]
+    # The anchor itself is tunable (tune_flash_shock 't <ns>'), so a shock that forms
+    # partway through the run is fitted from its formation time instead of by
+    # back-extrapolating to a position it never had.
+    t_shock_0_s = float(flash_cfg.get("t_shock_0_s", t_ic_s))
 
     if v_shock_est > 0.0 or x_shock_0_cm > 0.0:
-        # x_pred = x_shock_0 + v_shock * (t - t_IC)
-        x_pred_cm = x_shock_0_cm + v_shock_est * (t_s_arr - t_ic_s)
+        # x_pred = x_shock_0 + v_shock * (t - t_0)
+        x_pred_cm = shock.front_line(x_shock_0_cm, v_shock_est, t_s_arr, t_shock_0_s)
     else:
         # No estimate provided — seed from the midpoint; fit will correct it.
         x_pred_cm = np.full(len(lineouts), float(x_cm.mean()))
@@ -345,9 +355,10 @@ def main():
     # dumps the steepest-gradient detector locks onto the fast leading edge,
     # which is biased high relative to the mass-flux frame; the hand-set config
     # front is the more trustworthy reference here.  x_pred_cm above is the
-    # config line x_shock_0_cm + v_shock_est*(t - t_IC).
+    # config line x_shock_0_cm + v_shock_est*(t - t_0).
     v_shock_fit   = v_shock_est
-    x_shock_0_fit = float(x_shock_0_cm - v_shock_est * t_ic_s)   # config front at t=0
+    # Re-anchored to t=0 for the .npz (flash_rh_prediction reconstructs the line from it).
+    x_shock_0_fit = float(x_shock_0_cm - v_shock_est * t_shock_0_s)
     x_det_cm      = x_pred_cm.copy()      # front at each dump = the config line
 
     # Shock velocity in km/s for display

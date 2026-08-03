@@ -1,0 +1,41 @@
+conda activate osiris2
+python FLASH_OSIRIS_define.py \
+--data_path /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0007 \
+--inputfile_name perlmutter_2d \
+--reference_density_cc 5e18 \
+--rqm_factor 100 \
+--ppc 5 \
+--dx 0.3 \
+--xmin -2000 \
+--xmax 2000 \
+--ymin 350 \
+--ymax 4000 \
+--tmax_gyroperiods 25 \
+--algorithm cuda \
+--interpolation cubic \
+--normal_axis z \
+--ndump_tot 512 \
+--vpml_bnd_size 100 \
+--e_ps_pmin -1 -1 -0.5 \
+--e_ps_pmax 1 1 0.5 \
+--i_ps_pmin -0.1 -0.1 -0.05 \
+--i_ps_pmax 0.1 0.1 0.05 \
+--ps_np 6000 6000 64 \
+--ps_ngamma 128 \
+--ps_gammamax 3.0 \
+--ps_nx 16 \
+--ps_ny 512 \
+--smooth_type binomial \
+--smooth_order 2 \
+--reports charge j1 j2 j3 q1 q2 q3 \
+--emf_reports b1 b2 b3 e1 e2 e3 \
+--rep_udist uth1 uth2 ufl1 ufl2 \
+--phasespaces p1x1x2 p2x1x2 gx1x2 \
+--emf_boundary pmc vpml \
+--part_boundary thermal thermal \
+--n_ave 6 \
+--ndump_fac_ave 2 \
+--ndump_fac_ene 10 \
+--ndump_fac_ene_int 10 \
+--ndump_fac_pha 1 \
+--plot_fields edens aldens sidens magx magy magz Ex Ey Ez vthele vthal vthsi v_ix v_iy v_ey \

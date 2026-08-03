@@ -78,3 +78,4 @@ input_files/
 # results/** ignores above so these re-includes win)
 !results/**/
 !results/**/*.png
+!results/**/*.mp4

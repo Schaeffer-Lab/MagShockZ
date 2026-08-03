@@ -81,21 +81,44 @@ def set_scalar(text, dotted_key, value):
     """Return ``text`` with the scalar at ``dotted_key`` (e.g. ``"shock.v_shock"``)
     replaced by ``value``.
 
-    A missing *top-level* key (no dots) is appended at end-of-file; a missing
-    *nested* key raises ``KeyError`` (its parent structure is assumed to exist)."""
+    A missing key is inserted rather than an error: a *top-level* key (no dots) is
+    appended at end-of-file; a missing ``parent.key`` is inserted under ``parent:``
+    with the block's own indentation, or as a fresh ``parent:`` block at EOF when the
+    parent is absent too (this is how a tuner adds a value the config never carried,
+    e.g. ``flash.t_shock_0_s``).  Deeper missing paths still raise ``KeyError``."""
     keys = dotted_key.split(".")
     lines = text.split("\n")
     idx = _find_line(lines, keys)
     if idx is not None:
         lines[idx] = _set_line(lines[idx], value)
         return "\n".join(lines)
+
+    val = _fmt(value)
     if len(keys) == 1:
-        new_line = f"{dotted_key}: {_fmt(value)}{_INSERT_COMMENT}"
+        new_line = f"{dotted_key}: {val}{_INSERT_COMMENT}"
         if lines and lines[-1] == "":
             lines[-1:] = [new_line, ""]
         else:
             lines.append(new_line)
         return "\n".join(lines)
+
+    if len(keys) == 2:
+        parent, key = keys
+        p_idx = _find_line(lines, [parent])
+        if p_idx is None:                       # no parent block at all -> append one
+            block = [f"{parent}:", f"  {key}: {val}{_INSERT_COMMENT}"]
+            if lines and lines[-1] == "":
+                lines[-1:] = block + [""]
+            else:
+                lines += block
+            return "\n".join(lines)
+        p_indent = len(_KEY_RE.match(lines[p_idx]).group(1))
+        start, end = _section_bounds(lines, p_idx)
+        child_indent, _ = _child_indents(lines, start, end, p_indent)
+        pos = _last_content_idx(lines, start, end, child_indent) + 1
+        lines.insert(pos, f"{' ' * child_indent}{key}: {val}{_INSERT_COMMENT}")
+        return "\n".join(lines)
+
     raise KeyError(f"key path not found: {dotted_key}")
 
 

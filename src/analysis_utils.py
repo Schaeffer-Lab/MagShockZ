@@ -488,10 +488,16 @@ def load_config(path: str) -> dict:
 
     Applies the ``$MAGSHOCKZ_SIM_DIR`` override to ``sim_dir`` and normalises
     the ``times`` entry to a list of int dump indices (see :func:`parse_times`).
+
+    ``sim_dir`` is optional: a FLASH-side config may instead point straight at a
+    FLASH output directory (``flash_data_dir``; see :mod:`flash_source`), in which
+    case there is no OSIRIS run to name.
     """
     with open(path) as f:
         cfg = yaml.safe_load(f)
-    cfg["sim_dir"] = os.environ.get("MAGSHOCKZ_SIM_DIR", cfg["sim_dir"])
+    sim_dir = os.environ.get("MAGSHOCKZ_SIM_DIR", cfg.get("sim_dir"))
+    if sim_dir is not None:
+        cfg["sim_dir"] = sim_dir
     if "times" in cfg:
         cfg["times"] = parse_times(cfg["times"])
     return cfg

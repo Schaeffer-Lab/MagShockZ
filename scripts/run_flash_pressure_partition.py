@@ -48,6 +48,7 @@ import unyt as u
 
 import analysis_utils
 import plot_style
+import flash_source
 import flash_utils as fu
 import flash_energy_partition as fep
 
@@ -99,13 +100,12 @@ def main():
     # ------------------------------------------------------------------
     # Config + run parameters
     # ------------------------------------------------------------------
-    cfg   = analysis_utils.load_config(args.config)
-    spec  = analysis_utils.RunSpec.from_sim_dir(cfg["sim_dir"])
+    cfg    = analysis_utils.load_config(args.config)
+    source = flash_source.resolve(cfg, args.config)
 
-    data_path   = spec["data_path"]
-    flash_dir   = str(os.path.dirname(data_path))
-    line_start  = tuple(float(v) for v in spec["start_point"])
-    line_end    = tuple(float(v) for v in spec["end_point"])
+    flash_dir   = source.flash_dir
+    line_start  = source.line_start
+    line_end    = source.line_end
 
     all_files   = fu.find_plot_files(flash_dir)
     snap_file   = all_files[args.snapshot_idx % len(all_files)]

@@ -27,12 +27,17 @@ conda activate analysis
 REPO=/pscratch/sd/d/dschnei/MagShockZ
 cd "$REPO"
 
+# The config selects the FLASH data; the preset selects that run's tuned camera
+# and transfer functions (see PRESETS in flash_3d_movie.py). They go together —
+# rendering one run with another's preset gives a mis-framed, mis-coloured movie.
 CONFIG=config/flash_3d_noshield.yaml
+PRESET=noshield
+# CONFIG=config/flash_3d_2026-07.yaml ; PRESET=trantham2026-07
 
 # All seven fields: electron density, e/i temperature, the three B components,
 # and |B|.  ne/bz grids are already cached from the first run; the five new
 # fields (te ti bx by bmag) are sampled and merged into each dump's cached grid,
 # so only those are re-extracted.  Resumable — cached grids + existing frames
 # are reused, so re-submit after a timeout to continue.
-python scripts/flash_3d_movie.py --config "${CONFIG}" \
+python scripts/flash_3d_movie.py --config "${CONFIG}" --preset "${PRESET}" \
   --fields ne te ti bx by bz bmag --fps 5 --grid-res 256 --img-res 800

@@ -49,12 +49,31 @@ def test_set_scalar_only_touches_target_line():
     assert before[diff[0]].lstrip().startswith("v_shock:")
 
 
-def test_set_scalar_missing_nested_key_raises():
+def test_set_scalar_inserts_missing_nested_key():
+    """A tuner may write a key the config never carried (e.g. flash.t_shock_0_s)."""
+    out = set_scalar(SAMPLE, "shock.t_shock_0", 2.5e-9)
+    assert assert_roundtrip(out, "shock.t_shock_0", 2.5e-9)
+    # inserted inside the shock: block, at its indentation, siblings untouched
+    assert "  t_shock_0: 2.5e-09" in out
+    loaded = yaml.safe_load(out)["shock"]
+    assert loaded["v_shock"] == 0.04 and loaded["x_shock_0"] == 750
+    # and it groups with the existing entries, not after the blank line
+    lines = out.split("\n")
+    assert lines[lines.index("shock:") + 3].lstrip().startswith("t_shock_0:")
+
+
+def test_set_scalar_creates_missing_parent_block():
+    out = set_scalar(SAMPLE, "flash.t_shock_0_s", 2.25e-9)
+    assert assert_roundtrip(out, "flash.t_shock_0_s", 2.25e-9)
+    assert yaml.safe_load(out)["sim_dir"] == "/scratch/run"
+
+
+def test_set_scalar_missing_deep_key_still_raises():
     try:
-        set_scalar(SAMPLE, "shock.nonexistent", 1.0)
+        set_scalar(SAMPLE, "a.b.c", 1.0)
     except KeyError:
         return
-    raise AssertionError("expected KeyError for a missing nested key path")
+    raise AssertionError("expected KeyError for a missing 3-deep key path")
 
 
 def test_set_scalar_appends_missing_top_level_key():

@@ -78,6 +78,34 @@ def test_trajectory_at_linear_is_constant_velocity():
 
 
 # ---------------------------------------------------------------------------
+# front_line  (FLASH: the hand-placed straight trajectory)
+# ---------------------------------------------------------------------------
+
+def test_front_line_passes_through_its_anchor():
+    assert shock.front_line(0.185, 9.7e7, 2.25e-9, t0=2.25e-9) == pytest.approx(0.185)
+
+
+def test_front_line_default_anchor_is_zero():
+    np.testing.assert_allclose(shock.front_line(3.0, 2.0, np.array([0.0, 1.0, 2.0])),
+                               [3.0, 5.0, 7.0])
+
+
+def test_front_line_anchor_shifts_the_line_not_its_slope():
+    t = np.linspace(0.0, 5.0, 11)
+    early = shock.front_line(10.0, 2.0, t, t0=1.0)
+    late = shock.front_line(10.0, 2.0, t, t0=3.0)
+    # same slope, offset by v·Δt₀ — sliding the anchor translates the line in x
+    np.testing.assert_allclose(np.diff(early), np.diff(late))
+    np.testing.assert_allclose(early - late, 2.0 * (3.0 - 1.0))
+
+
+def test_front_line_accepts_scalar_and_array_times():
+    assert np.isscalar(shock.front_line(1.0, 1.0, 2.0)) or \
+        shock.front_line(1.0, 1.0, 2.0).ndim == 0
+    assert shock.front_line(1.0, 1.0, np.zeros(4)).shape == (4,)
+
+
+# ---------------------------------------------------------------------------
 # detect_front_edge  (OSIRIS: leading edge of compression)
 # ---------------------------------------------------------------------------
 

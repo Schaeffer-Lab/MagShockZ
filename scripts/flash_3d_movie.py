@@ -25,7 +25,10 @@ ffmpeg then assembles each field's PNGs into an MP4.
 
 The camera and transfer functions are FIXED across the movie (tuned constants in
 the FIELDS registry) so colour maps to the same physical value in every frame.
-Two transfer-function kinds are used (see FIELDS):
+That tuning is per-run — the frame has to hold the plume at its latest time and
+colour has to map onto that run's ambient/peak values — so each run's settings
+live in a named entry of PRESETS, selected with --preset (default `noshield`,
+the original FLASH_3D_noshield tuning).  Two transfer-function kinds are used:
   * "emissive"  — a positive scalar (n_e, T_e, T_i, |B|); a sequential colormap
                   whose per-layer alpha ramps from ~transparent at the ambient
                   (low) end to opaque at the high end, so only the bright end
@@ -42,20 +45,34 @@ transfer function or camera re-renders in seconds — and frames that already ex
 are skipped unless --force.  When a cached grid is missing only some requested
 fields, only the missing fields are sampled and merged back into the cache.
 
-Run parameters (FLASH data_path) are read from the run's single source of truth
-via analysis_utils.RunSpec — never duplicated here — the same as flash_overview.py.
+Which FLASH data to read comes from the config, through flash_source.resolve —
+either directly (`flash_data_dir:`) or from the OSIRIS run that was seeded from
+it (`sim_dir:` -> RunSpec), never duplicated here. --data-dir bypasses the config
+entirely, for a one-off look at a directory that has no config yet.
 
 Usage
 -----
-    # on a compute node (see the .sbatch wrapper)
-    python scripts/flash_3d_movie.py --config config/flash_3d_noshield.yaml \\
+    # on a compute node (see the .sbatch wrapper). --config picks the data,
+    # --preset the matching camera + transfer functions.
+    python scripts/flash_3d_movie.py --config config/flash_3d_2026-07.yaml \\
+        --preset trantham2026-07 \\
         [--fields ne te ti bx by bz bmag] [--stride 1] \\
-        [--t-start 0] [--t-stop 20] \\
-        [--grid-res 256] [--img-res 800] [--fps 5] [--ycrop 0.005] \\
-        [--width 0.55] [--force] [--no-encode]
+        [--t-start 0] [--t-stop 61] \\
+        [--grid-res 256] [--img-res 800] [--fps 5] [--force] [--no-encode]
+
+    # a bare FLASH dump directory, no config
+    python scripts/flash_3d_movie.py \\
+        --data-dir ~/shared/simulations/FLASH_MagShockZ3D-Trantham_2026-07 \\
+        --preset trantham2026-07 --fields ne te ti bx by bz bmag
+
+    # new run: prime the grid cache first (the slow half), then render/re-render
+    # for free while tuning a new PRESETS entry (--width/--campos/--focus/--ycrop
+    # override the preset for a one-off test frame)
+    python scripts/flash_3d_movie.py --config ...yaml --fields ne bz --grids-only
 """
 
 import argparse
+import gc
 import glob
 import os
 import subprocess
@@ -76,6 +93,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
+import flash_source
 
 # NB: intentionally NOT importing flash_utils — its module-level yt.enable_plugins()
 # would register the OSIRIS derived fields globally and break the uniform-grid scene
@@ -93,8 +111,11 @@ def find_plot_files(data_dir):
 
 
 # ---------------------------------------------------------------------------
-# Fixed camera settings (tuned on dump 9; held constant so colour == physical
-# value in every frame). Overridable knobs are CLI flags.
+# Default camera settings (tuned on dump 9 of the ~5 ns FLASH_3D_noshield run;
+# held constant across a movie so colour == physical value in every frame).
+# All four are CLI flags — a longer run needs a wider frame (--width) and a
+# focus/position further out (--focus/--campos) to keep the plume in view.
+# See PRESETS below for the per-run tunings.
 # ---------------------------------------------------------------------------
 FOCUS  = [0.0, 0.12, 0.0]     # cm — look at the plume, a bit above the base
 NORTH  = [0, 1, 0]            # y is vertical (the plume rises in +y)
@@ -173,6 +194,61 @@ ALL_FIELDS = list(FIELDS.keys())
 
 
 # ---------------------------------------------------------------------------
+# Per-run presets (--preset). A volume rendering's camera and transfer functions
+# are only meaningful for the run they were tuned on: the frame has to contain
+# that run's plume at its *latest* time, and colour has to map to that run's
+# ambient/peak values. A preset therefore bundles the camera + ycrop + the TF
+# overrides for one run; anything it does not override falls back to FIELDS /
+# the module camera constants above. Explicit CLI flags beat the preset.
+# ---------------------------------------------------------------------------
+_T2607_RNG, _T2607_G = _signed_B_gaussians(1.2e5)
+
+PRESETS = {
+    # FLASH_3D_noshield (Trantham 2026-03), ~5 ns, ambient |B| ~ 27 T.
+    # The original tuning: all defaults, nothing overridden.
+    "noshield": dict(camera=dict(width=0.55, campos=CAMPOS, focus=FOCUS, ycrop=0.005),
+                     tf={}),
+
+    # FLASH_MagShockZ3D-Trantham_2026-07: same 1.7x1.7x1.7 cm box but run 3x
+    # longer (0-15.25 ns) and with a *weaker* ambient field (B_z = 7e4 G = 7 T
+    # vs ~27 T), so both the framing and every B bound had to be re-tuned.
+    #   camera : the blast fills the box and a jet reaches the y=1.6 cm top
+    #            boundary by ~5 ns, so the frame is the whole domain.
+    #   ycrop  : the solid target slab sits at y < 0.007 cm and bleeds into the
+    #            first sampled cell above it, so crop deeper than the old 0.005.
+    #   ne     : ambient 3.9e18, plume shell few e19, target plume core ~1e21.
+    #   te/ti  : ambient ~11 eV, shocked/jet-head gas 1e2-2e3 eV.
+    #   b*     : ambient B_z 7e4 G; compression to ~4e5 G, cavity down to ~0.
+    "trantham2026-07": dict(
+        camera=dict(width=2.0, campos=[1.7, 1.35, 1.7], focus=[0.0, 0.6, 0.0],
+                    ycrop=0.02),
+        tf=dict(
+            ne=_emissive((6e18, 5e20), "magma", 10 ** -1.45, 10 ** 0.05),
+            te=_emissive((25.0, 1500.0), "afmhot", 10 ** -1.6, 10 ** 0.05),
+            ti=_emissive((25.0, 1200.0), "plasma", 10 ** -1.6, 10 ** 0.05),
+            bmag=_emissive((9e4, 5e5), "viridis", 10 ** -1.6, 10 ** 0.05),
+            bx=dict(kind="gaussians", range=_T2607_RNG, gaussians=_T2607_G),
+            by=dict(kind="gaussians", range=_T2607_RNG, gaussians=_T2607_G),
+            bz=dict(kind="gaussians", range=(-1.0e5, 6.0e5), gaussians=[
+                # compression shell (red), above the 7e4 G ambient
+                (1.5e5, 3.0e4, 0.16, (1.0, 0.55, 0.30)),
+                (2.6e5, 5.0e4, 0.40, (0.95, 0.25, 0.15)),
+                (4.0e5, 8.0e4, 0.75, (0.80, 0.05, 0.05)),
+                # field-expelled cavity (blue): B_z falls from ambient to ~0
+                (4.0e4, 1.5e4, 0.14, (0.55, 0.75, 1.0)),
+                (1.5e4, 2.0e4, 0.32, (0.25, 0.45, 0.95)),
+                (-2.0e4, 2.0e4, 0.60, (0.10, 0.20, 0.90))]),
+        )),
+}
+
+
+def resolve_fields(preset):
+    """FIELDS with the preset's transfer-function overrides applied (a copy)."""
+    tf = PRESETS[preset]["tf"]
+    return {k: (dict(v, tf=tf[k]) if k in tf else v) for k, v in FIELDS.items()}
+
+
+# ---------------------------------------------------------------------------
 # Extraction: AMR -> uniform grid (one array per field, in disp units)
 # ---------------------------------------------------------------------------
 def extract(path, res, fields):
@@ -180,19 +256,35 @@ def extract(path, res, fields):
 
     Returns (data, bbox, t_ns) where data maps field key -> float32 array in the
     field's disp unit.
+
+    The dataset is torn down before returning. This matters: a movie samples
+    dozens of 20-40 GB dumps in one process, and without the teardown each dump
+    leaves its AMR field data behind (measured: ~3 GB per dump, i.e. an OOM kill
+    around dump ~30 of this run). Only the res^3 float32 arrays are kept.
     """
     ds = yt.load(path)
-    le, re_ = ds.domain_left_edge, ds.domain_right_edge
-    ag = ds.arbitrary_grid(le, re_, dims=[res, res, res])
-    data = {}
-    for f in fields:
-        spec = FIELDS[f]
-        arr = np.asarray(ag[spec["yt"]].to(spec["sample_unit"]), dtype=np.float32)
-        if spec["scale"] != 1.0:
-            arr = arr * np.float32(spec["scale"])
-        data[f] = arr
-    bbox = np.array([[float(le[i].to("cm")), float(re_[i].to("cm"))] for i in range(3)])
-    return data, bbox, float(ds.current_time.to("ns"))
+    ag = None
+    try:
+        le, re_ = ds.domain_left_edge, ds.domain_right_edge
+        ag = ds.arbitrary_grid(le, re_, dims=[res, res, res])
+        data = {}
+        for f in fields:
+            spec = FIELDS[f]
+            arr = np.asarray(ag[spec["yt"]].to(spec["sample_unit"]), dtype=np.float32)
+            if spec["scale"] != 1.0:
+                arr = arr * np.float32(spec["scale"])
+            data[f] = arr
+            ag.clear_data()  # drop this field's AMR-sampled buffer before the next
+        bbox = np.array([[float(le[i].to("cm")), float(re_[i].to("cm"))]
+                         for i in range(3)])
+        t_ns = float(ds.current_time.to("ns"))
+    finally:
+        if ag is not None:
+            ag.clear_data()
+        ds.index.clear_all_data()
+        del ag, ds
+        gc.collect()
+    return data, bbox, t_ns
 
 
 def load_grid(grid_path, need, res):
@@ -244,17 +336,23 @@ def load_uds(data, bbox, ycrop):
 # ---------------------------------------------------------------------------
 # Scene builder (fixed camera + per-field TF from the registry)
 # ---------------------------------------------------------------------------
-def _cam(sc, uds, img_res, width):
+def _cam(sc, uds, view):
+    """Point the scene's camera per `view` = (img_res, width, campos, focus)."""
+    img_res, width, campos, focus = view
     cam = sc.camera
     cam.resolution = (img_res, img_res)
-    cam.set_position(uds.arr(CAMPOS, "cm"), north_vector=NORTH)
-    cam.focus = uds.arr(FOCUS, "cm")
+    cam.set_position(uds.arr(list(campos), "cm"), north_vector=NORTH)
+    cam.focus = uds.arr(list(focus), "cm")
     cam.set_width(uds.quan(width, "cm"))
 
 
-def build_scene(uds, field, img_res, width):
-    """Create a fixed-camera volume-render scene for `field` using its TF spec."""
-    spec = FIELDS[field]
+def build_scene(uds, field, view, spec=None):
+    """Create a fixed-camera volume-render scene for `field` using its TF spec.
+
+    `spec` defaults to the FIELDS entry; pass a resolve_fields() entry to render
+    with a preset's transfer function instead.
+    """
+    spec = FIELDS[field] if spec is None else spec
     tfspec = spec["tf"]
     sc = yt.create_scene(uds, field=("gas", field))
     src = sc[0]
@@ -276,7 +374,7 @@ def build_scene(uds, field, img_res, width):
         src.tfh.tf = tf
         src.tfh.bounds = tfspec["range"]
     src.tfh.grey_opacity = False
-    _cam(sc, uds, img_res, width)
+    _cam(sc, uds, view)
     return sc
 
 
@@ -301,7 +399,13 @@ def encode(frame_dir, out_mp4, fps):
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--config", required=True, help="Path to FLASH analysis YAML config.")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--config", help="Path to FLASH analysis YAML config; the FLASH "
+                     "directory comes from its flash_data_dir, or from the OSIRIS run "
+                     "spec it names (sim_dir).")
+    src.add_argument("--data-dir", dest="data_dir",
+                     help="Directory of FLASH plot files, bypassing the config "
+                          "(mutually exclusive with --config).")
     p.add_argument("--fields", nargs="+", default=["ne", "bz"], choices=ALL_FIELDS,
                    help="Which fields to render (default: ne bz). See module docstring.")
     p.add_argument("--stride", type=int, default=1, help="Dump stride (default 1).")
@@ -312,22 +416,42 @@ def main():
                    help="Uniform-grid sampling resolution N (N^3 cells; default 256).")
     p.add_argument("--img-res", type=int, default=IMG_RES_DEFAULT, dest="img_res",
                    help="Rendered image size in pixels (default 800).")
-    p.add_argument("--ycrop", type=float, default=0.005,
-                   help="Crop the basal slab below this y [cm] (default 0.005).")
-    p.add_argument("--width", type=float, default=0.55,
-                   help="Camera frame width [cm] (default 0.55).")
+    p.add_argument("--preset", default="noshield", choices=sorted(PRESETS),
+                   help="Per-run camera + transfer-function tuning (default noshield, "
+                        "the original FLASH_3D_noshield settings). See PRESETS.")
+    p.add_argument("--ycrop", type=float, default=None,
+                   help="Crop the basal slab below this y [cm] (default: the preset's).")
+    p.add_argument("--width", type=float, default=None,
+                   help="Camera frame width [cm] (default: the preset's).")
+    p.add_argument("--campos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
+                   help="Camera position [cm] (default: the preset's).")
+    p.add_argument("--focus", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
+                   help="Camera focus point [cm] (default: the preset's).")
     p.add_argument("--fps", type=int, default=5, help="Movie frame rate (default 5).")
     p.add_argument("--output-dir", default=None, dest="output_dir")
     p.add_argument("--force", action="store_true",
                    help="Re-render frames even if the PNG already exists.")
     p.add_argument("--no-encode", action="store_true", dest="no_encode",
                    help="Render frames only; skip ffmpeg MP4 assembly.")
+    p.add_argument("--grids-only", action="store_true", dest="grids_only",
+                   help="Only sample+cache the uniform grids (the slow, AMR-reading "
+                        "half); skip rendering and encoding. Use this to prime the "
+                        "cache for a new run, then re-run to render once the camera "
+                        "and transfer functions are tuned.")
     args = p.parse_args()
 
-    cfg = analysis_utils.load_config(args.config)
-    spec = analysis_utils.RunSpec.from_sim_dir(cfg["sim_dir"])
-    data_path = spec["data_path"]
-    flash_dir = str(os.path.dirname(data_path))
+    # camera: explicit CLI flag wins, else the preset's tuned value
+    cam = PRESETS[args.preset]["camera"]
+    specs = resolve_fields(args.preset)
+    for k in ("width", "campos", "focus", "ycrop"):
+        if getattr(args, k) is None:
+            setattr(args, k, cam[k])
+
+    if args.data_dir:
+        flash_dir = os.path.abspath(os.path.expanduser(args.data_dir))
+    else:
+        cfg = analysis_utils.load_config(args.config)
+        flash_dir = flash_source.resolve(cfg, args.config).flash_dir
 
     all_files = find_plot_files(flash_dir)
     stop = len(all_files) if args.t_stop is None else min(args.t_stop + 1, len(all_files))
@@ -347,13 +471,21 @@ def main():
     print(f"Fields    : {args.fields}")
     print(f"Dumps     : {len(indices)}  (indices {indices[0]}..{indices[-1]} stride {args.stride})")
     print(f"Grid res  : {args.grid_res}^3   Image: {args.img_res}px   ycrop: {args.ycrop} cm")
+    print(f"Preset    : {args.preset}")
+    print(f"Camera    : pos {args.campos} focus {args.focus} width {args.width} cm")
     print(f"Output    : {out_dir}", flush=True)
+
+    view = (args.img_res, args.width, args.campos, args.focus)
 
     for n, i in enumerate(indices):
         base = os.path.basename(all_files[i])
         frame_paths = {f: os.path.join(frame_dirs[f], f"frame_{i:04d}.png")
                        for f in args.fields}
-        need = [f for f in args.fields if args.force or not os.path.exists(frame_paths[f])]
+        if args.grids_only:
+            need = list(args.fields)
+        else:
+            need = [f for f in args.fields
+                    if args.force or not os.path.exists(frame_paths[f])]
         if not need:
             print(f"[{n + 1:3d}/{len(indices)}] {base}  frames exist — skip", flush=True)
             continue
@@ -369,13 +501,18 @@ def main():
         else:
             src_msg = "cached grid"
         print(f"[{n + 1:3d}/{len(indices)}] {base}  ({src_msg}, t={t_ns:.2f} ns) "
-              f"-> render {need}", flush=True)
+              f"-> {'cache only' if args.grids_only else 'render ' + str(need)}", flush=True)
+        if args.grids_only:
+            continue
 
         uds = load_uds(data, bbox, args.ycrop)
         for f in need:
-            save_frame(build_scene(uds, f, args.img_res, args.width),
-                       frame_paths[f], FIELDS[f]["title"], t_ns)
+            save_frame(build_scene(uds, f, view, specs[f]),
+                       frame_paths[f], specs[f]["title"], t_ns)
 
+    if args.grids_only:
+        print(f"\n--grids-only: grids cached in {grids_dir}; nothing rendered.")
+        return
     if args.no_encode:
         print("\n--no-encode: frames only.")
         return

@@ -52,13 +52,27 @@ python scripts/tune_shock.py --config ...yaml --mode regions --dump 400      # p
 
 # FLASH analog of tune_shock: place the FLASH front by hand on physical-unit (µm/ns)
 # line-outs, then feed it to flash_rh_prediction.py. trajectory mode writes
-# flash: v_shock_est_cms/x_shock_0_cm; regions mode writes flash_dump_params.<idx>:
+# flash: v_shock_est_cms/x_shock_0_cm/t_shock_0_s — all three parameters of the straight
+# front x(t) = x0 + v*(t - t0) move, including the anchor t0 ('t <ns>'), so a shock that
+# forms mid-run is fitted from its formation time rather than back-extrapolated; t0
+# defaults to the IC dump time when the key is absent. regions mode writes
+# flash_dump_params.<idx>:
 # x_shock_cm/x_downstream_start_cm (cm; separate from the OSIRIS c/ωpe dump_params).
 # regions mode also shows a 2D n_e SlicePlot through the LOS, sharing the LOS-distance
 # axis with the line-outs so the shock/downstream markers fall over the 2D density jump
 # (--slice-axis {x,y,z}, --slice-halfwidth-um <transverse window>, --no-slice to skip).
-python scripts/tune_flash_shock.py --config config/flash_3d_noshield.yaml                  # v_shock_est/x_shock_0 on n_e/|B| streak
+python scripts/tune_flash_shock.py --config config/flash_3d_noshield.yaml                  # v_shock_est/x_shock_0/t_shock_0 on n_e/|B| streak
 python scripts/tune_flash_shock.py --config ...yaml --mode regions --snapshot-idx -1       # per-dump x_shock_cm/x_downstream_start_cm (+ slice)
+
+# Experimental streaked shadowgraphy vs FLASH n_e, drawn in the IMAGE's own ns/mm axes
+# (never rescaled — the shorter simulation is translated onto them and the image cropped):
+# side-by-side streaks, a two-colormap overlay (experiment in grey under n_e whose
+# opacity ramps with density) and profiles at --times. The experiment/FLASH registration
+# is HAND-TUNED (config experiment.registration; --t-offset-ns/--x-offset-mm/--flip-space
+# override); --t-window/--x-window crop the view, --full-range shows the whole record.
+python scripts/flash_experiment_compare.py --config config/flash_3d_2026-07.yaml
+python scripts/flash_experiment_compare.py --config ...yaml --fit          # fit the shift, + an r map
+python scripts/flash_experiment_compare.py --config ...yaml --t-offset-ns 2.5 --x-offset-mm -1.2 --t-window 0 25
 
 # Quick MP4 movie of a diagnostic (analysis env; --units electron|ion sets axis/time
 # normalization read from the run dir; crop bounds are physical values in that unit;
@@ -66,6 +80,14 @@ python scripts/tune_flash_shock.py --config ...yaml --mode regions --snapshot-id
 python scripts/make_movie.py -d <run>/MS --units ion --config config/<run>.yaml  # interactive
 python scripts/make_movie.py -d <run>/MS/FLD/b2-savg --no-interactive \
     --units ion --config config/<run>.yaml --xlim 80 120 --log -s 4 -o b2   # headless
+
+# 3D volume-rendered FLASH movies (analysis env; compute node — see the .sbatch).
+# --preset picks that run's tuned camera + transfer functions; it must match the
+# --config's data. Sampling each AMR dump is the slow half and is cached, so
+# --grids-only primes the cache and later renders are seconds each.
+python scripts/flash_3d_movie.py --config config/flash_3d_2026-07.yaml \
+    --preset trantham2026-07 --fields ne te ti bx by bz bmag
+python scripts/flash_3d_movie.py --config ...yaml --preset ... --grids-only  # cache first
 ```
 
 The generator's CLI is **terminal-only with no hidden defaults**: argparse enforces
@@ -87,6 +109,74 @@ In a `run.yaml`, the `geometry` / `solver` / `diagnostics` groups exist purely f
 readability and are flattened to top-level keys (matching the original CLI flags);
 `species_names` / `charge_states` stay nested as metadata. `RunSpec` is deliberately
 dependency-light (stdlib + PyYAML, astropy imported lazily) so it is unit-testable.
+
+### FLASH analysis configs: which data, resolved two ways
+
+A FLASH-side config (`config/flash_*.yaml`) says which FLASH data it analyses in one of
+two ways; `src/flash_source.py::resolve(cfg, config_path)` normalises both to one
+`FlashSource` (`flash_dir`, `line_start`, `line_end`, `ic_index`, and — when knowable —
+`reference_density` / `rqm_factor`), so no script branches on the mode:
+
+- **via-run** — `sim_dir:` names an OSIRIS run; the FLASH `data_path` and the LOS
+  (`start_point` / `end_point`) come from its `run.yaml` through `RunSpec`, never
+  duplicated in the config. `ic_index` is the dump that seeded the deck, so FLASH and
+  OSIRIS times line up. This is `config/flash_3d_noshield.yaml`.
+- **direct** — `flash_data_dir:` points straight at a FLASH output directory and the
+  config states its own `line_of_sight: {start_point, end_point}` (cm) plus an optional
+  `ic_index` (default 0). For FLASH runs with no OSIRIS deck. This is
+  `config/flash_3d_2026-07.yaml`.
+
+`flash_data_dir` wins if both are set; `$MAGSHOCKZ_FLASH_DIR` overrides the directory in
+either mode (the FLASH analogue of `$MAGSHOCKZ_SIM_DIR`, which `load_config` applies to
+`sim_dir` — now optional, since a direct-mode config names no OSIRIS run). `flash_source`
+resolves *paths and numbers only* — it never opens a dump, so it stays stdlib-light and
+unit-tested; listing the plot files stays with `flash_utils.find_plot_files`, which owns
+the filename convention. `scripts/flash_osiris_compare.py` deliberately keeps `sim_dir`:
+it compares the two codes, so it genuinely needs both sides.
+
+### Experimental streak images: the `experiment:` config block
+
+`scripts/flash_experiment_compare.py` compares a **streaked-shadowgraphy** image
+(`experiment/<shot>/shadowgraphy_streaked/`) to the FLASH nₑ streak. A streak has the same
+layout as the FLASH one — time [ns] horizontal, one spatial axis vertical.
+
+**The image's own axes are the frame.** The experimental streak is never stretched,
+resampled or mapped into simulation units; every figure is drawn in its ns and mm. The
+simulation — ~15 ns of a ~69 ns record, 6.3 mm of a 10 mm slit — is *translated* onto
+those axes and the image is *cropped* to the window in view. `src/experiment_image.py`
+owns both halves and is numpy-only (matplotlib's `imread` is imported lazily), so it is
+unit-tested in CI like the rest of `src/`:
+
+- **Load.** Prefer the **raw** streak: `experiment.csv` (a 2048² CSV of camera counts) +
+  `experiment.calib` (`px_to_mm`, `px_to_ns`). The pixel grid *is* the measurement, so
+  `load_streak_csv` gets the axes from the calibration alone — 2048 px × 0.033482716 =
+  68.573 ns and × 0.005026907 = 10.295 mm — with `origin` placing mm = 0 (default
+  `center`) and `row0_is_top` (default true) flipping the camera's top-down rows. The
+  CSV is parsed once and cached beside it as `.npy`. `load_streak` (PNG + `axes:` +
+  `crop_px`, with `detect_plot_box` finding the plot box inside a *decorated* figure)
+  is the fallback for when only a rendered figure exists; its `axes` spans have to be
+  read off the burned-in ticks by hand and must never be shrunk to "zoom".
+- **Crop.** To look at part of the record use `experiment.view` / `--t-window` /
+  `--x-window`, which `crop_window` turns into a whole-pixel crop that leaves every
+  feature at the same ns and mm — never a rescale.
+- **Register.** `t_exp = t_flash + t_offset_ns`, `mm = ±(los_µm/1000) + x_offset_mm` — a
+  rigid translation of FLASH onto the image, plus a flip when the slit's +mm opposes the
+  LOS. The camera trigger and the mm zero have no known FLASH counterpart, so this is
+  **not derived**: either slide `--t-offset-ns` / `--x-offset-mm` / `--flip-space` by hand
+  or fit it with `--fit`, which resamples FLASH onto the image's pixel pitch (no
+  rescaling) and takes the whole-pixel shift with the highest normalised
+  cross-correlation, evaluating every placement at once by FFT. Record the answer in
+  `experiment.registration`. The script prints where FLASH landed and warns (falling
+  back to the full record) when the registered data misses the image entirely.
+  **Always read `flash_experiment_fit.png` before quoting a fitted offset**: for shot 3
+  the r map is a broad *ridge*, flat to ±0.03 in r across the whole 53 ns of trial time
+  offsets, because the FLASH leading edge (≈870 km/s over 3.8–7.3 ns) and the measured
+  front (≈220 km/s) have such different slopes that no translation can make them
+  coincide. The space offset is well determined; the time offset is not.
+
+Caveat worth repeating in any write-up: shadowgraphy brightness responds to `∇²∫nₑ dl`
+through the probe, not to a point sample of nₑ — front *positions* are comparable, signal
+*amplitudes* are not.
 
 ### Generation: the `flash2osiris` package (external)
 

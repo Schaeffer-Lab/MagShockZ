@@ -8,6 +8,10 @@
 # duplicated here. RunSpec resolves <sim_dir>/run.yaml, then run_manifest.yaml,
 # then runme*.sh.
 #
+# This is the "via-run" mode of src/flash_source.py. A FLASH run with no OSIRIS deck
+# instead points straight at its data with `flash_data_dir:` + `line_of_sight:`
+# (see config/flash_3d_2026-07.yaml).
+#
 # Used by the FLASH scripts: flash_overview.py, flash_rh_prediction.py,
 # tune_flash_shock.py, run_flash_energy_partition.py.
 #
@@ -25,7 +29,10 @@ sim_dir: /pscratch/sd/d/dschnei/perlmutter_1.3.1d
 # FLASH detection seeds / trajectory fit (physical units).
 #   v_shock_est_cms : shock velocity along the LOS [cm/s] (trajectory fit; also
 #                     the default v_shock for flash_rh_prediction.py).
-#   x_shock_0_cm    : shock position along the LOS at the IC dump time [cm].
+#   x_shock_0_cm    : shock position along the LOS at the anchor time t_shock_0_s [cm].
+#   t_shock_0_s     : anchor [s] — the time the front sat at x_shock_0_cm. Optional;
+#                     defaults to the IC dump time. Set it (tune_flash_shock 't <ns>')
+#                     to start the fit where the shock actually forms.
 flash:
   v_shock_est_cms: 97000000   # cm/s
   x_shock_0_cm:   0.185      # position at IC dump [cm]

@@ -1,0 +1,92 @@
+# FLASH-side analysis config for the FLASH_MagShockZ3D-Trantham_2026-07 run
+# (the 2026-07 data, with the corrected magnetic fields).
+#
+# This run has no OSIRIS deck seeded from it, so the config points DIRECTLY at the
+# FLASH output directory and states the line of sight itself (the "direct" mode of
+# src/flash_source.py). The alternative — used by flash_3d_noshield.yaml — is to name
+# an OSIRIS run with `sim_dir:` and inherit data_path/start_point/end_point from its
+# run.yaml. Set one or the other; flash_data_dir wins if both are present.
+#
+# Used by the FLASH scripts: flash_overview.py, flash_rh_prediction.py,
+# tune_flash_shock.py, run_flash_pressure_partition.py, flash_3d_movie.py.
+#
+# Distances/velocities are PHYSICAL CGS (cm, cm/s) unless noted.
+
+# Directory of MagShockZ_hdf5_plt_cnt_* files. Override with $MAGSHOCKZ_FLASH_DIR.
+flash_data_dir: /mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2026-07
+
+# Line of sight the 1D line-outs are extracted along [cm], same convention as the
+# generator's --start_point/--end_point. This is the canonical radial LOS carried
+# over from the perlmutter_1d runs (along +y at x=z=0). The 3D domain here is
+# x,z in [-0.85, 0.85] and y in [-0.1, 1.6] cm, so the far end can be pushed out
+# past 0.70 if the shock runs off the end of the current window.
+line_of_sight:
+  start_point: [0, 0.07, 0]
+  end_point:   [0, 0.70, 0]
+
+# Plot-file index that anchors t=0 for the front trajectory (default 0). In the
+# via-run configs this is the dump that seeded the OSIRIS deck; here it is just the
+# dump you want times measured from.
+ic_index: 0
+
+# Experimental streaked-shadowgraphy image to compare against
+# (scripts/flash_experiment_compare.py).  The streak has the same layout as the FLASH
+# nₑ streak — time [ns] horizontal, one spatial axis vertical — so the two can be put
+# on a common (t, LOS distance) frame.
+#
+#   image        : repo-relative (or absolute) path to the streak PNG.
+#   crop_px      : [left, right, top, bottom] of the data rectangle inside the image,
+#                  slice-ready/half-open.  The shot-3 PNG is a *decorated* matplotlib
+#                  figure (axes burned in), so the data is an inset box; leave null and
+#                  it is auto-detected (here: [60, 557, 9, 380]).
+#   t_range_ns   : what the CROPPED box spans in time [ns] — read off its tick marks.
+#   x_range_mm   : ditto in space [mm].  These are the only calibration: the sibling
+#                  calib.csv (px_to_mm / px_to_ns) calibrates the RAW 2048² streak, not
+#                  this downsampled render.  Cross-check: 68.57 ns / 0.033482716 and
+#                  10.28 mm / 0.005026907 both give ≈2048 px, so these extents are right.
+#   invert       : true if the feature of interest is dark on a bright background.
+#
+# Registration onto the FLASH frame — HAND-TUNED, not derived.  The camera trigger and
+# the mm zero have no known FLASH counterpart, so slide these until the features line up
+# (--t-offset-ns / --x-offset-mm / --flip-space override them) and then record them here:
+#   t_flash = t_exp − t_offset_ns          los_µm = ±1000·(mm − x_offset_mm)
+#   t_offset_ns  : experiment time [ns] at which FLASH t = 0 occurs.
+#   x_offset_mm  : experiment position [mm] of LOS distance 0 (the LOS start point).
+#   flip_space   : true when the experiment's +mm runs opposite to the line of sight.
+experiment:
+  image: experiment/shot3/shadowgraphy_streaked/shadowgraphy_lineouts_with_axes.png
+  crop_px: null
+  t_range_ns: [0.0, 20.0]
+  x_range_mm: [0, 10]
+  invert: false
+  t_offset_ns: 0.0
+  x_offset_mm: 0.0
+  flip_space: false
+
+# Adiabatic index for the perpendicular-MHD jump (flash_rh_prediction.py).
+# gamma=(f+2)/f: 5/3 (3 DOF), 2 (2 DOF), 3 (1 DOF). Default 5/3 if omitted.
+# gamma: 1.6667
+
+# FLASH detection seeds / trajectory fit (physical units) — set by
+# scripts/tune_flash_shock.py (trajectory mode). Not yet tuned for this run.
+#   v_shock_est_cms : shock velocity along the LOS [cm/s]
+#   x_shock_0_cm    : shock position along the LOS at the anchor time t_shock_0_s [cm]
+#   t_shock_0_s     : anchor [s] — the time the front sat at x_shock_0_cm. Optional;
+#                     defaults to the ic_index dump time. The shock here forms partway
+#                     through the run, so expect to slide it with 't <ns>'.
+# flash:
+#   v_shock_est_cms: 0
+#   x_shock_0_cm: 0
+#   t_shock_0_s: 0
+
+# Per-dump hand-placed front, keyed by plot-file index (set by
+# scripts/tune_flash_shock.py --mode regions). These are per-dataset and do NOT
+# carry over from flash_3d_noshield.yaml — this run needs its own regions pass.
+#   x_shock_cm            : shock-front position along the LOS [cm]
+#   x_downstream_start_cm : left edge of the downstream region [cm]
+flash_dump_params: {}
+flash:
+  # v_shock_est_cms: 100000000  # set by tune_shock
+  v_shock_est_cms: 30000000  # set by tune_shock
+  x_shock_0_cm: 0  # set by tune_shock
+  t_shock_0_s: 8.7e-10  # set by tune_shock

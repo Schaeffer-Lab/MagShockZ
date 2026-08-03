@@ -10,7 +10,7 @@ config with every comment preserved.
 
 The downstream analysis reads the front from the config:
 
-    flash:             v_shock_est_cms, x_shock_0_cm     (the linear front trajectory)
+    flash:             v_shock_est_cms, x_shock_0_cm, t_shock_0_s   (front trajectory)
     flash_dump_params: <idx>: x_shock_cm, x_downstream_start_cm   (per-dump region edges)
 
 ``flash_dump_params`` is a separate top-level section (physical CGS, keyed by the
@@ -23,11 +23,16 @@ re-renders ``results/<run>/tune_flash_*.png`` and prints its path.  Distances ar
 
 Two modes
 ---------
-trajectory (default) — tune ``flash.v_shock_est_cms`` / ``flash.x_shock_0_cm``
-    against the nₑ and |B| streaks.  Commands:
+trajectory (default) — tune the straight front ``x(t) = x₀ + v·(t − t₀)`` against the
+    nₑ and |B| streaks.  All three parameters move, including the anchor t₀: a shock
+    that forms partway through the run is fitted by sliding the start point of the fit
+    to its formation time, instead of back-extrapolating to a position it never had.
+    t₀ defaults to the IC dump time (the original behaviour) and the anchor (t₀, x₀) is
+    drawn as a star.  Commands:
         v <val>     set trial v_shock [km/s]
-        x <val>     set trial x_shock_0 [µm]  (front position at the IC dump time)
-        save        write v_shock_est_cms + x_shock_0_cm to the config (asks y/N)
+        x <val>     set trial x_shock_0 [µm]  (front position at the anchor time t₀)
+        t <val>     set trial t_shock_0 [ns]  (the anchor: when the front sat at x₀)
+        save        write v_shock_est_cms + x_shock_0_cm + t_shock_0_s (asks y/N)
         q           quit
 
 regions — tune one dump's ``x_shock_cm`` / ``x_downstream_start_cm`` against its
@@ -65,7 +70,9 @@ sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import analysis_utils
 import plot_style
+import flash_source
 import flash_utils as fu
+import shock
 import yaml_edit
 # Reuse the overview's streak assembly so the streak the tuner draws is byte-for-byte
 # the one the analysis produces; dumps load via the shared fu.load_lineouts.
@@ -81,14 +88,18 @@ from flash_overview import assemble_streak
 # FLASH run-spec resolution
 # ---------------------------------------------------------------------------
 
-def _run_paths(cfg):
-    """Resolve (flash_dir, sorted plot files, LOS endpoints, IC index/time) from the spec."""
-    spec       = analysis_utils.RunSpec.from_sim_dir(cfg["sim_dir"])
-    data_path  = spec["data_path"]
-    flash_dir  = str(os.path.dirname(data_path))
-    ic_index   = int(os.path.basename(data_path)[-4:])
-    line_start = tuple(float(v) for v in spec["start_point"])
-    line_end   = tuple(float(v) for v in spec["end_point"])
+def _run_paths(cfg, config_path="config"):
+    """Resolve (flash_dir, sorted plot files, LOS endpoints, IC index/time).
+
+    The FLASH directory and LOS come from :func:`flash_source.resolve` — either
+    stated in the config (``flash_data_dir`` + ``line_of_sight``) or inherited from
+    an OSIRIS run's run.yaml (``sim_dir``).
+    """
+    source     = flash_source.resolve(cfg, config_path)
+    flash_dir  = source.flash_dir
+    ic_index   = source.ic_index
+    line_start = source.line_start
+    line_end   = source.line_end
     all_files  = fu.find_plot_files(flash_dir)
     try:
         t_ic_s = fu.flash_time_s(all_files[ic_index] if ic_index < len(all_files)
@@ -108,7 +119,7 @@ class TrajectoryTuner:
     def __init__(self, cfg, args):
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
-         ic_index, self.t_ic_s) = _run_paths(cfg)
+         ic_index, self.t_ic_s) = _run_paths(cfg, args.config)
         self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir)
         self.png = os.path.join(self.out_dir, "tune_flash_trajectory.png")
 
@@ -132,15 +143,23 @@ class TrajectoryTuner:
         self.B_streak,  _,            _         = assemble_streak(lineouts, "B_mag")
         self.t_s = (self.time_ns * u.ns).to("s").value
 
-        # Trial trajectory seeded from the config flash: block.
+        # Trial trajectory seeded from the config flash: block.  The anchor t₀ is a
+        # third free parameter (a shock that forms mid-run is fitted by sliding the
+        # anchor to its formation time); absent from the config it is the IC dump time,
+        # which reproduces the original two-parameter behaviour exactly.
         flash = cfg.get("flash", {})
         self.v_cms  = float(flash.get("v_shock_est_cms", 0.0))
         self.x0_cm  = float(flash.get("x_shock_0_cm",
                                       (float(self.x_um.mean()) * u.um).to("cm").value))
+        self.t0_s   = float(flash.get("t_shock_0_s", self.t_ic_s))
 
     def _front_um(self):
-        # x(t) = x_shock_0 + v_shock·(t − t_IC), exactly as flash_overview plots it.
-        return ((self.x0_cm + self.v_cms * (self.t_s - self.t_ic_s)) * u.cm).to("um").value
+        # x(t) = x_shock_0 + v_shock·(t − t₀), exactly as flash_overview plots it.
+        return ((shock.front_line(self.x0_cm, self.v_cms, self.t_s, self.t0_s))
+                * u.cm).to("um").value
+
+    def _t0_ns(self):
+        return (self.t0_s * u.s).to("ns").value
 
     def _fit_fronts(self):
         """Per-dump hand-fit shock fronts (config flash_dump_params) mapped onto the
@@ -163,7 +182,8 @@ class TrajectoryTuner:
         x_line = self._front_um()
         t_fit, x_fit = self._fit_fronts()
         leg = (f"trial  v={(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s  "
-               f"x₀={(self.x0_cm * u.cm).to('um').value:.1f} µm")
+               f"x₀={(self.x0_cm * u.cm).to('um').value:.1f} µm  "
+               f"t₀={self._t0_ns():.2f} ns")
         self._panel(axes[0], self.ne_streak, self.x_um, r"$n_e$ [cm$^{-3}$]",
                     "magma", True, x_line, leg, t_fit, x_fit)
         self._panel(axes[1], self.B_streak, self.x_um, r"$|B|$ [G]",
@@ -171,12 +191,14 @@ class TrajectoryTuner:
         axes[1].set_xlabel("$t$ [ns]")
         fig.suptitle(f"FLASH trajectory tuning — {os.path.basename(self.flash_dir)}\n"
                      f"trial v_shock={(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s, "
-                     f"x_shock_0={(self.x0_cm * u.cm).to('um').value:.1f} µm", fontsize=12)
+                     f"x_shock_0={(self.x0_cm * u.cm).to('um').value:.1f} µm "
+                     f"@ t_0={self._t0_ns():.2f} ns", fontsize=12)
         fig.tight_layout()
         fig.savefig(self.png, dpi=130, bbox_inches="tight")
         plt.close(fig)
         print(f"  v_shock = {(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s   "
-              f"x_shock_0 = {(self.x0_cm * u.cm).to('um').value:.2f} µm ({self.x0_cm:.4g} cm)")
+              f"x_shock_0 = {(self.x0_cm * u.cm).to('um').value:.2f} µm ({self.x0_cm:.4g} cm)   "
+              f"t_0 = {self._t0_ns():.3f} ns ({self.t0_s:.4g} s)")
         print(f"  ↻ wrote {self.png} — refresh in your IDE")
 
     def _panel(self, ax, streak, x_um, label, cmap, log, x_line_um, leg,
@@ -197,6 +219,10 @@ class TrajectoryTuner:
         cb = ax.figure.colorbar(im, ax=ax, pad=0.01)
         cb.set_label(label)
         ax.plot(self.time_ns, x_line_um, color="white", ls="-", lw=2.0, label=leg)
+        # The anchor (t₀, x₀) itself — the movable start point of the fit.
+        ax.scatter([self._t0_ns()], [(self.x0_cm * u.cm).to("um").value],
+                   s=110, marker="*", facecolor="white", edgecolor="k",
+                   linewidths=1.0, zorder=6, label=r"anchor ($t_0$, $x_0$)")
         if t_fit is not None and t_fit.size:
             ax.scatter(t_fit, x_fit, s=55, marker="o",
                        facecolor="cyan", edgecolor="k", linewidths=1.0,
@@ -207,7 +233,7 @@ class TrajectoryTuner:
         ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
 
     def loop(self, config_path, no_write):
-        print("\ntrajectory mode — commands: v <km/s> | x <µm> | save | q")
+        print("\ntrajectory mode — commands: v <km/s> | x <µm> | t <ns> | save | q")
         self.render()
         while True:
             try:
@@ -221,12 +247,15 @@ class TrajectoryTuner:
             if cmd in ("q", "quit", "exit"):
                 break
             elif cmd == "v" and rest:
-                self.v_cms = (float(rest[0]) * u.km / u.s).to("cm/s").value; self.render()
+                self.v_cms = float((float(rest[0]) * u.km / u.s).to("cm/s").value); self.render()
             elif cmd == "x" and rest:
-                self.x0_cm = (float(rest[0]) * u.um).to("cm").value; self.render()
+                self.x0_cm = float((float(rest[0]) * u.um).to("cm").value); self.render()
+            elif cmd == "t" and rest:
+                self.t0_s = float((float(rest[0]) * u.ns).to("s").value); self.render()
             elif cmd == "save":
                 edits = [("flash.v_shock_est_cms", round(self.v_cms)),
-                         ("flash.x_shock_0_cm", round(self.x0_cm, 6))]
+                         ("flash.x_shock_0_cm", round(self.x0_cm, 6)),
+                         ("flash.t_shock_0_s", float(f"{self.t0_s:.6g}"))]
                 yaml_edit.confirm_write(config_path, edits, no_write)
             else:
                 print("  ? commands: v <km/s> | x <µm> | save | q")
@@ -242,7 +271,7 @@ class RegionsTuner:
     def __init__(self, cfg, args):
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
-         _ic_index, t_ic_s) = _run_paths(cfg)
+         _ic_index, t_ic_s) = _run_paths(cfg, args.config)
         self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir)
 
         self.idx = args.snapshot_idx % len(all_files)   # positive plot-file index = config key
@@ -275,9 +304,12 @@ class RegionsTuner:
         else:
             v_cms = float(flash.get("v_shock_est_cms", 0.0))
             x0_cm = float(flash.get("x_shock_0_cm", 0.0))
-            # x0_cm is the front at the IC dump time; project to this dump's time
-            # exactly as flash_overview does (x0 + v·(t − t_IC)).
-            self.x_shock_um = ((x0_cm + v_cms * (self.lo["t_s"] - t_ic_s)) * u.cm).to("um").value \
+            # x0_cm is the front at the anchor time t₀ (config flash.t_shock_0_s,
+            # default the IC dump time); project to this dump's time exactly as
+            # flash_overview does (x0 + v·(t − t₀)).
+            t0_s = float(flash.get("t_shock_0_s", t_ic_s))
+            self.x_shock_um = (shock.front_line(x0_cm, v_cms, self.lo["t_s"], t0_s)
+                               * u.cm).to("um").value \
                 if (v_cms or x0_cm) else float(self.x_um.mean())
         self.x_down_um = (float(per["x_downstream_start_cm"]) * u.cm).to("um").value \
             if "x_downstream_start_cm" in per else self.x_shock_um - 200.0
@@ -439,9 +471,9 @@ class RegionsTuner:
             elif cmd == "save":
                 edits = [
                     (f"flash_dump_params.{self.idx}.x_shock_cm",
-                     round((self.x_shock_um * u.um).to("cm").value, 6)),
+                     round(float((self.x_shock_um * u.um).to("cm").value), 6)),
                     (f"flash_dump_params.{self.idx}.x_downstream_start_cm",
-                     round((self.x_down_um * u.um).to("cm").value, 6)),
+                     round(float((self.x_down_um * u.um).to("cm").value), 6)),
                 ]
                 yaml_edit.confirm_write(config_path, edits, no_write)
             else:
@@ -486,8 +518,9 @@ def main():
 
     cfg = analysis_utils.load_config(args.config)
     config_path = os.path.abspath(args.config)
+    src = flash_source.resolve(cfg, config_path)
     print(f"Config  : {config_path}")
-    print(f"sim_dir : {cfg['sim_dir']}")
+    print(f"FLASH   : {src.flash_dir}   (from {src.source})")
 
     if args.mode == "trajectory":
         TrajectoryTuner(cfg, args).loop(config_path, args.no_write)

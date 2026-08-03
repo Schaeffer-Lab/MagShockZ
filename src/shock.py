@@ -133,6 +133,20 @@ def robust_polyfit(t, x, deg: int = 2, n_iter: int = 3, n_sigma: float = 2.5):
     return coeffs
 
 
+def front_line(x0, v, t, t0=0.0):
+    """Straight-line shock front ``x(t) = x0 + v·(t − t0)``.
+
+    The hand-placed FLASH trajectory (config ``flash:``) in the form every consumer
+    draws it.  ``t0`` is the *anchor*: the time at which the front sat at ``x0``.  It
+    is a free parameter — a shock that forms partway through the run is fitted by
+    sliding the anchor to its formation time rather than by back-extrapolating a
+    position it never had.  Defaults to 0 (anchor at t=0).
+
+    Units are the caller's, and must be consistent (the FLASH scripts use cm, cm/s, s).
+    """
+    return x0 + v * (np.asarray(t, dtype=float) - t0)
+
+
 def trajectory_at(coeffs, t):
     """Evaluate the fitted front (position, velocity) at time(s) ``t``.
 
