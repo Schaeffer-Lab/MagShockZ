@@ -1,0 +1,72 @@
+# =============================================================================
+#  PRODUCTION run config -- MagShockZ 2D hybrid-PIC   (NOT the example / test config)
+# =============================================================================
+# This is the long, large-domain production counterpart of examples/magshockz_2d.yaml.
+# It is deliberately a SEPARATE file so the quick example config stays small and CI-fast.
+#
+# Larger than the example in BOTH:
+#   * SPACE: z (FLASH y, the shock-propagation direction) grows 4.5 mm -> 14.5 mm (~3.2x);
+#            x stays +/-5 mm because beyond that the dense liner has micron-scale d_i that
+#            would break hybrid stability at sim_dx_m=1e-5 (see docs/hybrid_step6_blowup.md).
+#   * TIME:  n_steps 200 -> 5000  (~1.3e-8 s at the auto dt ~2.6e-12 s; ~25x the example,
+#            ~125x the 40-step movie run).
+#
+# Domain @ sim_dx_m=1e-5:  x 10 mm -> 1000 cells,  z 14.5 mm -> 1450 cells  (~1.45M PIC cells).
+# The added z region (up to 15 mm) is lower-density ambient -> LARGER d_i there, so 1e-5 still
+# resolves the skin depth everywhere the box now covers.
+#
+# TWO-PHASE, TWO-ENV workflow (the run driver reads pre-extracted interp/; no re-extract to
+# just change n_steps):
+#   1. STAGE (yt env):    python init_warpx/stage_prod.py      # extract big box + deflate sqrt(4pi) B
+#   2. RUN   (warpx env): sbatch init_warpx/run_production.sbatch
+#
+# !! sqrt(4*pi) B INFLATION (this FLASH dump only) !! stage_prod.py deflates B after extraction.
+# FUTURE FLASH dumps will not carry this factor -- do not bake it in.
+# =============================================================================
+
+extract:
+  normal_axis: z                       # slice plane normal (FLASH axis); in-plane -> WarpX (x, z)
+  slice_coord_m: 1.770833333333388e-05 # pin to the SAME validated mid-plane slice as the example
+  level: 3                             # FLASH READ fidelity (covering-grid level). Proven value;
+                                       #   raise to 4 for finer FLASH sampling (heavier extract).
+  box_bounds_m:
+    x: [-0.005, 0.005]                 # keep +/-5 mm: liner beyond this gates hybrid stability
+    y: [0.0005, 0.015]                 # GROW z: 4.5 mm -> 14.5 mm, still below FLASH top (~0.0159 m)
+  allow_extrapolation: false           # box stays inside the FLASH domain -> no edge extension
+  species_names:
+    cham: aluminum                     # CORRECTED identity (cham=Al abar~27, targ=Si abar~28)
+    targ: silicon
+
+run:
+  ppc: 16                 # macroparticles per cell per populated charge state (2x the movie run)
+  gamma: 1.6666666667     # electron pressure closure exponent (5/3 adiabatic)
+  Te_eV: null             # null = FLASH density-weighted mean electron temperature
+  fit_electron_closure: false
+  n0_per_m3: null         # null = FLASH mean electron density (Ohm's-law reference)
+  plasma_resistivity: 1.0e-6       # Ohm*m. Chosen from the eta scan (R_m ~ 10): sharp compression
+                                   #   front, no grid hash, no hyper needed. 1e-4 was ~10^3x Spitzer
+                                   #   and diffused+decayed |B|. See eta_{final_B,sharpness}.png.
+  plasma_hyper_resistivity: null   # Ohm*m^3; not needed at 1e-6. Set ~1e-16 only if you drop
+                                   #   plasma_resistivity to near-physical 1e-7 (bare 1e-7 grows hash).
+  holmstrom_vacuum_region: true    # drop Hall+pressure where rho < n_floor (vacuum) -- HED slices
+  substeps: 300           # B-substep count = whistler-CFL stability gate. dt/substeps ~ 8.7e-15 s
+                          #   << the ~2.2e-14 s limit. DO NOT lower without raising dt. (This, not
+                          #   sim_dx_m, is what fixed the step-6 blow-up -- docs/hybrid_step6_blowup.md.)
+  n_floor_frac: 0.05
+  sim_dx_m: 1.0e-5        # PIC mesh spacing (m); resolves d_i = c/omega_pi over the (cropped) box.
+  dt_s: null              # null = auto-estimate (particle-crossing / gyro CFL); ~2.6e-12 s here.
+  dt_safety: 0.5
+  n_steps: 5000           # PRODUCTION length: ~1.3e-8 s of evolution.
+  diag_period: 100        # plotfile every 100 steps -> ~51 plotfiles (~8-9 GB total on scratch).
+  density_threshold_frac: 1.0e-3
+  # OSIRIS MagShockZ boundary setup (validated). Fields (PICMI -> WarpX): periodic, dirichlet=PEC,
+  # neumann=PMC/"open". Particles: periodic, thermal.
+  #   x: periodic  |  z-lo (bottom): PEC field, thermal ions  |  z-hi (top): Neumann field, thermal ions
+  boundary: [periodic, periodic]
+  field_boundary_lo: [periodic, dirichlet]
+  field_boundary_hi: [periodic, neumann]
+  particle_boundary_lo: [periodic, thermal]
+  particle_boundary_hi: [periodic, thermal]
+  max_grid_size: 256      # AMReX tiling for domain decomposition across the 8 GPU ranks.
+  diag_format: plotfile
+  diag_dir: diags         # written under the run output dir (input_files/warpx/magshockz_2d_prod/diags)
