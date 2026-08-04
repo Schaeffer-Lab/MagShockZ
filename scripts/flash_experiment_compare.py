@@ -11,16 +11,25 @@ stretch of a ±5 mm slit, is *translated* onto those axes, and the image is *cro
 to the window being looked at:
 
   Figure 1 ``flash_experiment_side_by_side.png``
-      the experimental streak above the FLASH nₑ streak, sharing both axes, with the
-      config's front trajectory (flash: v_shock_est_cms / x_shock_0_cm / t_shock_0_s)
-      drawn on both.
+      the experimental streak above the FLASH nₑ streak, sharing both axes, with every
+      straight-line feature drawn on both.
   Figure 2 ``flash_experiment_overlay.png``
       both in one panel: the experiment underneath in greyscale, FLASH nₑ on top in a
       second colormap whose opacity ramps with density, so the simulated structure
       glows over the data while the upstream stays see-through.
   Figure 3 ``flash_experiment_lineouts.png``
       spatial profiles at a few times: FLASH nₑ (log, left axis) against the
-      experimental brightness at the nearest streak column (right axis).
+      experimental brightness at the nearest streak column (right axis), with each
+      feature marked where it sits at that instant.
+
+Features
+--------
+Straight lines ``x(t) = x0_mm + v_kms·(t − t0_ns)`` overlaid on every panel, listed in
+``experiment.trajectories`` and hand-fitted in the units the axes are in (km/s, mm, ns).
+``frame: experiment`` (the default) measures a feature *in the data* — the observed
+shock front, the piston plasma — so it is independent of the registration; ``frame:
+flash`` is a simulated feature, translated onto the image like the FLASH data itself.
+The ``flash:`` block's shock front is added automatically as a ``flash``-frame line.
 
 Registration
 ------------
@@ -76,7 +85,6 @@ import experiment_image as ei
 import flash_source
 import flash_utils as fu
 import plot_style
-import shock
 import yaml_edit
 # Same streak assembly as the overview and the tuner, so the nₑ map compared here is
 # byte-for-byte the one the rest of the FLASH analysis draws.
@@ -170,20 +178,25 @@ def load_flash(cfg, args, source):
     return ne_streak, time_ns, x_um, paths
 
 
-def front_trajectory(cfg, time_ns):
-    """The config's hand-placed front ``x(t)`` [µm] on ``time_ns``, or None."""
+def trajectories(cfg):
+    """Every straight-line feature to overlay, in draw order.
+
+    The FLASH shock front comes from the ``flash:`` block that ``tune_flash_shock.py``
+    writes (cm/s, cm, s → km/s, mm, ns) and is a ``"flash"``-frame line, so it moves
+    with the registration.  Everything in ``experiment.trajectories`` is hand-fitted
+    against the image and defaults to the ``"experiment"`` frame, so it stays put.
+    """
+    out = []
     flash = cfg.get("flash") or {}
-    if "v_shock_est_cms" not in flash or "x_shock_0_cm" not in flash:
-        return None, ""
-    v_cms = float(flash["v_shock_est_cms"])
-    x0_cm = float(flash["x_shock_0_cm"])
-    t0_s = float(flash.get("t_shock_0_s", 0.0))
-    t_s = (np.asarray(time_ns) * u.ns).to("s").value
-    x_um = (shock.front_line(x0_cm, v_cms, t_s, t0_s) * u.cm).to("um").value
-    label = (f"FLASH front  v={(v_cms * u.cm / u.s).to('km/s').value:.0f} km/s  "
-             f"x₀={(x0_cm * u.cm).to('um').value:.0f} µm  "
-             f"t₀={(t0_s * u.s).to('ns').value:.2f} ns")
-    return x_um, label
+    if "v_shock_est_cms" in flash and "x_shock_0_cm" in flash:
+        out.append(ei.Trajectory(
+            label="FLASH shock front",
+            v_kms=float((float(flash["v_shock_est_cms"]) * u.cm / u.s).to("km/s").value),
+            x0_mm=float((float(flash["x_shock_0_cm"]) * u.cm).to("mm").value),
+            t0_ns=float((float(flash.get("t_shock_0_s", 0.0)) * u.s).to("ns").value),
+            frame="flash", color="cyan", style="--"))
+    out += ei.trajectories_from_config((cfg.get("experiment") or {}).get("trajectories"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -242,12 +255,15 @@ def draw_flash(ax, time_ns, x_um, ne_streak, reg, cmap, norm):
                          cmap=cmap, norm=norm, shading="auto")
 
 
-def draw_front(ax, time_ns, front_um, label, reg, color="cyan"):
-    """The FLASH front trajectory, translated onto the experiment's axes."""
-    if front_um is None:
+def draw_trajectories(ax, trajs, t_window, reg, override_color=None):
+    """Overlay every straight-line feature across the visible time window."""
+    if not trajs:
         return
-    ax.plot(reg.to_exp_t(time_ns), reg.to_exp_mm(front_um),
-            color=color, ls="--", lw=2.0, label=label)
+    t = np.linspace(t_window[0], t_window[1], 200)
+    for tr in trajs:
+        ts, mm = tr.points(t, reg)
+        ax.plot(ts, mm, color=override_color or tr.color, ls=tr.style, lw=tr.width,
+                label=tr.legend())
     ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
 
 
@@ -287,9 +303,8 @@ def prepare(streak, reg, time_ns, x_um, view, full_range):
 # Figure 1 — side by side
 # ---------------------------------------------------------------------------
 
-def plot_side_by_side(view_streak, reg, time_ns, x_um, ne_streak, front, window,
+def plot_side_by_side(view_streak, reg, time_ns, x_um, ne_streak, trajs, window,
                       out_dir, args, title):
-    front_um, front_label = front
     (t0, t1), (x0, x1) = window
     fig, axes = plt.subplots(2, 1, figsize=(13, 9), sharex=True, sharey=True)
 
@@ -303,7 +318,7 @@ def plot_side_by_side(view_streak, reg, time_ns, x_um, ne_streak, front, window,
     axes[1].set_title(r"FLASH — $n_e$ along the line of sight, placed on those axes")
 
     for ax in axes:
-        draw_front(ax, time_ns, front_um, front_label, reg)
+        draw_trajectories(ax, trajs, (t0, t1), reg)
         ax.set_ylabel("position [mm]")
         ax.set_xlim(t0, t1)
         ax.set_ylim(x0, x1)
@@ -364,9 +379,8 @@ def _edges(centres):
     return (float(c[0] - half), float(c[-1] + half))
 
 
-def plot_overlay(view_streak, reg, time_ns, x_um, ne_streak, front, window,
+def plot_overlay(view_streak, reg, time_ns, x_um, ne_streak, trajs, window,
                  out_dir, args, title):
-    front_um, front_label = front
     (t0, t1), (x0, x1) = window
     fig, ax = plt.subplots(figsize=(13, 7))
 
@@ -377,7 +391,7 @@ def plot_overlay(view_streak, reg, time_ns, x_um, ne_streak, front, window,
     rgba = value_alpha_rgba(Z, args.flash_cmap, norm, args.alpha, gamma=args.alpha_gamma)
     ax.imshow(rgba, origin="lower", extent=extent, aspect="auto", interpolation="bilinear")
 
-    draw_front(ax, time_ns, front_um, front_label, reg, color="white")
+    draw_trajectories(ax, trajs, (t0, t1), reg)
     ax.set_xlim(t0, t1)
     ax.set_ylim(x0, x1)
     ax.set_xlabel("$t$ [ns]")
@@ -402,7 +416,7 @@ def plot_overlay(view_streak, reg, time_ns, x_um, ne_streak, front, window,
 # Figure 3 — profiles at a few times
 # ---------------------------------------------------------------------------
 
-def plot_lineouts(view_streak, reg, time_ns, x_um, ne_streak, window,
+def plot_lineouts(view_streak, reg, time_ns, x_um, ne_streak, trajs, window,
                   out_dir, args, title):
     """Profiles against the experiment's own mm axis, at a few FLASH times."""
     times = [t for t in args.times if time_ns.min() <= t <= time_ns.max()] or [
@@ -427,6 +441,12 @@ def plot_lineouts(view_streak, reg, time_ns, x_um, ne_streak, window,
         ax2.plot(mm_exp, col, color="0.25", lw=1.4,
                  label=f"experiment ($t$={t_exp:.2f} ns)")
         ax.set_title(f"$t_{{exp}}$ = {reg.to_exp_t(t_req):.1f} ns")
+
+        # Where each feature sits at this instant — the check that the FLASH jump and
+        # the measured one are (or are not) at the same mm.
+        for tr in trajs:
+            ax.axvline(tr.at(t_exp, reg), color=tr.color, ls=tr.style, lw=1.6,
+                       alpha=0.9, label=tr.legend())
 
         lines = ax.get_lines() + ax2.get_lines()
         ax.legend(lines, [l.get_label() for l in lines], fontsize=7, loc="upper right",
@@ -565,7 +585,7 @@ def main():
           f"{(streak.x_mm[1] - streak.x_mm[0]) / streak.shape[0]:.4g} mm/px)")
 
     ne_streak, time_ns, x_um, dump_files = load_flash(cfg, args, source)
-    front = front_trajectory(cfg, time_ns)
+    trajs = trajectories(cfg)
 
     fit = None
     if args.fit:
@@ -596,6 +616,16 @@ def main():
     else:
         print(f"Overlap     : {t_lo:.2f}–{t_hi:.2f} ns, {x_lo:.2f}–{x_hi:.2f} mm")
 
+    if trajs:
+        print("Features    :")
+        for tr in trajs:
+            t_lo_tr, t_hi_tr = (float(reg.to_exp_t(time_ns.min())),
+                                float(reg.to_exp_t(time_ns.max())))
+            print(f"  {tr.label:<24s} {tr.v_kms:7.0f} km/s  "
+                  f"x₀={tr.x0_mm:+.2f} mm @ t₀={tr.t0_ns:.2f} ns  [{tr.frame}]  "
+                  f"→ {tr.at(t_lo_tr, reg):+.2f} mm at {t_lo_tr:.1f} ns, "
+                  f"{tr.at(t_hi_tr, reg):+.2f} mm at {t_hi_tr:.1f} ns")
+
     view_streak, t_view, x_view, _ = prepare(streak, reg, time_ns, x_um, view,
                                              args.full_range)
     window = (t_view, x_view)
@@ -603,16 +633,17 @@ def main():
           f"{x_view[0]:.2f}–{x_view[1]:.2f} mm  → image cropped to "
           f"{view_streak.shape[1]}×{view_streak.shape[0]} px")
 
-    out_dir = yaml_edit.out_dir(source.flash_dir, args.output_dir)
+    out_dir = yaml_edit.out_dir(source.flash_dir, args.output_dir,
+                                cfg=cfg, config_path=config_path)
     title = (f"{os.path.basename(streak.path)}  vs  {os.path.basename(source.flash_dir)}\n"
              f"experiment axes are the frame; FLASH translated by "
              f"t+{reg.t_offset_ns:g} ns, x₀={reg.x_offset_mm:g} mm, flip={reg.flip_space}")
 
-    for path in (plot_side_by_side(view_streak, reg, time_ns, x_um, ne_streak, front,
+    for path in (plot_side_by_side(view_streak, reg, time_ns, x_um, ne_streak, trajs,
                                    window, out_dir, args, title),
-                 plot_overlay(view_streak, reg, time_ns, x_um, ne_streak, front,
+                 plot_overlay(view_streak, reg, time_ns, x_um, ne_streak, trajs,
                               window, out_dir, args, title),
-                 plot_lineouts(view_streak, reg, time_ns, x_um, ne_streak,
+                 plot_lineouts(view_streak, reg, time_ns, x_um, ne_streak, trajs,
                                window, out_dir, args, title)):
         print(f"Saved → {path}")
     if fit is not None:

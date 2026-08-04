@@ -120,7 +120,8 @@ class TrajectoryTuner:
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
          ic_index, self.t_ic_s) = _run_paths(cfg, args.config)
-        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir)
+        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir,
+                                         cfg=cfg, config_path=args.config)
         self.png = os.path.join(self.out_dir, "tune_flash_trajectory.png")
 
         idx_range = range(args.t_start,
@@ -272,7 +273,8 @@ class RegionsTuner:
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
          _ic_index, t_ic_s) = _run_paths(cfg, args.config)
-        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir)
+        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir,
+                                         cfg=cfg, config_path=args.config)
 
         self.idx = args.snapshot_idx % len(all_files)   # positive plot-file index = config key
         snap_file = all_files[self.idx]

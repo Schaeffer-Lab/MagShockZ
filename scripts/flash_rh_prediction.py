@@ -67,6 +67,7 @@ sys.path.insert(0, os.path.join(_HERE, "..", "init_nopython"))
 import analysis_utils
 import plot_style
 import flash_source
+import yaml_edit
 import flash_utils as fu
 import perpendicular_shock as ps
 
@@ -163,10 +164,8 @@ def main():
         snapshot_idx_for_geom = args.snapshot_idx
     snap_file = all_files[idx]
 
-    out_dir = args.output_dir or os.path.join(
-        _HERE, "..", "results", os.path.basename(flash_dir.rstrip("/"))
-    )
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = yaml_edit.out_dir(flash_dir, args.output_dir,
+                                cfg=cfg, config_path=args.config)
 
     x_shock_cm, x_ds_cm, v_shock_npz = _load_shock_geometry(
         cfg, idx, out_dir, snapshot_idx_for_geom, args.x_shock_cm, args.x_downstream_start_cm)

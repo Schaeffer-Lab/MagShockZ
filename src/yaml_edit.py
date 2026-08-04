@@ -24,6 +24,7 @@ Supported shapes (all that the MagShockZ analysis config needs):
 block, or the ``dump_params:`` section) when it does not yet exist.
 """
 
+import math
 import os
 import re
 
@@ -39,15 +40,30 @@ _INSERT_COMMENT = "  # set by tune_shock"
 
 
 def _fmt(value) -> str:
-    """Render a Python value as a compact YAML scalar token."""
+    """Render a Python value as a compact YAML scalar token.
+
+    Floats are rendered so that PyYAML reads them back as floats.  That needs care:
+    PyYAML implements **YAML 1.1**, whose float resolver only accepts an exponent form
+    when the mantissa carries a ``.`` — so a bare ``1e-09`` (what ``%g`` gives for
+    1 ns in seconds) round-trips as the *string* ``'1e-09'``, not a number.  The
+    mantissa is padded to ``1.0e-09`` to keep it a float.
+    """
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
+        if math.isnan(value):
+            return ".nan"
+        if math.isinf(value):
+            return ".inf" if value > 0 else "-.inf"
         if value.is_integer() and abs(value) < 1e15:
             return str(int(value))
-        return f"{value:g}"
+        text = f"{value:g}"
+        if "e" in text and "." not in text:
+            mantissa, _, exponent = text.partition("e")
+            text = f"{mantissa}.0e{exponent}"
+        return text
     return str(value)
 
 
@@ -239,8 +255,20 @@ def assert_roundtrip(text, dotted_path, expected):
         if isinstance(node, dict) and seg not in node and seg.isdigit() and int(seg) in node:
             seg = int(seg)
         node = node[seg]
-    assert node == expected, f"{dotted_path} = {node!r}, expected {expected!r}"
+    # Numbers are compared numerically: _fmt renders with %g, so a value carrying more
+    # than 6 significant digits comes back legitimately rounded.  A string that merely
+    # *looks* numeric is NOT accepted — that is the YAML 1.1 exponent trap _fmt guards
+    # against ('1e-09' resolves to a str), and it must keep failing loudly.
+    # rel_tol is set just above %g's worst case: 6 significant digits means the last
+    # kept digit can move by half an ulp, i.e. up to ~5e-6 relative.
+    ok = (math.isclose(node, expected, rel_tol=1e-5, abs_tol=0.0)
+          if _is_number(node) and _is_number(expected) else node == expected)
+    assert ok, f"{dotted_path} = {node!r} ({type(node).__name__}), expected {expected!r}"
     return True
+
+
+def _is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
 # ---------------------------------------------------------------------------
@@ -252,16 +280,51 @@ def assert_roundtrip(text, dotted_path, expected):
 # These do touch the filesystem / stdin, unlike the pure str->str editors above, but
 # they add no new dependency (stdlib only) so the module stays CI-importable.
 
-def out_dir(base_dir, override=None):
-    """Resolve (and create) a tuner's results output directory.
+def out_dir(base_dir, override=None, *, cfg=None, config_path=None):
+    """Resolve (and create) a script's results output directory.
 
-    Defaults to ``<repo>/results/<basename of base_dir>`` (``base_dir`` is the run's
-    sim/FLASH directory whose basename names the results subdir); ``override`` wins
-    when given.
+    The default is ``<repo>/results/<basename of base_dir>`` — keyed on the *dataset*
+    (``base_dir`` is the run's sim/FLASH directory), so everything derived from one
+    run stays in one tree and dataset-level caches (``movie3d/grids``) are shared.
+
+    That is wrong as soon as **two configs analyse the same dataset differently** —
+    a second line of sight, say.  Their outputs then overwrite each other, and
+    ``flash_rh_prediction`` reads ``flash_overview_*.npz`` back out of this directory,
+    so it would silently pick up the other config's line-out.  A variant config
+    therefore has to claim its own directory, cheapest first:
+
+    ``results_subdir``
+        A sub-directory of the dataset's tree: ``results/<dataset>/<results_subdir>``.
+        Use ``auto`` to name it after the config file (``flash_3d_2026-07_offaxis.yaml``
+        → ``flash_3d_2026-07_offaxis``).  Preferred — one line, keeps the run's
+        outputs together, and sits alongside ``movie3d/`` rather than duplicating it.
+    ``results_dir``
+        A path, absolute or relative to the repo root, for output somewhere else
+        entirely.  Fully decoupled from the dataset.
+
+    ``override`` (the scripts' ``--output-dir``) beats both.
     """
-    out = override or os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "results",
-        os.path.basename(base_dir.rstrip("/")))
+    repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    cfg = cfg or {}
+
+    if override:
+        out = override
+    elif cfg.get("results_dir"):
+        out = cfg["results_dir"]
+        if not os.path.isabs(out):
+            out = os.path.join(repo, out)
+    else:
+        out = os.path.join(repo, "results", os.path.basename(base_dir.rstrip("/")))
+        sub = cfg.get("results_subdir")
+        if sub:
+            if sub == "auto":
+                if not config_path:
+                    raise ValueError(
+                        "results_subdir: auto needs the config path — this script has "
+                        "not passed one; name the sub-directory explicitly instead.")
+                sub = os.path.splitext(os.path.basename(config_path))[0]
+            out = os.path.join(out, str(sub))
+
     os.makedirs(out, exist_ok=True)
     return out
 

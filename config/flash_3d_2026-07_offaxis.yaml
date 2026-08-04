@@ -21,13 +21,26 @@ flash_data_dir: /mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2026-0
 # x,z in [-0.85, 0.85] and y in [-0.1, 1.6] cm, so the far end can be pushed out
 # past 0.70 if the shock runs off the end of the current window.
 line_of_sight:
-  start_point: [0, 0.07, 0]
-  end_point:   [0, 0.70, 0]
+  start_point: [0, 0.0, 0]
+  end_point:   [0.7, 0.70, 0]
 
 # Plot-file index that anchors t=0 for the front trajectory (default 0). In the
 # via-run configs this is the dump that seeded the OSIRIS deck; here it is just the
 # dump you want times measured from.
 ic_index: 0
+
+# Where results go. Without this, every config analysing this FLASH run writes into
+# results/FLASH_MagShockZ3D-Trantham_2026-07/ and the on-axis figures get overwritten
+# (worse: flash_rh_prediction reads flash_overview_*.npz back out of that directory and
+# would pick up the wrong line of sight). This config is a VARIANT of the on-axis one —
+# same dataset, different LOS — so it claims its own sub-directory:
+#     results/FLASH_MagShockZ3D-Trantham_2026-07/flash_3d_2026-07_offaxis/
+# `auto` names it after this file, so renaming the config renames the directory. Use a
+# literal name instead if you want something shorter, or `results_dir: <path>` to put
+# the output somewhere else entirely. --output-dir beats both.
+# The dataset-level movie3d/ grid cache is NOT affected: flash_3d_movie.py keys it on
+# the FLASH directory, so the expensive AMR sampling stays shared between variants.
+results_subdir: auto
 
 # Experimental streaked shadowgraphy to compare against
 # (scripts/flash_experiment_compare.py).  The streak has the same layout as the FLASH
@@ -80,13 +93,13 @@ experiment:
   origin: center
   t0_ns: 0.0
   view:
-    t_ns: [5.0, 25.0]
-    x_mm: [-2.0, 4.0]
+    t_ns: [5.0, 30.0]
+    x_mm: [-2.0, 6.0]
   registration:
     # t_offset_ns: 8.0
-    t_offset_ns: 8.0
+    t_offset_ns: -4.0
     # x_offset_mm: -1.0
-    x_offset_mm: -1.0
+    x_offset_mm: -8.0
     flip_space: false
 
   # Straight-line features overlaid on every panel: x(t) = x0_mm + v_kms·(t − t0_ns).
@@ -140,6 +153,6 @@ experiment:
 #   x_downstream_start_cm : left edge of the downstream region [cm]
 flash_dump_params: {}
 flash:
-  v_shock_est_cms: 100000000  # set by tune_shock
-  x_shock_0_cm: 0.02  # set by tune_shock
+  v_shock_est_cms: 35000000  # set by tune_shock
+  x_shock_0_cm: 0.25  # set by tune_shock
   t_shock_0_s: 1.0e-09  # set by tune_shock

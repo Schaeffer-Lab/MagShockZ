@@ -49,6 +49,7 @@ import unyt as u
 import analysis_utils
 import plot_style
 import flash_source
+import yaml_edit
 import flash_utils as fu
 import flash_energy_partition as fep
 
@@ -110,10 +111,8 @@ def main():
     all_files   = fu.find_plot_files(flash_dir)
     snap_file   = all_files[args.snapshot_idx % len(all_files)]
 
-    out_dir = args.output_dir or os.path.join(
-        _HERE, "..", "results", os.path.basename(flash_dir.rstrip("/"))
-    )
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = yaml_edit.out_dir(flash_dir, args.output_dir,
+                                cfg=cfg, config_path=args.config)
 
     # Optionally load shock position AND fitted shock velocity from a
     # flash_overview .npz (so the ram subtraction defaults to the shock rest frame).

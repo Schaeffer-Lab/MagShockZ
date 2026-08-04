@@ -378,6 +378,87 @@ def from_config(block: Optional[dict]) -> Registration:
 
 
 # ---------------------------------------------------------------------------
+# Straight-line features (shock front, piston, …)
+# ---------------------------------------------------------------------------
+
+MM_PER_NS_PER_KM_S = 1.0e-3      # 1 km/s = 1e-3 mm/ns
+
+
+@dataclass
+class Trajectory:
+    """A straight ``x(t) = x0 + v·(t − t0)`` feature to overlay on the streaks.
+
+    Hand-fitting units are the ones you read off the figures: **km/s, mm, ns**.
+
+    ``frame`` says which axes ``x0_mm`` / ``t0_ns`` are given in:
+
+    * ``"experiment"`` — the image's own mm and ns.  Use this for features measured
+      *in the data* (the observed shock front, the piston edge); the line is then
+      independent of the registration, so sliding the registration moves FLASH under
+      it rather than dragging it along.
+    * ``"flash"`` — LOS mm and FLASH ns, i.e. a simulated feature.  It is translated
+      onto the image by the :class:`Registration`, so it tracks the FLASH data.
+    """
+
+    label: str
+    v_kms: float
+    x0_mm: float
+    t0_ns: float = 0.0
+    frame: str = "experiment"
+    color: str = "yellow"
+    style: str = "--"
+    width: float = 2.0
+
+    def __post_init__(self):
+        if self.frame not in ("experiment", "flash"):
+            raise ValueError(f"frame must be 'experiment' or 'flash', got {self.frame!r}")
+
+    @property
+    def slope_mm_per_ns(self) -> float:
+        return MM_PER_NS_PER_KM_S * float(self.v_kms)
+
+    def points(self, t_exp_ns, reg: Optional[Registration] = None):
+        """Sample the line at experiment times ``t_exp_ns`` → ``(t_ns, mm)``."""
+        t = np.asarray(t_exp_ns, dtype=float)
+        if self.frame == "experiment":
+            return t, self.x0_mm + self.slope_mm_per_ns * (t - self.t0_ns)
+        if reg is None:
+            raise ValueError("a 'flash'-frame trajectory needs a Registration")
+        t_flash = reg.to_flash_t(t)
+        los_mm = self.x0_mm + self.slope_mm_per_ns * (t_flash - self.t0_ns)
+        return t, reg.to_exp_mm(los_mm * UM_PER_MM)
+
+    def at(self, t_exp_ns, reg: Optional[Registration] = None) -> float:
+        """The feature's position [mm] at one experiment time."""
+        return float(self.points(np.atleast_1d(t_exp_ns), reg)[1][0])
+
+    def legend(self) -> str:
+        return f"{self.label}  {self.v_kms:.0f} km/s"
+
+
+def trajectories_from_config(entries) -> list:
+    """Build :class:`Trajectory` objects from a config list of dicts."""
+    out = []
+    for i, e in enumerate(entries or []):
+        e = dict(e)
+        missing = {"v_kms", "x0_mm"} - set(e)
+        if missing:
+            raise KeyError(f"trajectory #{i} ({e.get('label', '?')}) is missing "
+                           f"{sorted(missing)}; each needs at least v_kms and x0_mm")
+        out.append(Trajectory(label=str(e.pop("label", f"feature {i + 1}")),
+                              v_kms=float(e.pop("v_kms")),
+                              x0_mm=float(e.pop("x0_mm")),
+                              t0_ns=float(e.pop("t0_ns", 0.0) or 0.0),
+                              frame=str(e.pop("frame", "experiment")),
+                              color=str(e.pop("color", "yellow")),
+                              style=str(e.pop("style", "--")),
+                              width=float(e.pop("width", 2.0))))
+        if e:
+            raise KeyError(f"trajectory #{i} has unknown keys {sorted(e)}")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Fitting the shift
 # ---------------------------------------------------------------------------
 

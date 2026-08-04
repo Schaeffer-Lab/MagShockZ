@@ -8,7 +8,7 @@
 data_path: /pscratch/sd/d/dschnei/FLASH_3D_noshield/MagShockZ_hdf5_plt_cnt_0009
 dim: 1
 inputfile_name: magshockz_rqm1_dx0.3_ppc500_g20
-reference_density: 5.0e18
+reference_density: 5.0e+18
 rqm_factor: 1
 dx: 0.1
 ppc: 500

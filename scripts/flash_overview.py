@@ -62,6 +62,7 @@ import flash_source
 import flash_utils as fu
 import shock
 import perpendicular_shock as ps
+import yaml_edit
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +289,8 @@ def main():
             f"in range [{args.t_start}, {args.t_stop}] with stride {args.stride}."
         )
 
-    out_dir = args.output_dir or os.path.join(_HERE, "..", "results", source.name)
+    out_dir = yaml_edit.out_dir(source.flash_dir, args.output_dir,
+                                cfg=cfg, config_path=args.config)
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"Config     : {args.config}")

@@ -134,6 +134,47 @@ unit-tested; listing the plot files stays with `flash_utils.find_plot_files`, wh
 the filename convention. `scripts/flash_osiris_compare.py` deliberately keeps `sim_dir`:
 it compares the two codes, so it genuinely needs both sides.
 
+### YAML floats: PyYAML is YAML 1.1, so exponents need a dot AND a sign
+
+`5.0e18` and `1e-9` load as **strings**, not floats. PyYAML's 1.1 float resolver wants a
+`.` in the mantissa *and* an explicit sign on the exponent — `5.0e+18` and `1.0e-09` are
+floats, and `1.0e-9` happens to be fine because the negative exponent already carries its
+sign. Nothing errors at load time and most consumers call `float(...)`, so a string sits
+in the config until something compares or does arithmetic with it.
+
+`yaml_edit._fmt` therefore pads the mantissa when rendering (`%g`'s `1e-09` → `1.0e-09`;
+`%g` always signs the exponent), and `assert_roundtrip` compares numbers numerically
+(`rel_tol=1e-5`, just above `%g`'s 6-significant-digit rounding) while still rejecting a
+numeric-looking *string* — that check is what caught `tune_flash_shock`'s `t 1` writing
+`t_shock_0_s: 1e-9`. `tests/test_config_yaml_scalars.py` walks every `config/*.yaml` and
+`runs/*.yaml` and fails on any scalar that is a string Python can parse as a number.
+
+### Where results go: one dataset tree, one sub-directory per variant config
+
+`src/yaml_edit.py::out_dir(base_dir, override, cfg=, config_path=)` is the single
+resolver every config-driven FLASH script calls (`flash_overview`, `flash_rh_prediction`,
+`run_flash_pressure_partition`, `tune_flash_shock`, `flash_experiment_compare`). Default:
+`results/<basename(flash_dir)>` — keyed on the **dataset**, so one run's outputs stay in
+one tree and the expensive dataset-level caches are shared.
+
+That breaks when **two configs analyse the same dataset differently** (a second line of
+sight). They overwrite each other's figures, and because `flash_rh_prediction` reads
+`flash_overview_*.npz` back out of this directory, it would silently pick up the *other*
+config's line-out — a wrong-answer bug, not just clutter. So a **variant config claims its
+own directory**, cheapest first:
+
+- `results_subdir: auto` — `results/<dataset>/<config-stem>/`. Preferred: one line, no
+  naming decision, renaming the config renames the directory, and it sits alongside
+  `movie3d/` instead of duplicating it. A literal name works too (`results_subdir: offaxis`).
+- `results_dir: <path>` — absolute or repo-relative; output decoupled from the dataset.
+- `--output-dir` beats both.
+
+The canonical config for a dataset leaves both keys unset and keeps the flat
+`results/<dataset>/` path, so existing output is untouched. `flash_3d_movie.py`
+deliberately builds `results/<dataset>/movie3d/` itself rather than going through
+`out_dir`: its sampled AMR grids are LOS-independent, so every variant shares that cache
+instead of re-sampling.
+
 ### Experimental streak images: the `experiment:` config block
 
 `scripts/flash_experiment_compare.py` compares a **streaked-shadowgraphy** image
@@ -173,6 +214,15 @@ unit-tested in CI like the rest of `src/`:
   offsets, because the FLASH leading edge (≈870 km/s over 3.8–7.3 ns) and the measured
   front (≈220 km/s) have such different slopes that no translation can make them
   coincide. The space offset is well determined; the time offset is not.
+
+- **Mark features.** `experiment.trajectories` is a list of straight lines
+  `x(t) = x0_mm + v_kms·(t − t0_ns)` drawn on every panel, hand-fitted in the units the
+  axes use (km/s, mm, ns). `frame: experiment` (default) is a feature measured *in the
+  data* — the observed shock front, the piston plasma — and so does not move when the
+  registration changes; `frame: flash` is a simulated feature, translated onto the image
+  like the FLASH data. The `flash:` block's shock front is added automatically as a
+  `flash`-frame line, which is how the ~300 km/s measured front and the ~1000 km/s
+  simulated one get compared on one picture.
 
 Caveat worth repeating in any write-up: shadowgraphy brightness responds to `∇²∫nₑ dl`
 through the probe, not to a point sample of nₑ — front *positions* are comparable, signal

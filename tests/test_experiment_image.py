@@ -241,6 +241,77 @@ def test_from_config_treats_null_as_zero():
 
 
 # ---------------------------------------------------------------------------
+# Trajectory — straight-line features overlaid on the streaks
+# ---------------------------------------------------------------------------
+
+def test_trajectory_slope_is_km_per_s_as_mm_per_ns():
+    assert np.isclose(ei.Trajectory("f", v_kms=300.0, x0_mm=0.0).slope_mm_per_ns, 0.3)
+
+
+def test_experiment_frame_line_ignores_the_registration():
+    """A feature measured in the data must not move when FLASH is re-registered."""
+    tr = ei.Trajectory("front", v_kms=300.0, x0_mm=-1.0, t0_ns=8.0)
+    t = np.array([8.0, 18.0])
+    for reg in (None, ei.Registration(t_offset_ns=40.0, x_offset_mm=3.0, flip_space=True)):
+        ts, mm = tr.points(t, reg)
+        assert np.allclose(ts, t)
+        assert np.allclose(mm, [-1.0, 2.0])       # 300 km/s over 10 ns = 3 mm
+
+
+def test_flash_frame_line_is_translated_by_the_registration():
+    tr = ei.Trajectory("sim", v_kms=1000.0, x0_mm=0.0, t0_ns=0.0, frame="flash")
+    reg = ei.Registration(t_offset_ns=8.0, x_offset_mm=-1.0)
+    # experiment t=8 ns is FLASH t=0 → LOS 0 mm → experiment -1 mm
+    # experiment t=13 ns is FLASH t=5 ns → LOS 5 mm → experiment +4 mm
+    ts, mm = tr.points(np.array([8.0, 13.0]), reg)
+    assert np.allclose(mm, [-1.0, 4.0])
+
+
+def test_flash_frame_line_follows_a_flip():
+    tr = ei.Trajectory("sim", v_kms=1000.0, x0_mm=0.0, frame="flash")
+    reg = ei.Registration(x_offset_mm=2.0, flip_space=True)
+    _, mm = tr.points(np.array([0.0, 3.0]), reg)
+    assert np.allclose(mm, [2.0, -1.0])           # runs the other way
+
+
+def test_flash_frame_line_needs_a_registration():
+    with pytest.raises(ValueError, match="Registration"):
+        ei.Trajectory("sim", v_kms=1.0, x0_mm=0.0, frame="flash").points([0.0, 1.0])
+
+
+def test_trajectory_rejects_an_unknown_frame():
+    with pytest.raises(ValueError, match="frame"):
+        ei.Trajectory("x", v_kms=1.0, x0_mm=0.0, frame="lab")
+
+
+def test_trajectory_at_gives_the_position_at_one_time():
+    tr = ei.Trajectory("piston", v_kms=150.0, x0_mm=-1.0, t0_ns=8.0)
+    assert np.isclose(tr.at(18.0), 0.5)
+
+
+def test_trajectories_from_config_builds_the_list():
+    trs = ei.trajectories_from_config([
+        {"label": "shock", "v_kms": 300, "x0_mm": -1.0, "t0_ns": 8.0, "color": "cyan"},
+        {"v_kms": 150, "x0_mm": -1.0},
+    ])
+    assert [t.label for t in trs] == ["shock", "feature 2"]
+    assert trs[0].color == "cyan"
+    assert (trs[1].t0_ns, trs[1].frame, trs[1].style) == (0.0, "experiment", "--")
+
+
+def test_trajectories_from_config_handles_no_entries():
+    assert ei.trajectories_from_config(None) == []
+    assert ei.trajectories_from_config([]) == []
+
+
+def test_trajectories_from_config_reports_missing_and_unknown_keys():
+    with pytest.raises(KeyError, match="v_kms"):
+        ei.trajectories_from_config([{"x0_mm": 0.0}])
+    with pytest.raises(KeyError, match="speed_kms"):
+        ei.trajectories_from_config([{"v_kms": 1.0, "x0_mm": 0.0, "speed_kms": 2.0}])
+
+
+# ---------------------------------------------------------------------------
 # Raw CSV + calibration
 # ---------------------------------------------------------------------------
 
