@@ -1,0 +1,343 @@
+# 2D WarpX heater-driven piston run — the single source of truth.
+#
+#   schema: heater_pic_2d
+#
+# THIS IS NOT THE flash2warpx SCHEMA. The other two *.warpx.yaml files in this
+# directory (magshockz_2d_{production,deeptime}) configure the flash2warpx
+# hybrid-PIC pipeline: they have `extract:` + `run:` blocks, the `run:` keys are
+# HybridRunConfig fields, and they READ a FLASH slice off disk. This file
+# configures something different and is dispatched on the `schema:` key above:
+#
+#   * FULL electromagnetic PIC (kinetic electrons), not the Ohm's-law hybrid —
+#     required, because the heating operator deposits energy into ELECTRONS.
+#   * NO FLASH data is read. The piston is GROWN in the simulation by WarpX's
+#     ParticleHeater + TargetInjector (the PSC / Fox et al. 2018 laser-ablation
+#     surrogate, on the lab fork's `feature/particle-heater` branch): the injector
+#     keeps a dense cold slab topped up, the heater drives momentum-space
+#     diffusion in its electrons, and the slab expands as a self-consistent,
+#     kinetically smooth piston. That sidesteps the grid-sharp ideal-MHD
+#     piston/pile-up interface documented in docs/piston_interface_smoothing_plan.md.
+#   * REDUCED MASS RATIO and an arbitrary reference density, so the run matches
+#     FLASH in DIMENSIONLESS terms only (M_A, M_ms, beta, contrast, r_spot/d_i,
+#     omega_ci*t) — see src/heater_piston_scaling.py for exactly what is and is
+#     not preserved, and read the invariance table the generator prints.
+#
+# Pipeline
+#   1. conda activate analysis
+#      python scripts/flash_piston_profile.py --config config/flash_3d_corrected.yaml \
+#          --t-window 3 12                      # measures the FLASH piston
+#      -> paste its .txt block into `flash_target:` below
+#   2. python init_warpx/gen_heater_deck.py --config runs/magshockz_2d_heater.warpx.yaml
+#      -> input_files/warpx/magshockz_2d_heater/inputs_2d_heater  (+ _smoke, + run.yaml)
+#      The generator self-verifies: the deck it wrote is parsed back, its my_constants
+#      resolved, and the resulting numbers diffed against this spec.
+#   3. sbatch init_warpx/run_heater_2d.sbatch
+#   4. python init_warpx/gen_heater_deck.py --config ...yaml --verify
+#      -> closes the loop against the warpx_used_inputs WarpX echoed for the run
+#   5. python scripts/warpx_heater_compare.py --config runs/magshockz_2d_heater.warpx.yaml
+#      -> overlay vs FLASH; iterate theta_e_heater / contrast / slab width
+#
+# The mapping spec -> deck is ONE-WAY. Never hand-edit the generated deck: change
+# this file and regenerate, or `--check` and `--verify` will report the edit as drift.
+#
+# YAML float gotcha (CLAUDE.md): PyYAML is YAML 1.1, so an exponent needs a DOT in
+# the mantissa AND a SIGN on the exponent. `1.0e+18` is a float; `1e18` is a
+# STRING. tests/test_config_yaml_scalars.py walks runs/*.yaml and fails on any
+# scalar that is a string Python can parse as a number.
+
+schema: heater_pic_2d
+
+# ---------------------------------------------------------------------------
+# Provenance and labelling. Never physics.
+# ---------------------------------------------------------------------------
+meta:
+  run_id: magshockz_2d_heater     # names input_files/warpx/<run_id>/
+  deck: inputs_2d_heater
+  description: >
+    2D3V full-PIC heater-driven magnetized piston, tuned to the FLASH
+    MagShockZ3D-corrected piston in dimensionless terms at mass_ratio 100.
+  provenance: >
+    kappa corrected to its measured 1.01 (the first 2D run aimed 0.050 c and
+    delivered 0.0202 c); v_piston_c and cell_size_de moved together to keep the
+    piston electrons sub-relativistic without losing Debye resolution.
+
+# ---------------------------------------------------------------------------
+# What the piston is tuned to match — the FLASH measurement.
+# ---------------------------------------------------------------------------
+# MEASURED by scripts/flash_piston_profile.py over 36 dumps (3.00-11.75 ns) along the
+# config/flash_3d_corrected.yaml line of sight. Regenerate with:
+#   python scripts/flash_piston_profile.py --config config/flash_3d_corrected.yaml \
+#       --t-window 3 12
+# and paste its `flash_target:` block over this one. Read the figure first — the
+# script prints per-dump diagnostics precisely because these numbers are easy to get
+# wrong (see the two notes below).
+#
+# UPSTREAM = THE INITIALLY UNPERTURBED BACKGROUND (`--upstream initial`, the default),
+# i.e. flash.par's chamber ("cham") IC read off the t = 0 dump, ignoring the laser
+# channel — at t = 0 the pulse has not fired, so there is no channel to exclude. The
+# values below reproduce flash.par exactly: rho = 3.73e-05 g/cc -> n_e = 3.04e+24 m^-3
+# at the EOS's Zbar = 3.66 (NOT ms_chamZ = 13, the atomic number), T_e = T_i = 114060 K
+# = 9.83 eV, and sim_MagField = 1.9747e+04 code units x sqrt(4*pi) = 7.00013 T.
+#
+# This is deliberately NOT the state measured just ahead of the front, which the script
+# also reports: by 3-12 ns electron conduction and radiation have preheated the material
+# the piston is running into to T_e ~ 296 eV (30x the IC) and stripped it to Zbar ~ 12.8,
+# while rarefying it to 0.6x the IC density and letting |B| relax to half. Using that
+# precursor would give beta_e ~ 18 and M_ms ~ 6; the unperturbed background gives the
+# low-beta, strongly magnetized regime the experiment was set up with:
+#   v_A = 32.3 km/s, c_s = 13.6 km/s -> M_A = 23.8, M_ms = 21.9, beta_e = 0.245,
+#   beta_i = 0.067, d_i = 355 um, T_ci = 69.0 ns.
+#
+# n_piston_drive_per_m3 is the piston density just BEHIND the front, NOT the profile's
+# global peak. That peak (3.6e+26) sits in the stagnated material next to the target,
+# ~17x above the material actually arriving at the front, and using it would overstate
+# the piston/ambient contrast as 198 instead of 6.8.
+#
+# l_piston_m is provenance only, NOT a matched invariant: this FLASH run is ideal MHD
+# (useMagneticResistivity = .false.), so the piston edge is grid-sharp and no fitted
+# "e-folding length" describes the interface. Growing the piston with the heating
+# operator instead of extracting it is the whole point of this deck; see
+# docs/piston_interface_smoothing_plan.md.
+flash_target:
+  source: scripts/flash_piston_profile.py, piston over 36 dumps, upstream = initial, front fit rms 114.1 um
+  dataset: /pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected
+  line_of_sight:
+    start_point: [0.0, 0.07, 0.0]   # cm, matches config/flash_3d_corrected.yaml
+    end_point:   [0.0, 1.40, 0.0]   # 1.40, not 0.70: a shorter LOS loses the upstream
+  t_window_ns: [3.001, 11.752]
+
+  # Unperturbed background (flash.par chamber IC, read off the t=0 dump).
+  n_amb_per_m3: 3.0357e+24        # = Zbar * n_i, at the EOS's Zbar = 3.66
+  b_amb_tesla: 7.00013            # sim_MagField * sqrt(4*pi)
+  te_amb_ev: 9.82893              # sim_teleCham = 114060 K
+  ti_amb_ev: 9.82893              # sim_tionCham = 114060 K
+  # Piston, measured over the evolved window (there is no piston at t=0).
+  n_piston_drive_per_m3: 2.0815e+25   # piston density just BEHIND the front
+  v_front_ms: 7.6851e+05          # fitted front speed, 769 km/s
+  l_piston_m: 4.0843e-04          # provenance only — see the note above
+  r_spot_m: 5.0e-04               # laser spot radius, flash.par (500 um)
+
+  a_amb: 26.98                    # ms_chamA, Al foam chamber
+  z_amb: 3.66402                  # EOS Zbar at 9.83 eV, NOT ms_chamZ = 13
+  a_piston: 28.0855               # ms_targA, Si target
+  z_piston: 14.0                  # ms_targZ
+
+# ---------------------------------------------------------------------------
+# How the FLASH state maps onto a reduced-mass PIC run.
+# ---------------------------------------------------------------------------
+scaling:
+  # Free parameter: only sets the d_e / (1/omega_pe) the deck is expressed in, and
+  # cancels out of every matched invariant. 1e18 keeps the deck's numbers close to
+  # the validated heating_operator/run_shock_1d.
+  n0_per_m3: 1.0e+18
+
+  # m_i/m_e. 100 is the Fox-2018 / PSC value. Raising it costs steps (T_ci grows)
+  # but recovers scale separation; the invariants are unchanged.
+  mass_ratio: 100.0
+
+  # The run's speed budget: the piston expansion-front speed in units of c. The
+  # heater aim temperature follows from it as theta_e = mass_ratio*(v/(kappa c))^2,
+  # and B0 follows from holding M_A.
+  #
+  # 0.03, not the 0.05 of the first run, because kappa is now its measured 1.01
+  # rather than 2.5 and theta_e = mass_ratio*(v/(kappa c))^2 would otherwise be
+  # 0.245 -- piston electrons at v_th = 0.5 c, where the heater's non-relativistic
+  # kicks stop imposing the theta_e they are given. At 0.03 theta_e = 0.088, i.e.
+  # v_th/c = 0.30 (gamma = 1.05), which derive() flags as the acceptable ceiling.
+  #
+  # mass_ratio is NOT the escape hatch here (held at 100 by choice): theta_heater
+  # and theta_ambient are BOTH proportional to mass_ratio*v_piston_c^2, so their
+  # ratio is fixed at 2*M_A^2/(beta_e*kappa^2) = 4531 by the matched invariants
+  # alone. Cooling the electrons to non-relativistic always cools the ambient by
+  # the same factor, which is why cell_size_de below has to shrink with v_piston_c.
+  v_piston_c: 0.03
+  kappa_expansion: 1.01           # MEASURED (aim 0.050 c -> 0.0202 c); see KAPPA_DEFAULT
+
+  # Hand-tuning override. Set this (and leave v_piston_c as documentation) once a
+  # run has been compared to FLASH: theta_e is the knob, M_A is the invariant, so
+  # B0 moves with it. null = derive it from v_piston_c.
+  theta_e_heater: null
+
+  # Piston initial (pre-heating) electron temperature, PSC flatfoil value. The
+  # heater, not the IC, sets the piston's temperature; the ions start colder by
+  # the mass ratio, i.e. at the same physical temperature.
+  theta_e_cold: 1.0e-03
+
+  # Grid: dx = dz in electron skin depths. Set by the DEBYE criterion, not by d_e.
+  # The unperturbed background is cold (T_e = 9.8 eV -> 27.7 eV in the deck, since the
+  # deck's T_e is fixed by matching beta_e), so lambda_De is small in cell units and a
+  # full-PIC run that under-resolves it heats the ambient numerically — which looks
+  # exactly like shock heating in the diagnostics. CLAUDE.md's convergence scan puts the
+  # threshold at lambda_De/dx ~ 0.03; 0.5 d_e gives 0.015 (under), 0.25 gives 0.029
+  # (marginal), 0.2 gives 0.037. The generator warns if this is ever set too coarse.
+  #
+  # 0.12 at v_piston_c 0.03 gives lambda_De/dx = 0.0368 -- deliberately the SAME
+  # resolution as the first 2D run, which had 0.2 d_e at v_piston_c 0.05. That run
+  # heated the ambient 103x in <u^2>, and matching its Debye resolution is what
+  # makes the heater-off null run (--no-heater) a controlled test: if the ambient
+  # still heats with no heater, the mechanism is numerical and dx must drop to
+  # ~0.08 (about 15x the first run's cost); if it does not, the heating is physical
+  # precursor and this resolution is adequate. Meeting the bare 0.03 threshold
+  # instead (0.147 d_e) would confound the comparison.
+  cell_size_de: 0.12
+
+  # Heater/injector slab half-width in ION inertial lengths — the piston
+  # RESERVOIR, the analogue of FLASH's 200 um ablator. Not directly
+  # FLASH-measurable; 1-2 d_i is the PSC flatfoil value.
+  slab_halfwidth_di: 2.0
+
+  # Domain half-widths in d_e. null sizes them from the physics: x from 4 heating
+  # spot radii (so the spot's periodic images stay clear of it), z from how far
+  # the front travels in the run — the slab is symmetric about z = 0, so BOTH
+  # fronts must stay inside the periodic box. Set them explicitly only to shrink
+  # a run deliberately; the generator warns if the front would wrap.
+  domain_x_halfwidth_de: null
+  domain_z_halfwidth_de: null
+
+  # Macroparticles per cell per dimension, per species (4 species, so 25 each ->
+  # 100/cell). 1e8-scale for the default domain; raise if upstream grid heating
+  # shows up in the ambient <u^2> history.
+  ppc_each_dim: [5, 5]
+
+  # Duration in ambient ion gyroperiods. null = the FLASH window above.
+  run_window_gyro: null
+
+# ---------------------------------------------------------------------------
+# Uniform transverse bulk flow.
+# ---------------------------------------------------------------------------
+# EVERY species drifts at v_flow along +x and the motional Ez = -v_flow*B0 is
+# imposed on the grid, which makes the initial state an exact equilibrium. It is
+# therefore a pure GALILEAN BOOST: the shock structure is identical, just advected
+# in x. That makes it a frame-consistency test, not a physics change.
+#
+# Keep it 0 for physics runs. TargetInjector has no u_mean knob (only u_std), so
+# with a non-zero flow every subsequently injected piston particle enters at rest
+# in the boosted frame and gyrates at rho = v_flow/omega_ci. Short frame-check
+# runs only, until a u_mean is added to the operator upstream.
+flow:
+  v_flow_kms: 0.0
+  impose_motional_e: true
+
+# ---------------------------------------------------------------------------
+# The two drive operators (ParmParse-only in the lab fork; no PICMI binding).
+# ---------------------------------------------------------------------------
+operators:
+  # Drive window in the run's OWN normalized time (T_ci, the ambient ion gyroperiod),
+  # so it survives changes to cell_size_de and cfl. null = drive the whole run.
+  #
+  # FLASH's laser is a finite pulse (flash.par ed_time_*), so a deck that heats for
+  # all 99326 steps compares a continuously-driven piston against a ballistic one —
+  # a first-order error in exactly the front trajectory warpx_heater_compare.py
+  # panel 2 plots. Derive the value from flash.par's laser-off time intersected with
+  # flash_target.t_window_ns:
+  #     drive_stop_t_ci = (t_laser_off_ns - t_window_lo_ns)*1e-9 / T_ci_flash
+  # with T_ci_flash = 69.0 ns. NOTE the whole run is only 0.127 T_ci, so this number
+  # is SMALL (~0.03), not omegashock's ~0.87; validate() warns if it exceeds the run.
+  #
+  # Hard on/off, not FLASH's ramp: the foil profile's theta is a scalar fixed at init.
+  # The injector stops WITH the heater — otherwise it keeps refilling the slab with
+  # cold material and the contrast holds while the drive dies, which is neither the
+  # FLASH behaviour nor a clean ballistic coast.
+  drive_stop_t_ci: null
+
+  heater:
+    # The kick variance covers the time since the last application, so the
+    # time-averaged heating rate is independent of the interval — 20 just amortizes
+    # the random numbers, as in PSC.
+    intervals: 20
+    # Super-Gaussian spot exponent: exp(-(r^2/rH^2)^(K/2)). 2 = Gaussian,
+    # 4 = the PSC legacy flat-top. NOTE: foil.K is implemented in the fork but is
+    # absent from Docs/source/usage/parameters.rst.
+    k: 2.0
+
+  injector:
+    # Relaxes the slab density towards n_target with
+    # fac = (dt_inj/tau)/(1 + dt_inj/tau). PSC flatfoil values.
+    intervals: 20
+    # 10, down from the PSC flatfoil 40: over the first run's window the drive
+    # density behind the front decayed from contrast 6.86 to 2.82 while FLASH holds
+    # 6.86 throughout (ablation keeps feeding it). tau is the replenishment time, so
+    # it is the direct lever on that decay.
+    tau_over_wpe_inv: 10.0
+    ppc_reference: 100
+
+# ---------------------------------------------------------------------------
+# Solver and discretisation.
+# ---------------------------------------------------------------------------
+numerics:
+  # Cubic, up from quadratic: grid heating falls steeply with shape order, and the
+  # first run's 103x ambient <u^2> rise is the open question this deck has to settle.
+  # Cheaper than buying the same suppression with dx.
+  particle_shape: 3
+  cfl: 0.75
+  max_grid_size: 256              # AMReX box size; also passed as a CLI override
+  blocking_factor: 8              # cell counts are rounded UP to a multiple of this
+
+# ---------------------------------------------------------------------------
+# Diagnostics. EVERY cadence here is in STEPS, so all of them must be rescaled
+# whenever max_step moves; validate() warns when the resulting dump count leaves
+# heater_piston_scaling.PLOTFILE_COUNT_RANGE.
+# ---------------------------------------------------------------------------
+diagnostics:
+  # Grid-field plotfiles. NO raw particles (the generator sets diag1.write_species = 0):
+  # at ~1.6e8 macroparticles a Full dump is ~4.6 GB, of which 4.4 GB is particle data the
+  # analysis never reads, and writing that every 500 steps throttles the run harder than
+  # the physics does. Measured: 4.6 GB/dump with particles vs 0.27 GB without.
+  # 1400, not 500: the deck is now 99326 steps (was 35760) and each plotfile grew with
+  # the cell count, so a 500-step cadence would write ~199 dumps of ~750 MB = ~150 GB and
+  # throttle the run the way raw particles did. 1400 keeps ~71 dumps, the cadence the
+  # comparison scripts were built against. Scale this WITH max_step, not with wall time.
+  plotfile_intervals: 1400
+  reduced_intervals: 20           # ParticleEnergy / ParticleNumber histories
+
+  # Raw particles, sparsely, for (z, u_z) phase space and the reflected-ion beam — the
+  # defining kinetic signature of a super-critical shock. 0 disables.
+  phase_space_intervals: 11000    # ~9 dumps, as 4000 gave at the old 35760 steps
+  phase_space_fraction: 0.02
+
+  checkpoint_intervals: 14000     # ~7 over the run; the sbatch auto-resumes from chk*
+
+# ---------------------------------------------------------------------------
+# Where and how it runs. The generator writes run_env.sh from this block and
+# prints the sbatch line; the #SBATCH directives themselves live in the sbatch.
+# ---------------------------------------------------------------------------
+runtime:
+  # The ONLY GPU build carrying ParticleHeater/TargetInjector. The sbatch greps the
+  # binary for `particle_heater` and aborts if absent — an older binary silently
+  # ignores the operator blocks and produces a physics-free run that looks fine.
+  exe: /pscratch/sd/d/dschnei/warpx/build_pm_gpu_2d/bin/warpx.2d
+  nodes: 4
+  walltime: "06:00:00"
+  account: m5032_g
+  qos: regular
+
+# ---------------------------------------------------------------------------
+# Acceptance. validate() checks these and WARNS; it never refuses to render.
+# ---------------------------------------------------------------------------
+targets:
+  # These are matched BY CONSTRUCTION in heater_piston_scaling.derive, so unlike a
+  # hand-calibrated deck this block is a REGRESSION GUARD on derive() itself — hence
+  # the tight 1e-6 tolerance. Re-paste from `scaling_report.txt` whenever the FLASH
+  # measurement is re-run. (Paste enough digits: 7 significant figures minimum.)
+  invariants:
+    M_A: 23.79680886
+    M_ms: 21.92197363
+    beta_e: 0.2451902155
+    beta_i: 0.06691836166
+    contrast: 6.856738149
+    r_spot_di: 1.409852920
+    t_run_gyro: 0.1268272045
+  acceptance:
+    debye_per_cell_min: 0.03      # below this the cold ambient risks grid heating
+    dt_omega_pe_max: 0.5
+    plotfile_count: [10, 200]     # too few to fit a trajectory / enough to throttle IO
+
+# Smoke variant written alongside the production deck by
+# `gen_heater_deck.py --smoke`: same physics, quarter domain, 4 ppc, 200 steps.
+# Purely a "does the deck parse and do the operators fire" check.
+smoke:
+  domain_scale: 0.25
+  ppc_each_dim: [2, 2]
+  max_step: 200
+  plotfile_intervals: 50
+  reduced_intervals: 10

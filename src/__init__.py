@@ -67,3 +67,36 @@ from .spitzer_resistivity import (
     magnetic_diffusivity,
     warpx_electron_temperature,
 )
+from .heater_piston_scaling import (
+    PistonTargets,
+    ReducedScaling,
+    derive as heater_derive,
+    invariance_report as heater_invariance_report,
+    alfven_speed_ms,
+    ion_acoustic_speed_ms,
+    ion_inertial_length_m,
+    ion_gyrofrequency_rad_s,
+    plasma_frequency_rad_s,
+    electron_skin_depth_m,
+    plasma_beta as si_plasma_beta,
+    theta_from_ev,
+    ev_from_theta,
+    cfl_timestep_s,
+)
+from .heater_deck import (
+    SPECIES_NAMES as heater_species_names,
+    render_deck as render_heater_deck,
+    scaling_report as heater_scaling_report,
+    parse_inputs,
+    resolve_constants,
+    key_params,
+    key_params_from_text,
+    verify as verify_heater_deck,
+)
+from .heater_spec import (
+    load as load_heater_spec,
+    targets as heater_targets,
+    scaling as heater_scaling,
+    validate as validate_heater_spec,
+    freeze as freeze_heater_spec,
+)

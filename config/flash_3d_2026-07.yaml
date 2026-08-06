@@ -13,7 +13,7 @@
 # Distances/velocities are PHYSICAL CGS (cm, cm/s) unless noted.
 
 # Directory of MagShockZ_hdf5_plt_cnt_* files. Override with $MAGSHOCKZ_FLASH_DIR.
-flash_data_dir: /mnt/cellar/shared/simulations/FLASH_MagShockZ3D-Trantham_2026-07
+flash_data_dir: /pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected
 
 # Line of sight the 1D line-outs are extracted along [cm], same convention as the
 # generator's --start_point/--end_point. This is the canonical radial LOS carried
@@ -104,14 +104,14 @@ experiment:
   trajectories:
     # The measured shock front: the sharp ridge crossing the record diagonally.
     - label: measured shock front
-      v_kms: 300
-      x0_mm: -1.5
-      t0_ns: 8.0
+      v_kms: 600.0
+      x0_mm: -3.0
+      t0_ns: 7.0
       color: "#00e5ff"
       style: "-"
     # The piston plasma — HAND-FIT THIS ONE. Placeholder anchor/slope for now.
     - label: piston plasma
-      v_kms: 70.0
+      v_kms: 140.0
       x0_mm: -2.3
       t0_ns: 8.0
       color: "#ffd166"

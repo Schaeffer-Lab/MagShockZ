@@ -54,6 +54,7 @@ def flash_lineout(
     start_pt: tuple,
     end_pt: tuple,
     npoints: int = 512,
+    extra_fields: dict = None,
 ) -> dict:
     """Extract a lineout from a FLASH plot file along the given ray.
 
@@ -68,6 +69,13 @@ def flash_lineout(
         LOS endpoints in cm (as in the runme --start_point / --end_point).
     npoints : int
         Number of points sampled uniformly along the LOS.
+    extra_fields : dict, optional
+        ``{out_key: (ftype, fname)}`` or ``{out_key: (ftype, fname, unit)}`` sampled
+        along the same ray and merged into the returned dict.  Lets a caller reach
+        fields this function does not name — the per-material mass fractions
+        (``("flash", "targ")``) and ``ye``/``sumy`` that
+        ``scripts/flash_piston_profile.py`` needs to separate the piston from the
+        ambient — without re-implementing the LineBuffer setup.
 
     Returns
     -------
@@ -119,7 +127,7 @@ def flash_lineout(
 
     t_s = float(ds.current_time.to("s"))
 
-    return {
+    out = {
         "x":      x,
         "ne":     ne,
         "n_ion":  n_ion,
@@ -132,17 +140,124 @@ def flash_lineout(
         "t_s":    t_s,
     }
 
+    for key, spec in (extra_fields or {}).items():
+        field, unit = (spec[:2], spec[2]) if len(spec) == 3 else (tuple(spec), None)
+        sampled = lb[field]
+        out[key] = sampled.to(unit) if unit else sampled
+
+    return out
+
+
+def flash_slice(
+    path: str,
+    start_pt: tuple,
+    end_pt: tuple,
+    field: tuple = ("gas", "El_number_density"),
+    slice_axis: str = "z",
+    halfwidth_um: float = 0.0,
+    resolution: int = 512,
+    mask_field: tuple | None = None,
+) -> dict:
+    """2-D slice through the LOS, oriented with the LOS axis HORIZONTAL.
+
+    Same geometry convention as the line-outs — the horizontal axis is "distance along
+    the LOS" measured from ``start_pt`` — so a slice and a line-out from the same dump
+    share an x axis and can be stacked in one figure.
+
+    Parameters
+    ----------
+    path : FLASH plot file.
+    start_pt, end_pt : LOS endpoints [cm].
+    field : yt field tuple to sample.
+    slice_axis : normal of the slicing plane; forced off the LOS axis if it collides
+        (the plane has to *contain* the LOS).
+    halfwidth_um : transverse half-width of the window; 0 uses the full domain.
+    resolution : samples along the LOS (the transverse direction gets half).
+    mask_field : optional FLASH species mass fraction (e.g. ``("flash", "targ")``) that
+        ``field`` is multiplied by, giving that species' share of it.  Weighting by the
+        mass fraction is what makes a mixed cell contribute partially, rather than being
+        assigned whole to whichever material happens to dominate it.
+
+    Returns
+    -------
+    dict with ``img`` ``[transverse, los]``, ``extent`` (los_lo, los_hi, tr_lo, tr_hi) in
+    µm for ``imshow``, ``los_transverse_um`` (where the LOS sits on the transverse axis),
+    and ``t_s``.
+    """
+    start = np.asarray(start_pt, dtype=float)
+    end = np.asarray(end_pt, dtype=float)
+    los_axis = int(np.argmax(np.abs(end - start)))
+
+    axis_index = {"x": 0, "y": 1, "z": 2}[slice_axis]
+    if axis_index == los_axis:
+        axis_index = next(a for a in (2, 1, 0) if a != los_axis)
+    slice_coord = float(start[axis_index])
+
+    ds = yt.load_for_osiris(path)
+    ax_h = ds.coordinates.x_axis[axis_index]
+    ax_v = ds.coordinates.y_axis[axis_index]
+
+    halfwidth_cm = (halfwidth_um or 0.0) * 1e-4
+
+    def span(axis: int):
+        """(width_cm, centre_cm) for one in-plane axis."""
+        if axis == los_axis:
+            return abs(end[axis] - start[axis]), 0.5 * (start[axis] + end[axis])
+        if halfwidth_cm > 0.0:
+            return 2.0 * halfwidth_cm, start[axis]
+        lo = float(ds.domain_left_edge[axis].to("cm"))
+        hi = float(ds.domain_right_edge[axis].to("cm"))
+        return hi - lo, 0.5 * (lo + hi)
+
+    width_h, centre_h = span(ax_h)
+    width_v, centre_v = span(ax_v)
+    centre = [slice_coord, slice_coord, slice_coord]
+    centre[ax_h], centre[ax_v] = centre_h, centre_v
+    res_h = resolution if ax_h == los_axis else resolution // 2
+    res_v = resolution if ax_v == los_axis else resolution // 2
+
+    frb = ds.slice(axis_index, slice_coord).to_frb(
+        width=((width_h, "cm"), (width_v, "cm")),
+        resolution=(res_h, res_v), center=centre)
+    img = np.array(frb[field])                       # [ax_v, ax_h]
+    if mask_field is not None:
+        img = img * np.array(frb[mask_field])
+    bounds_cm = [float(v.to("cm")) for v in frb.bounds]   # h_lo, h_hi, v_lo, v_hi
+
+    if ax_h == los_axis:
+        display = img
+        los_lo, los_hi = bounds_cm[0], bounds_cm[1]
+        tr_lo, tr_hi = bounds_cm[2], bounds_cm[3]
+        los_transverse = float(start[ax_v])
+    else:
+        display = img.T
+        los_lo, los_hi = bounds_cm[2], bounds_cm[3]
+        tr_lo, tr_hi = bounds_cm[0], bounds_cm[1]
+        los_transverse = float(start[ax_h])
+
+    # Horizontal axis is distance FROM start_pt along the LOS, matching flash_lineout.
+    origin_cm = float(start[los_axis])
+    return {
+        "img": display,
+        "extent": ((los_lo - origin_cm) * 1e4, (los_hi - origin_cm) * 1e4,
+                   tr_lo * 1e4, tr_hi * 1e4),
+        "los_transverse_um": los_transverse * 1e4,
+        "t_s": float(ds.current_time.to("s")),
+    }
+
 
 # ---------------------------------------------------------------------------
 # Multi-dump lineout loading
 # ---------------------------------------------------------------------------
 
-def _load_one(path, start_pt, end_pt):
+def _load_one(path, start_pt, end_pt, npoints=512, extra_fields=None):
     """Picklable multiprocessing worker: one independent dump → its lineout dict."""
-    return flash_lineout(path, start_pt, end_pt)
+    return flash_lineout(path, start_pt, end_pt, npoints=npoints,
+                         extra_fields=extra_fields)
 
 
-def load_lineouts(paths: list, start_pt: tuple, end_pt: tuple, nprocs: int = 1) -> list:
+def load_lineouts(paths: list, start_pt: tuple, end_pt: tuple, nprocs: int = 1,
+                  npoints: int = 512, extra_fields: dict = None) -> list:
     """Load each dump's lineout (in input order), fanning the dumps across processes.
 
     ``paths`` is a list of FLASH plot-file paths; ``start_pt`` / ``end_pt`` are the LOS
@@ -151,7 +266,8 @@ def load_lineouts(paths: list, start_pt: tuple, end_pt: tuple, nprocs: int = 1) 
     still matches ``paths[i]``).  Returns the list of per-dump dicts from
     :func:`flash_lineout`, printing a ``[i/N] <file>`` progress line per dump.
     """
-    worker = functools.partial(_load_one, start_pt=start_pt, end_pt=end_pt)
+    worker = functools.partial(_load_one, start_pt=start_pt, end_pt=end_pt,
+                               npoints=npoints, extra_fields=extra_fields)
     out = []
     if nprocs <= 1:
         for i, p in enumerate(paths):

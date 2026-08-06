@@ -1,0 +1,119 @@
+# FLASH-side analysis config for the corrected 3D MagShockZ run
+# (/pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected).
+#
+# This run has no OSIRIS deck seeded from it, so the config points DIRECTLY at the
+# FLASH output directory and states the line of sight itself (the "direct" mode of
+# src/flash_source.py). Override the directory with $MAGSHOCKZ_FLASH_DIR.
+#
+# Used by the FLASH scripts: flash_overview.py, flash_piston_profile.py,
+# flash_rh_prediction.py, tune_flash_shock.py, run_flash_pressure_partition.py,
+# flash_3d_movie.py.
+#
+# Distances/velocities are PHYSICAL CGS (cm, cm/s) unless noted.
+#
+# Dataset facts, read off flash.par in the data directory:
+#   geometry   cartesian 3D; x,z in [-0.85, 0.85] cm, y in [-0.10, 1.60] cm
+#              (nblock 3x3x3, lrefine_max 6, refine on dens + magz)
+#   drive      1 laser beam, 1e12 W flat-top over 0.1 -> 1.85 ns, 0.532 um,
+#              500 um Gaussian spot, lens at y = +4.2 cm firing along -y onto the
+#              origin -> the piston expands along +y (the LOS below)
+#   target     "targ" = Si, Z = 14, A = 28.0855, rho = 2.33 g/cc, 200 um ablator
+#   chamber    "cham" = Al foam, rho = 3.73e-05 g/cc, Te = Ti = 114060 K (~9.8 eV)
+#   field      sim_MagField = 1.9747e+04 in FLASH's unitsystem="none" code units,
+#              i.e. Gauss/sqrt(4*pi) -> 7.0e+04 G = 7 T PHYSICAL along z.
+#              The sqrt(4*pi) is REAL: yt's FLASH frontend applies it by design for
+#              unitsystem="none", so a plain load + .to("G") is already physical
+#              Gauss. Do NOT override magnetic_unit (see CLAUDE.md).
+#   time       tmax = 20 ns, plot files every 0.25 ns
+#   MHD        ideal (useMagneticResistivity = .false.) -> the piston/pile-up
+#              interface is a grid-scale contact discontinuity, which is exactly
+#              why runs/magshockz_2d_heater.warpx.yaml grows its piston with the
+#              WarpX heating operator instead of extracting this one.
+
+# Directory of MagShockZ_hdf5_plt_cnt_* files. Override with $MAGSHOCKZ_FLASH_DIR.
+flash_data_dir: /pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected
+
+# Line of sight the 1D line-outs are extracted along [cm], same convention as the
+# generator's --start_point/--end_point: the canonical radial LOS along +y at
+# x = z = 0. It starts at 0.07 cm rather than 0 so the line-out skips the un-ablated
+# target slab.
+#
+# The far end is 1.40 cm, NOT the 0.70 cm the other configs use. At ~800 km/s the
+# piston front passes 0.5 cm by ~6 ns and the diamagnetic cavity has swallowed a
+# 0.70 cm window entirely by ~9 ns — measured, not guessed: with the short LOS,
+# flash_piston_profile.py found zero dumps with a pristine upstream after 7 ns, and
+# the "ambient" it averaged was the field-expelled cavity interior (|B| ~ 0.01 T
+# against 4 T upstream, beta_e ~ 160 against ~2). 1.40 cm keeps real upstream in
+# view for the whole 3-12 ns window and still sits inside the y = 1.60 cm domain top.
+line_of_sight:
+  start_point: [0, 0.07, 0]
+  end_point:   [0, 1.40, 0]
+
+# Plot-file index that anchors t = 0 for the front trajectory (default 0). No
+# OSIRIS deck was seeded from this run, so this is simply the dump times are
+# measured from.
+ic_index: 0
+
+# This dataset already has a results tree from other configs; claim our own
+# sub-directory (results/FLASH_MagShockZ3D-corrected/flash_3d_corrected/) so a
+# second line of sight can never silently feed flash_rh_prediction the wrong
+# line-out. See src/yaml_edit.py::out_dir.
+results_subdir: auto
+
+# The INITIALLY UNPERTURBED BACKGROUND, transcribed from flash.par's chamber ("cham")
+# initial condition. This is the upstream state the dimensionless parameters are built on
+# (`--upstream initial`, the default in scripts/flash_piston_profile.py): the pristine
+# chamber fill the experiment was set up with, with no laser channel to exclude because at
+# t = 0 the pulse has not fired (it ramps from 0.1 ns).
+#
+# The script does NOT read these numbers — it reads the ic_index dump, which is what FLASH
+# actually evolved and is the only place the EOS-determined ionisation can be found.
+# flash.par gives ms_chamZ = 13, the ATOMIC number; at 9.83 eV the EOS table returns
+# Zbar = 3.66, and Zbar sets n_e, beta_e and d_i. These entries exist so the script can
+# cross-check the dump and warn if this config is ever pointed at a dataset whose IC is
+# not the one described here.
+#
+#   sim_rhoCham  = 0.0000373      -> rho below
+#   sim_teleCham = sim_tionCham = 114060 K -> 9.8289 eV
+#   ms_chamA = 26.98, ms_chamZ = 13 (atomic; measured Zbar = 3.66)
+#   sim_MagField = 1.9747e+04 code = x sqrt(4*pi) -> 7.00013 T  (the sqrt(4*pi) is REAL)
+#
+# Derived, for orientation: n_i = 8.326e+23 m^-3, v_A = 32.2 km/s, beta_i = 0.067,
+# beta_e = 0.246 at Zbar = 3.66 — a LOW-beta, strongly magnetized background, in contrast
+# to the beta_e ~ 18 measured a few ns later in the preheated precursor ahead of the front.
+unperturbed_background:
+  rho_g_cm3: 3.73e-05
+  te_ev: 9.8289
+  ti_ev: 9.8289
+  b_tesla: 7.00013
+
+# Material whose ion population is the laser-driven PISTON. The flash2osiris yt
+# plugin registers one ("flash", "<material>dens") field per non-vacuum FLASH
+# material (electron density restricted to cells that material dominates), so
+# "targ" -> ("flash", "targdens") is the piston tracer and "cham" -> the ambient.
+# Read by scripts/flash_piston_profile.py.
+piston_material: targ
+ambient_material: cham
+
+# Adiabatic index for the perpendicular-MHD jump (flash_rh_prediction.py) and for
+# the ambient sound speed in flash_piston_profile.py.
+# gamma=(f+2)/f: 5/3 (3 DOF), 2 (2 DOF), 3 (1 DOF). Default 5/3 if omitted.
+# gamma: 1.6667
+
+# FLASH detection seeds / trajectory fit (physical units) — set by
+# scripts/tune_flash_shock.py (trajectory mode). Not yet tuned for this run.
+#   v_shock_est_cms : shock velocity along the LOS [cm/s]
+#   x_shock_0_cm    : shock position along the LOS at the anchor time t_shock_0_s [cm]
+#   t_shock_0_s     : anchor [s] — the time the front sat at x_shock_0_cm. Optional;
+#                     defaults to the ic_index dump time.
+# flash:
+#   v_shock_est_cms: 0
+#   x_shock_0_cm: 0
+#   t_shock_0_s: 0
+
+# Per-dump hand-placed front, keyed by plot-file index (set by
+# scripts/tune_flash_shock.py --mode regions). Per-dataset; nothing carries over
+# from the other flash_*.yaml configs.
+#   x_shock_cm            : shock-front position along the LOS [cm]
+#   x_downstream_start_cm : left edge of the downstream region [cm]
+flash_dump_params: {}

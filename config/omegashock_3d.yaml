@@ -1,0 +1,12 @@
+# FLASH-side analysis config for the OmegaShock 3D run (basenm "MagShock2019_").
+#
+# Run parameters (data_path, LOS, reference_density, charge states) live in the
+# run's single source of truth (<sim_dir>/run.yaml) and are read via RunSpec.
+# This file holds only derived-from-data annotations. The `flash:` block is
+# intentionally OMITTED so v_shock_est / x_shock_0 default to 0 and the shock
+# front overlay + Mach numbers are effectively skipped (per request) — the
+# overview then shows the raw field streaks, yt slices, and lineouts only.
+#
+# Used by: flash_overview.py, flash_3d_movie.py.
+
+sim_dir: /pscratch/sd/d/dschnei/OmegaShock_run
