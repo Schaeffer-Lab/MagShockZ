@@ -1,7 +1,9 @@
 """Tests for src/yaml_edit.py — comment-preserving scalar edits (PyYAML only, CI-safe)."""
 
+import pytest
 import yaml
 
+from magshockz.common import yaml_edit
 from magshockz.common.yaml_edit import set_scalar, set_dump_param, assert_roundtrip
 
 
@@ -149,3 +151,110 @@ def test_set_dump_param_custom_section_creates_and_coexists():
     # the OSIRIS dump_params section is untouched
     assert data["dump_params"][400]["x_shock"] == 1111.7
     assert assert_roundtrip(out, "flash_dump_params.20.x_shock_cm", 0.51)
+
+
+# ---------------------------------------------------------------------------
+# Per-line-of-sight sections: <section>.<label>.<dump>.<key>
+# ---------------------------------------------------------------------------
+# A config with a fan of rays gives each ray its own front positions, so the tuner's
+# write-back path gains one nesting level.
+
+FAN_CONFIG = """\
+flash_data_dir: /data/FLASH_corrected
+
+lines_of_sight:
+  los00:
+    start_point: [0.0, 0.07, 0.0]
+    end_point: [0.0, 1.40, 0.0]
+  los30:
+    start_point: [0.035, 0.061, 0.0]
+    end_point: [0.7, 1.212, 0.0]
+
+flash:
+  los00:
+    v_shock_est_cms: 90000000.0
+  los30:
+    v_shock_est_cms: 70000000.0
+
+flash_dump_params:
+  los00:
+    36:
+      x_shock_cm: 0.62
+      x_downstream_start_cm: 0.55
+  los30: {}
+"""
+
+
+def test_set_dump_param_edits_a_per_los_value_in_place():
+    out = yaml_edit.set_dump_param(FAN_CONFIG, 36, "x_shock_cm", 0.71,
+                                   section="flash_dump_params.los00")
+    yaml_edit.assert_roundtrip(out, "flash_dump_params.los00.36.x_shock_cm", 0.71)
+    # the other ray is untouched
+    assert "los30: {}" in out
+
+
+def test_set_dump_param_inserts_a_missing_key_in_an_existing_block():
+    out = yaml_edit.set_dump_param(FAN_CONFIG, 36, "x_downstream_start_cm", 0.5,
+                                   section="flash_dump_params.los00")
+    yaml_edit.assert_roundtrip(out, "flash_dump_params.los00.36.x_downstream_start_cm", 0.5)
+
+
+def test_set_dump_param_inserts_a_missing_dump_block():
+    out = yaml_edit.set_dump_param(FAN_CONFIG, 52, "x_shock_cm", 0.9,
+                                   section="flash_dump_params.los00")
+    yaml_edit.assert_roundtrip(out, "flash_dump_params.los00.52.x_shock_cm", 0.9)
+    yaml_edit.assert_roundtrip(out, "flash_dump_params.los00.36.x_shock_cm", 0.62)
+
+
+def test_set_dump_param_refuses_to_invent_a_missing_los_block():
+    """Inventing the intermediate mapping would guess its indentation and ordering."""
+    with pytest.raises(KeyError, match="section not found"):
+        yaml_edit.set_dump_param(FAN_CONFIG, 36, "x_shock_cm", 0.7,
+                                 section="flash_dump_params.los99")
+
+
+def test_set_scalar_edits_a_per_los_trajectory_value():
+    out = yaml_edit.set_scalar(FAN_CONFIG, "flash.los30.v_shock_est_cms", 3.5e7)
+    yaml_edit.assert_roundtrip(out, "flash.los30.v_shock_est_cms", 3.5e7)
+    yaml_edit.assert_roundtrip(out, "flash.los00.v_shock_est_cms", 9.0e7)
+
+
+def test_set_scalar_inserts_a_missing_key_three_levels_down():
+    """t_shock_0_s is written by the tuner into a block that may not carry it yet."""
+    out = yaml_edit.set_scalar(FAN_CONFIG, "flash.los30.t_shock_0_s", 2.0e-9)
+    yaml_edit.assert_roundtrip(out, "flash.los30.t_shock_0_s", 2.0e-9)
+    yaml_edit.assert_roundtrip(out, "flash.los30.v_shock_est_cms", 7.0e7)
+
+
+def test_set_scalar_still_refuses_a_missing_deep_parent():
+    with pytest.raises(KeyError, match="key path not found"):
+        yaml_edit.set_scalar(FAN_CONFIG, "flash.los99.v_shock_est_cms", 1.0e7)
+
+
+def test_set_scalar_opens_an_empty_placeholder_block():
+    """`los45: {}` declares a ray whose front has not been tuned yet; nesting a
+    block entry under a flow mapping would make the file unparseable."""
+    cfg = "flash:\n  los00: {}\n  los30: {}\n"
+    out = yaml_edit.set_scalar(cfg, "flash.los00.v_shock_est_cms", 9.0e7)
+    out = yaml_edit.set_scalar(out, "flash.los00.t_shock_0_s", 2.0e-9)
+    yaml_edit.assert_roundtrip(out, "flash.los00.v_shock_est_cms", 9.0e7)
+    yaml_edit.assert_roundtrip(out, "flash.los00.t_shock_0_s", 2.0e-9)
+    assert yaml.safe_load(out)["flash"]["los30"] == {}
+
+
+def test_set_dump_param_opens_an_empty_placeholder_block():
+    cfg = "flash_dump_params:\n  los00: {}\n  los30: {}\n"
+    out = yaml_edit.set_dump_param(cfg, 36, "x_shock_cm", 0.62,
+                                   section="flash_dump_params.los00")
+    out = yaml_edit.set_dump_param(out, 36, "x_downstream_start_cm", 0.55,
+                                   section="flash_dump_params.los00")
+    yaml_edit.assert_roundtrip(out, "flash_dump_params.los00.36.x_shock_cm", 0.62)
+    yaml_edit.assert_roundtrip(out, "flash_dump_params.los00.36.x_downstream_start_cm", 0.55)
+    assert yaml.safe_load(out)["flash_dump_params"]["los30"] == {}
+
+
+def test_opening_a_placeholder_keeps_its_trailing_comment():
+    cfg = "flash:\n  los45: {}   # truncated by xmax\n"
+    out = yaml_edit.set_scalar(cfg, "flash.los45.v_shock_est_cms", 5.0e7)
+    assert "# truncated by xmax" in out
+    yaml_edit.assert_roundtrip(out, "flash.los45.v_shock_est_cms", 5.0e7)

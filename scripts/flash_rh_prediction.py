@@ -68,19 +68,23 @@ from magshockz.common import flash_source
 from magshockz.common import yaml_edit
 from magshockz.common import flash_utils as fu
 from magshockz.common import perpendicular_shock as ps
+from magshockz.analysis.flash import shock
+from magshockz.analysis.flash import flash_energy_partition as fep
 
 
-def _load_shock_geometry(cfg, idx, out_dir, snapshot_idx, x_shock_cm, x_ds_start):
+def _load_shock_geometry(cfg, idx, out_dir, x_shock_cm, x_ds_start, label=""):
     """Resolve (x_shock [cm], x_downstream_start [cm], v_shock [cm/s]) as bare
     floats.  Priority (first hit wins): explicit CLI value → the hand-placed
-    ``flash_dump_params.<idx>`` in the config (written by tune_flash_shock.py) →
+    ``flash_dump_params.<idx>`` in the config (written by flash_tune_shock.py) →
     the flash_overview .npz.  The caller attaches units.
 
-    ``idx`` is the resolved positive plot-file index (the config key).  ``out_dir``
-    is searched for ``flash_overview_*.npz`` only for whatever remains unset.
+    ``idx`` is the resolved positive plot-file index (the config key); ``label`` names
+    the line of sight when the config carries several.  ``out_dir`` is searched for
+    ``flash_overview_*.npz`` only for whatever remains unset — and it is already the
+    ray's own directory, so the fallback cannot pick up another ray's line-out.
     """
     # 1. hand-placed per-dump positions in the config (cm).
-    per = cfg.get("flash_dump_params", {}).get(idx, {})
+    per = flash_source.los_params(cfg, "flash_dump_params", label).get(idx, {})
     if x_shock_cm is None and "x_shock_cm" in per:
         x_shock_cm = float(per["x_shock_cm"])
     if x_ds_start is None and "x_downstream_start_cm" in per:
@@ -96,7 +100,9 @@ def _load_shock_geometry(cfg, idx, out_dir, snapshot_idx, x_shock_cm, x_ds_start
     )
     if npz_files:
         d = np.load(os.path.join(out_dir, npz_files[-1]), allow_pickle=True)
-        npz_idx = snapshot_idx % len(d["time_ns"])
+        npz_idx = shock.overview_row(
+            idx, d["dump_indices"] if "dump_indices" in d.files else None,
+            len(d["time_ns"]))
         if "v_shock_cms" in d.files:
             v_shock_npz = float(d["v_shock_cms"])
         if x_shock_cm is None:
@@ -137,6 +143,7 @@ def main():
     parser.add_argument("--window-um", type=float, default=400.0, dest="window_um",
                         help="Half-width [µm] of the zoom window around the front (default 400).")
     parser.add_argument("--output-dir", default=None, dest="output_dir")
+    flash_source.add_los_arg(parser)
     plot_style.add_publication_arg(parser)
     args = parser.parse_args()
     plot_style.apply(args.publication)
@@ -145,7 +152,7 @@ def main():
     # Config + run parameters
     # ------------------------------------------------------------------
     cfg    = analysis_utils.load_config(args.config)
-    source = flash_source.resolve(cfg, args.config)
+    source = flash_source.resolve(cfg, args.config, los=args.los)
 
     flash_dir  = source.flash_dir
     line_start = source.line_start
@@ -156,17 +163,16 @@ def main():
         # Default: the source's IC dump, so results are directly comparable to the
         # OSIRIS side (see mach-number-self-consistent-dump memory).
         idx = source.ic_index
-        snapshot_idx_for_geom = idx
     else:
         idx = args.snapshot_idx % len(all_files)   # config key = positive plot-file index
-        snapshot_idx_for_geom = args.snapshot_idx
     snap_file = all_files[idx]
 
     out_dir = yaml_edit.out_dir(flash_dir, args.output_dir,
-                                cfg=cfg, config_path=args.config)
+                                cfg=cfg, config_path=args.config, subdir=source.label)
 
     x_shock_cm, x_ds_cm, v_shock_npz = _load_shock_geometry(
-        cfg, idx, out_dir, snapshot_idx_for_geom, args.x_shock_cm, args.x_downstream_start_cm)
+        cfg, idx, out_dir, args.x_shock_cm,
+        args.x_downstream_start_cm, label=source.label)
 
     if x_shock_cm is None or not np.isfinite(x_shock_cm):
         raise ValueError(
@@ -178,10 +184,11 @@ def main():
             "or pass --x-downstream-start-cm.")
 
     # v_shock: CLI → config flash.v_shock_est_cms → fitted value from the npz.
+    flash_cfg = flash_source.los_params(cfg, "flash", source.label)
     if args.v_shock_cms is not None:
         v_shock_cms = args.v_shock_cms
-    elif cfg.get("flash", {}).get("v_shock_est_cms"):
-        v_shock_cms = float(cfg["flash"]["v_shock_est_cms"])
+    elif flash_cfg.get("v_shock_est_cms"):
+        v_shock_cms = float(flash_cfg["v_shock_est_cms"])
     elif v_shock_npz is not None and np.isfinite(v_shock_npz):
         v_shock_cms = v_shock_npz
     else:
@@ -206,7 +213,15 @@ def main():
     # Lineout + derived per-point quantities (all unyt)
     # ------------------------------------------------------------------
     print("\nLoading lineout …", flush=True)
-    lo = fu.flash_lineout(snap_file, line_start, line_end)
+    # ye/sumy are FLASH's electron bookkeeping fields; their ratio is the local mean
+    # charge Zbar, which flash.par cannot supply (it states ms_chamZ = 13, the ATOMIC
+    # number, while the EOS returns ~3.7 here) and which sets n_ion, beta_e and d_i.
+    lo = fu.flash_lineout(snap_file, line_start, line_end,
+                          extra_fields={"ye": ("flash", "ye"),
+                                        "sumy": ("flash", "sumy")})
+    zbar = np.divide(np.asarray(lo["ye"]), np.asarray(lo["sumy"]),
+                     out=np.zeros_like(np.asarray(lo["ye"])),
+                     where=np.asarray(lo["sumy"]) > 0.0)
 
     x = lo["x"].to("cm")
     t = (lo["t_s"] * unyt.s)
@@ -238,8 +253,10 @@ def main():
     Te_up    = mean_up(lo["Te"])
     Ti_up    = mean_up(lo["Ti"])
     Bperp_up = mean_up(B_perp)
+    Bmag_up  = mean_up(lo["B_mag"])
     Bpara_up = mean_up(lo["B_para"])
     vpara_up = mean_up(lo["v_para"])
+    zbar_up  = float(np.nanmean(zbar[up]))
     # Upstream thermal pressure from the region-averaged partial pressures, so it
     # is consistent with the sound speed perpendicular_shock builds internally.
     P_up     = (ne_up * Te_up + ni_up * Ti_up).to("erg/cm**3")
@@ -255,6 +272,8 @@ def main():
         v_shock=v_shock, v_para=vpara_up, gamma=gamma)
     v_A      = jump["v_A"].to("cm/s")
     c_s      = jump["c_s"].to("cm/s")
+    v_ms     = jump["v_ms"].to("cm/s")
+    mach_ms  = jump["mach_ms"]
     v_inflow = jump["v_inflow"].to("cm/s")
     theta_bn = jump["theta_bn"]
     r        = jump["r"]
@@ -278,6 +297,17 @@ def main():
     Te_dn_pred    = T_ratio * Te_up
     Ti_dn_pred    = T_ratio * Ti_up
 
+    # Measured mass compression, and the adiabatic index that would reproduce it.
+    # Mass — not electron — density, because Zbar changes across an ionizing front and
+    # n_e/n_e1 then overstates the compression the RH relations are about.
+    rho_dn_meas = mean_dn(lo["rho"])
+    r_measured = float((rho_dn_meas / rho_up).to("dimensionless"))
+    gamma_eff = ps.effective_gamma(
+        r_measured,
+        dict(ne=ne_up, Te=Te_up, n_ion=ni_up, Ti=Ti_up, B_perp=Bperp_up,
+             B_para=Bpara_up, rho=rho_up, v_shock=v_shock, v_para=vpara_up))
+    zbar_dn = float(np.nanmean(zbar[dn]))
+
     # Measured downstream means for the head-to-head.
     ne_dn_meas    = mean_dn(lo["ne"])
     Bperp_dn_meas = mean_dn(B_perp)
@@ -289,15 +319,52 @@ def main():
     # ------------------------------------------------------------------
     # Report
     # ------------------------------------------------------------------
+    # Ion-scale lengths and times, from the upstream state the shock actually runs
+    # into.  d_i and T_ci are what the PIC comparison is eventually normalised to.
+    ion_mass = (rho_up / ni_up).to("g")
+    omega_ci = (unyt.qp * Bmag_up / (ion_mass * unyt.c)).to("1/s") * zbar_up
+    d_i = (unyt.c / np.sqrt(4.0 * np.pi * ni_up * (zbar_up * unyt.qp)**2
+                            / ion_mass)).to("um")
+    T_ci = (2.0 * np.pi / omega_ci).to("ns")
+
+    beta_e = float((8.0 * np.pi * ne_up * Te_up / Bmag_up**2).to("dimensionless"))
+    beta_i = float((8.0 * np.pi * ni_up * Ti_up / Bmag_up**2).to("dimensionless"))
+
     print("\n--- Upstream state (region average) ---")
-    print(f"  n_e = {ne_up.to('cm**-3'):.3e}   B_perp = {Bperp_up.to('gauss'):.2f}   "
-          f"T_e = {Te_up.to('eV'):.1f}   T_i = {Ti_up.to('eV'):.1f}")
-    print(f"  v_A = {v_A.to('km/s'):.1f}   c_s = {c_s.to('km/s'):.1f}   "
-          f"v_inflow = {v_inflow.to('km/s'):.1f}")
-    print(f"  theta_Bn = {np.degrees(theta_bn):.1f} deg   "
-          f"M_s = {mach_s:.2f}   M_A = {mach_a:.2f}")
+    print(f"  n_e   = {ne_up.to('cm**-3'):.3e}   n_ion = {ni_up.to('cm**-3'):.3e}   "
+          f"Zbar = {zbar_up:.2f}")
+    print(f"  T_e   = {Te_up.to('eV'):.1f}   T_i = {Ti_up.to('eV'):.1f}")
+    print(f"  |B|   = {Bmag_up.to('gauss'):.1f} = {Bmag_up.to('T'):.2f}   "
+          f"B_perp = {Bperp_up.to('gauss'):.1f}   theta_Bn = {np.degrees(theta_bn):.1f} deg")
+    print(f"  beta_e = {beta_e:.3f}   beta_i = {beta_i:.3f}   "
+          f"beta = {beta_e + beta_i:.3f}")
+    print(f"  v_A   = {v_A.to('km/s'):.1f}   c_s = {c_s.to('km/s'):.1f}   "
+          f"v_ms = {v_ms.to('km/s'):.1f}")
+    print(f"  d_i   = {d_i:.1f}   T_ci = {T_ci:.1f}")
+    print(f"\n--- Shock ---")
+    print(f"  v_shock = {v_shock.to('km/s'):.1f}   v_inflow = {v_inflow.to('km/s'):.1f}")
+    # M_ms is the one that decides whether a shock exists at all, and the one to
+    # compare against the ~2.76 critical Mach number for ion reflection.
+    print(f"  M_s = {mach_s:.2f}   M_A = {mach_a:.2f}   M_ms = {mach_ms:.2f}   "
+          f"({'SUPER' if mach_ms > 2.76 else 'sub'}-critical; "
+          f"ion-reflection threshold is 2.76)")
     print(f"\n--- Perpendicular MHD prediction (gamma = {gamma:.4f}) ---")
     print(f"  r = rho2/rho1 = {r:.3f}   p2/p1 = {p_ratio:.3f}   T2/T1 = {T_ratio:.3f}")
+    print(f"  ceiling at this gamma: r_max = {(gamma + 1) / (gamma - 1):.2f}")
+    print(f"\n--- Compression measured vs predicted ---")
+    print(f"  r measured (mass) = {r_measured:.3f}   vs predicted {r:.3f}")
+    print(f"  Zbar {zbar_up:.2f} -> {zbar_dn:.2f} across the front")
+    if np.isfinite(gamma_eff):
+        print(f"  effective gamma reproducing the measurement = {gamma_eff:.3f}  "
+              f"({2.0 / (gamma_eff - 1.0):.1f} DOF)")
+        if gamma_eff < gamma:
+            # An ionizing shock puts energy into stripping electrons instead of into
+            # thermal pressure, which softens the index and raises the compression.
+            print(f"  -> softer than {gamma:.3f}: energy is going somewhere other than "
+                  f"thermal pressure (this front ionizes)")
+    else:
+        print("  effective gamma: no single-fluid index in [1.02, 1.95] reproduces "
+              "this compression")
     sep = "-" * 64
     print(sep)
     print(f"  {'quantity':<22}{'upstream':>12}{'pred. dn':>12}{'meas. dn':>12}")
@@ -313,6 +380,18 @@ def main():
     for name, u, pdn, mdn in rows:
         print(f"  {name:<22}{float(u):>12.3e}{float(pdn):>12.3e}{float(mdn):>12.3e}")
     print(sep)
+
+    # ------------------------------------------------------------------
+    # Downstream heating and its electron/ion split
+    # ------------------------------------------------------------------
+    heating = fep.heating_partition(
+        Te_up=Te_up.to("eV"), Ti_up=Ti_up.to("eV"),
+        Te_dn=Te_dn_meas.to("eV"), Ti_dn=Ti_dn_meas.to("eV"),
+        ne_up=ne_up.to("cm**-3"), ni_up=ni_up.to("cm**-3"),
+        ne_dn=mean_dn(lo["ne"]).to("cm**-3"), ni_dn=mean_dn(lo["n_ion"]).to("cm**-3"),
+        T_factor=T_ratio)
+    print()
+    print(fep.heating_summary(heating))
 
     # ------------------------------------------------------------------
     # Figure — lineouts across the front with the predicted downstream line
@@ -401,7 +480,32 @@ def main():
         v_shock_cms=np.asarray(float(v_shock.to("cm/s"))),
         gamma=np.asarray(gamma), theta_bn_rad=np.asarray(theta_bn),
         mach_s=np.asarray(mach_s), mach_a=np.asarray(mach_a),
+        mach_ms=np.asarray(mach_ms),
         r=np.asarray(r), p_ratio=np.asarray(p_ratio), T_ratio=np.asarray(T_ratio),
+        # upstream plasma state and the ion scales it sets
+        los_label=np.asarray(source.label),
+        dump_index=np.asarray(idx),
+        zbar_up=np.asarray(zbar_up), zbar_dn=np.asarray(zbar_dn),
+        r_measured=np.asarray(r_measured), gamma_eff=np.asarray(gamma_eff),
+        rho_dn_meas=np.asarray(float(rho_dn_meas.to("g/cm**3"))),
+        ni_up=np.asarray(float(ni_up.to("cm**-3"))),
+        rho_up=np.asarray(float(rho_up.to("g/cm**3"))),
+        Bmag_up=np.asarray(float(Bmag_up.to("gauss"))),
+        beta_e_up=np.asarray(beta_e), beta_i_up=np.asarray(beta_i),
+        v_A_kms=np.asarray(float(v_A.to("km/s"))),
+        c_s_kms=np.asarray(float(c_s.to("km/s"))),
+        v_ms_kms=np.asarray(float(v_ms.to("km/s"))),
+        d_i_um=np.asarray(float(d_i)), T_ci_ns=np.asarray(float(T_ci)),
+        # downstream heating and its electron/ion split
+        heat_Te_adiabatic=np.asarray(heating["electron"]["adiabatic"]),
+        heat_Te_excess=np.asarray(heating["electron"]["anomalous"]),
+        heat_Te_excess_frac=np.asarray(heating["electron"]["anomalous_frac"]),
+        heat_Ti_adiabatic=np.asarray(heating["ion"]["adiabatic"]),
+        heat_Ti_excess=np.asarray(heating["ion"]["anomalous"]),
+        heat_Ti_excess_frac=np.asarray(heating["ion"]["anomalous_frac"]),
+        du_th_e=np.asarray(float(heating["du_th_e"])),
+        du_th_i=np.asarray(float(heating["du_th_i"])),
+        f_e=np.asarray(heating["f_e"]), f_i=np.asarray(heating["f_i"]),
         # upstream / predicted-dn / measured-dn for each channel
         ne_up=np.asarray(float(ne_up.to("cm**-3"))),
         ne_dn_pred=np.asarray(float(ne_dn_pred.to("cm**-3"))),

@@ -338,11 +338,25 @@ def mach_numbers(
 
     Returns a dict of unyt quantities (use ``.to(...)`` / ``float(...)`` at the
     call site):
-        v_A   : Alfvén speed                         [cm/s]
-        c_s   : sound speed                          [cm/s]
-        M_A   : v_shock / v_A                        [dimensionless]
-        M_s   : v_shock / c_s                        [dimensionless]
-        beta  : thermal pressure / magnetic pressure [dimensionless]
+        v_A    : Alfvén speed                          [cm/s]
+        c_s    : sound speed                           [cm/s]
+        v_ms   : fast magnetosonic speed sqrt(v_A²+c_s²)  [cm/s]
+        M_A    : v_shock / v_A                         [dimensionless]
+        M_s    : v_shock / c_s                         [dimensionless]
+        M_ms   : v_shock / v_ms                        [dimensionless]
+        beta   : total thermal / magnetic pressure     [dimensionless]
+        beta_e : electron pressure / magnetic pressure [dimensionless]
+        beta_i : ion pressure / magnetic pressure      [dimensionless]
+
+    ``v_ms`` is the **perpendicular** fast speed: at theta_Bn = 90 deg the fast
+    magnetosonic mode travels at sqrt(v_A² + c_s²), and ``M_ms`` is the Mach number
+    that decides whether a shock forms at all.  It is also the one to quote against
+    the ion-reflection (critical Mach) threshold ~2.76, not ``M_A``.
+
+    ``beta_e`` and ``beta_i`` are reported separately because they are not
+    interchangeable here: FLASH runs 3T, and this chamber plasma sits near
+    beta_e ~ 0.25 with beta_i ~ 4x smaller, so a single ``beta`` hides which species
+    carries the upstream pressure.
     """
     from unyt import Gauss, cm, eV, g, s
 
@@ -360,18 +374,28 @@ def mach_numbers(
 
     # ---- Thermal pressure: P_th = nₑ kTₑ + nᵢ kTᵢ ----
     # Te, Ti are already energies (kT in eV), so nₑ·Tₑ is directly a pressure.
-    P_th = (ne * Te + n_i * Ti).to("erg/cm**3")
+    P_e  = (ne * Te).to("erg/cm**3")
+    P_i  = (n_i * Ti).to("erg/cm**3")
+    P_th = P_e + P_i
 
     # ---- Sound speed: c_s = sqrt(γ P_th / ρ) ----
     c_s = np.sqrt(gamma * P_th / rho).to("cm/s")
+
+    # ---- Fast magnetosonic speed at theta_Bn = 90 deg ----
+    v_ms = np.sqrt(v_A**2 + c_s**2).to("cm/s")
 
     # ---- Magnetic pressure and plasma beta (Gaussian CGS) ----
     P_B  = (B**2 / (8.0 * np.pi)).to("erg/cm**3")
     beta = (P_th / P_B).to("dimensionless")
 
-    M_A = (v_sh / v_A).to("dimensionless")
-    M_s = (v_sh / c_s).to("dimensionless")
+    M_A  = (v_sh / v_A).to("dimensionless")
+    M_s  = (v_sh / c_s).to("dimensionless")
+    M_ms = (v_sh / v_ms).to("dimensionless")
 
-    return {"v_A": v_A, "c_s": c_s, "M_A": M_A, "M_s": M_s, "beta": beta}
+    return {"v_A": v_A, "c_s": c_s, "v_ms": v_ms,
+            "M_A": M_A, "M_s": M_s, "M_ms": M_ms,
+            "beta": beta,
+            "beta_e": (P_e / P_B).to("dimensionless"),
+            "beta_i": (P_i / P_B).to("dimensionless")}
 
 

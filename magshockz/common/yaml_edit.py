@@ -96,6 +96,19 @@ def _set_line(line, value):
     return f"{m.group(1)}{_fmt(value)}{m.group(3)}"
 
 
+def _open_empty_mapping(lines, idx):
+    """Rewrite ``key: {}`` at ``lines[idx]`` to a bare ``key:``.
+
+    An empty flow mapping is the natural way for a config to declare a block that a
+    tuner fills in later (``los45: {}``), but YAML cannot nest block entries under
+    one — inserting a child would make the file unparseable.  Opening it first keeps
+    the placeholder usable.
+    """
+    m = _VALUE_RE.match(lines[idx])
+    if m and m.group(2).strip() == "{}":
+        lines[idx] = f"{m.group(1).rstrip()}{m.group(3)}"
+
+
 def set_scalar(text, dotted_key, value):
     """Return ``text`` with the scalar at ``dotted_key`` (e.g. ``"shock.v_shock"``)
     replaced by ``value``.
@@ -121,16 +134,10 @@ def set_scalar(text, dotted_key, value):
             lines.append(new_line)
         return "\n".join(lines)
 
-    if len(keys) == 2:
-        parent, key = keys
-        p_idx = _find_line(lines, [parent])
-        if p_idx is None:                       # no parent block at all -> append one
-            block = [f"{parent}:", f"  {key}: {val}{_INSERT_COMMENT}"]
-            if lines and lines[-1] == "":
-                lines[-1:] = block + [""]
-            else:
-                lines += block
-            return "\n".join(lines)
+    parent_keys, key = keys[:-1], keys[-1]
+    p_idx = _find_line(lines, parent_keys)
+    if p_idx is not None:                       # parent block exists -> insert into it
+        _open_empty_mapping(lines, p_idx)
         p_indent = len(_KEY_RE.match(lines[p_idx]).group(1))
         start, end = _section_bounds(lines, p_idx)
         child_indent, _ = _child_indents(lines, start, end, p_indent)
@@ -138,6 +145,16 @@ def set_scalar(text, dotted_key, value):
         lines.insert(pos, f"{' ' * child_indent}{key}: {val}{_INSERT_COMMENT}")
         return "\n".join(lines)
 
+    if len(keys) == 2:                          # no parent block at all -> append one
+        block = [f"{keys[0]}:", f"  {key}: {val}{_INSERT_COMMENT}"]
+        if lines and lines[-1] == "":
+            lines[-1:] = block + [""]
+        else:
+            lines += block
+        return "\n".join(lines)
+
+    # Deeper than one level and the parent is missing: inventing the intermediate
+    # blocks would guess at indentation and ordering, so require them to exist.
     raise KeyError(f"key path not found: {dotted_key}")
 
 
@@ -197,12 +214,15 @@ def set_dump_param(text, dump_idx, key, value, section="dump_params"):
     Edits the line in place when it exists; otherwise inserts the key (or the whole
     ``<dump_idx>:`` block, or the ``<section>:`` section) with matching indentation.
 
-    ``section`` is the top-level mapping the per-dump blocks live under; it defaults
-    to ``"dump_params"`` (the OSIRIS analysis config).  The FLASH tuner passes
+    ``section`` is the mapping the per-dump blocks live under; it defaults to
+    ``"dump_params"`` (the OSIRIS analysis config).  The FLASH tuner passes
     ``"flash_dump_params"`` so its physical-unit per-dump positions stay separate
-    from the OSIRIS c/ωpe ``dump_params``.
+    from the OSIRIS c/ωpe ``dump_params``, and may dot in a line-of-sight label
+    (``"flash_dump_params.los30"``) when the config carries a fan of rays, each with
+    its own front positions.
     """
-    keys = [section, str(dump_idx), key]
+    section_keys = section.split(".")
+    keys = section_keys + [str(dump_idx), key]
     lines = text.split("\n")
 
     idx = _find_line(lines, keys)
@@ -210,11 +230,14 @@ def set_dump_param(text, dump_idx, key, value, section="dump_params"):
         lines[idx] = _set_line(lines[idx], value)
         return "\n".join(lines)
 
-    dp_idx = _find_line(lines, [section])
+    dp_idx = _find_line(lines, section_keys)
     val = _fmt(value)
 
-    # No <section> mapping at all -> append one at EOF.
+    # No <section> mapping at all -> append one at EOF.  Only a top-level section can
+    # be invented; a missing per-LOS block would have to guess its parent's layout.
     if dp_idx is None:
+        if len(section_keys) > 1:
+            raise KeyError(f"section not found: {section}")
         block = [f"{section}:",
                  f"  {dump_idx}:",
                  f"    {key}: {val}{_INSERT_COMMENT}"]
@@ -224,13 +247,15 @@ def set_dump_param(text, dump_idx, key, value, section="dump_params"):
             lines += block
         return "\n".join(lines)
 
+    _open_empty_mapping(lines, dp_idx)
     dp_indent = len(_KEY_RE.match(lines[dp_idx]).group(1))
     start, end = _section_bounds(lines, dp_idx)
     child_indent, grand_indent = _child_indents(lines, start, end, dp_indent)
 
     # Does the <dump_idx>: block already exist (just missing this key)?
-    block_idx = _find_line(lines, [section, str(dump_idx)])
+    block_idx = _find_line(lines, section_keys + [str(dump_idx)])
     if block_idx is not None:
+        _open_empty_mapping(lines, block_idx)
         b_start, b_end = _section_bounds(lines, block_idx)
         pos = _last_content_idx(lines, b_start, b_end, grand_indent) + 1
         lines.insert(pos, f"{' ' * grand_indent}{key}: {val}{_INSERT_COMMENT}")
@@ -283,7 +308,7 @@ def _is_number(v):
 # These do touch the filesystem / stdin, unlike the pure str->str editors above, but
 # they add no new dependency (stdlib only) so the module stays CI-importable.
 
-def out_dir(base_dir, override=None, *, cfg=None, config_path=None):
+def out_dir(base_dir, override=None, *, cfg=None, config_path=None, subdir=None):
     """Resolve (and create) a script's results output directory.
 
     The default is ``<repo>/results/<basename of base_dir>`` — keyed on the *dataset*
@@ -306,6 +331,10 @@ def out_dir(base_dir, override=None, *, cfg=None, config_path=None):
         entirely.  Fully decoupled from the dataset.
 
     ``override`` (the scripts' ``--output-dir``) beats both.
+
+    ``subdir`` is appended to whichever of those wins.  It carries the line-of-sight
+    label for a config holding several rays, which is what stops one ray's
+    ``flash_overview_*.npz`` from being read back for another.
     """
     repo = REPO_ROOT
     cfg = cfg or {}
@@ -327,6 +356,9 @@ def out_dir(base_dir, override=None, *, cfg=None, config_path=None):
                         "not passed one; name the sub-directory explicitly instead.")
                 sub = os.path.splitext(os.path.basename(config_path))[0]
             out = os.path.join(out, str(sub))
+
+    if subdir:
+        out = os.path.join(out, str(subdir))
 
     os.makedirs(out, exist_ok=True)
     return out
@@ -360,8 +392,11 @@ def confirm_write(config_path, edits, no_write=False):
 
     A path whose first segment ends with ``dump_params`` (``dump_params`` for the
     OSIRIS config, ``flash_dump_params`` for FLASH) is treated as
-    ``<section>.<idx>.<key>`` and routed to :func:`set_dump_param`; everything else is
-    a plain :func:`set_scalar`.  Each edit is verified to round-trip before the file is
+    ``<section...>.<idx>.<key>`` and routed to :func:`set_dump_param` — the last two
+    segments are always the dump index and the key, so anything between them and the
+    first segment is part of the section (a line-of-sight label, for a multi-ray
+    config).  Everything else is a plain :func:`set_scalar`.  Each edit is verified to
+    round-trip before the file is
     touched; the line-level diff is shown and a y/N confirmation is asked (unless
     ``no_write``, which only prints the would-be edits).  Returns True iff written.
     """
@@ -376,9 +411,9 @@ def confirm_write(config_path, edits, no_write=False):
     new_text = text
     for path, val in edits:
         parts = path.split(".")
-        if len(parts) == 3 and parts[0].endswith("dump_params"):
-            new_text = set_dump_param(new_text, int(parts[1]), parts[2], val,
-                                      section=parts[0])
+        if len(parts) >= 3 and parts[0].endswith("dump_params"):
+            new_text = set_dump_param(new_text, int(parts[-2]), parts[-1], val,
+                                      section=".".join(parts[:-2]))
         else:
             new_text = set_scalar(new_text, path, val)
         assert_roundtrip(new_text, path, normalize_scalar(val))

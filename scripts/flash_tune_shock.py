@@ -87,14 +87,16 @@ from flash_overview import assemble_streak
 # FLASH run-spec resolution
 # ---------------------------------------------------------------------------
 
-def _run_paths(cfg, config_path="config"):
-    """Resolve (flash_dir, sorted plot files, LOS endpoints, IC index/time).
+def _run_paths(cfg, config_path="config", los=None):
+    """Resolve (flash_dir, sorted plot files, LOS endpoints, IC index/time, label).
 
     The FLASH directory and LOS come from :func:`flash_source.resolve` — either
     stated in the config (``flash_data_dir`` + ``line_of_sight``) or inherited from
-    an OSIRIS run's run.yaml (``sim_dir``).
+    an OSIRIS run's run.yaml (``sim_dir``).  ``label`` names the ray when the config
+    carries a fan of them; it keys both the output directory and the config blocks
+    this tuner writes back to.
     """
-    source     = flash_source.resolve(cfg, config_path)
+    source     = flash_source.resolve(cfg, config_path, los=los)
     flash_dir  = source.flash_dir
     ic_index   = source.ic_index
     line_start = source.line_start
@@ -105,7 +107,17 @@ def _run_paths(cfg, config_path="config"):
                                  else all_files[0])
     except Exception:
         t_ic_s = 0.0
-    return flash_dir, all_files, line_start, line_end, ic_index, t_ic_s
+    return flash_dir, all_files, line_start, line_end, ic_index, t_ic_s, source.label
+
+
+def _cfg_path(label, *segments):
+    """Dotted config path for an edit, keyed by line of sight when there is one.
+
+    ``_cfg_path("los30", "flash", "v_shock_est_cms")`` -> ``flash.los30.v_shock_est_cms``;
+    with no label the original flat path is unchanged.
+    """
+    head, tail = segments[0], segments[1:]
+    return ".".join((head, label) + tail if label else segments)
 
 
 # ---------------------------------------------------------------------------
@@ -118,9 +130,10 @@ class TrajectoryTuner:
     def __init__(self, cfg, args):
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
-         ic_index, self.t_ic_s) = _run_paths(cfg, args.config)
+         ic_index, self.t_ic_s, self.label) = _run_paths(cfg, args.config, args.los)
         self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir,
-                                         cfg=cfg, config_path=args.config)
+                                         cfg=cfg, config_path=args.config,
+                                         subdir=self.label)
         self.png = os.path.join(self.out_dir, "tune_flash_trajectory.png")
 
         idx_range = range(args.t_start,
@@ -147,7 +160,7 @@ class TrajectoryTuner:
         # third free parameter (a shock that forms mid-run is fitted by sliding the
         # anchor to its formation time); absent from the config it is the IC dump time,
         # which reproduces the original two-parameter behaviour exactly.
-        flash = cfg.get("flash", {})
+        flash = flash_source.los_params(cfg, "flash", self.label)
         self.v_cms  = float(flash.get("v_shock_est_cms", 0.0))
         self.x0_cm  = float(flash.get("x_shock_0_cm",
                                       (float(self.x_um.mean()) * u.um).to("cm").value))
@@ -167,7 +180,7 @@ class TrajectoryTuner:
         ``x_shock_cm``.  Entries where the front sits on (or below) the downstream
         edge are degenerate "no shock yet" placements — kept, so the gap before a
         shock forms is visible rather than silently dropped."""
-        per = self.cfg.get("flash_dump_params", {})
+        per = flash_source.los_params(self.cfg, "flash_dump_params", self.label)
         idx_to_t = dict(zip(self.loaded_indices, self.time_ns))
         t, x = [], []
         for idx, p in sorted(per.items()):
@@ -253,9 +266,12 @@ class TrajectoryTuner:
             elif cmd == "t" and rest:
                 self.t0_s = float((float(rest[0]) * u.ns).to("s").value); self.render()
             elif cmd == "save":
-                edits = [("flash.v_shock_est_cms", round(self.v_cms)),
-                         ("flash.x_shock_0_cm", round(self.x0_cm, 6)),
-                         ("flash.t_shock_0_s", float(f"{self.t0_s:.6g}"))]
+                edits = [(_cfg_path(self.label, "flash", "v_shock_est_cms"),
+                          round(self.v_cms)),
+                         (_cfg_path(self.label, "flash", "x_shock_0_cm"),
+                          round(self.x0_cm, 6)),
+                         (_cfg_path(self.label, "flash", "t_shock_0_s"),
+                          float(f"{self.t0_s:.6g}"))]
                 yaml_edit.confirm_write(config_path, edits, no_write)
             else:
                 print("  ? commands: v <km/s> | x <µm> | save | q")
@@ -271,9 +287,10 @@ class RegionsTuner:
     def __init__(self, cfg, args):
         self.cfg = cfg
         (self.flash_dir, all_files, line_start, line_end,
-         _ic_index, t_ic_s) = _run_paths(cfg, args.config)
+         _ic_index, t_ic_s, self.label) = _run_paths(cfg, args.config, args.los)
         self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir,
-                                         cfg=cfg, config_path=args.config)
+                                         cfg=cfg, config_path=args.config,
+                                         subdir=self.label)
 
         self.idx = args.snapshot_idx % len(all_files)   # positive plot-file index = config key
         snap_file = all_files[self.idx]
@@ -298,8 +315,8 @@ class RegionsTuner:
                       "falling back to line-outs only.")
 
         # Seed markers from the config (formula fallback from the flash: trajectory).
-        per = cfg.get("flash_dump_params", {}).get(self.idx, {})
-        flash = cfg.get("flash", {})
+        per = flash_source.los_params(cfg, "flash_dump_params", self.label).get(self.idx, {})
+        flash = flash_source.los_params(cfg, "flash", self.label)
         if "x_shock_cm" in per:
             self.x_shock_um = (float(per["x_shock_cm"]) * u.cm).to("um").value
         else:
@@ -471,9 +488,10 @@ class RegionsTuner:
                 self.x_down_um = float(rest[0]); self.render()
             elif cmd == "save":
                 edits = [
-                    (f"flash_dump_params.{self.idx}.x_shock_cm",
+                    (_cfg_path(self.label, "flash_dump_params", str(self.idx), "x_shock_cm"),
                      round(float((self.x_shock_um * u.um).to("cm").value), 6)),
-                    (f"flash_dump_params.{self.idx}.x_downstream_start_cm",
+                    (_cfg_path(self.label, "flash_dump_params", str(self.idx),
+                               "x_downstream_start_cm"),
                      round(float((self.x_down_um * u.um).to("cm").value), 6)),
                 ]
                 yaml_edit.confirm_write(config_path, edits, no_write)
@@ -513,13 +531,14 @@ def main():
     p.add_argument("--output-dir", default=None)
     p.add_argument("--no-write", action="store_true",
                    help="Render and preview edits but never modify the config.")
+    flash_source.add_los_arg(p)
     plot_style.add_publication_arg(p)
     args = p.parse_args()
     plot_style.apply(args.publication)
 
     cfg = analysis_utils.load_config(args.config)
     config_path = os.path.abspath(args.config)
-    src = flash_source.resolve(cfg, config_path)
+    src = flash_source.resolve(cfg, config_path, los=args.los)
     print(f"Config  : {config_path}")
     print(f"FLASH   : {src.flash_dir}   (from {src.source})")
 

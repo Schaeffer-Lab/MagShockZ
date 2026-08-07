@@ -158,3 +158,50 @@ def trajectory_at(coeffs, t):
     pos = np.polyval(coeffs, t)
     vel = np.polyval(np.polyder(coeffs), t)
     return pos, vel
+
+
+def overview_row(idx: int, dump_indices, n_rows: int) -> int:
+    """Row of a ``flash_overview`` archive that holds plot-file index ``idx``.
+
+    Row position and plot-file index coincide only when the overview covered every
+    dump from 0; under ``--stride`` / ``--t-start`` they diverge, and reading one for
+    the other silently returns a different dump's shock position and time.  Archives
+    written since that was noticed record their ``dump_indices``, which is what makes
+    the lookup exact.
+
+    Parameters
+    ----------
+    idx :
+        Plot-file index wanted (already resolved to a positive value).
+    dump_indices :
+        The archive's ``dump_indices`` array, or ``None`` for an older archive that
+        predates the key.
+    n_rows :
+        Number of rows in the archive.
+
+    Returns
+    -------
+    int
+        Row index.
+
+    Raises
+    ------
+    ValueError
+        If the archive does not cover ``idx``, or is too old to prove that it does.
+    """
+    if dump_indices is not None:
+        rows = np.flatnonzero(np.asarray(dump_indices) == idx)
+        if rows.size:
+            return int(rows[0])
+        raise ValueError(
+            f"the flash_overview archive covers dumps "
+            f"{list(np.asarray(dump_indices))}, not {idx}. Re-run flash_overview.py "
+            f"over this dump, or pass the shock position and speed explicitly.")
+
+    if idx >= n_rows:
+        raise ValueError(
+            f"the flash_overview archive predates the 'dump_indices' key and holds "
+            f"only {n_rows} rows, so dump {idx} cannot be located in it (the old "
+            f"positional lookup would have silently read row {idx % n_rows}). "
+            f"Re-run flash_overview.py.")
+    return idx

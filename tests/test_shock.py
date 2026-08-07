@@ -147,3 +147,39 @@ def test_detect_front_gradient_nan_too_few_points():
     ne = 5.0 - 4.0 * np.tanh((x - 60) / 1.0)
     # window narrower than 5 cells -> nan
     assert np.isnan(shock.detect_front_gradient(x, ne, x_pred=60, half_window=0.05))
+
+
+# ---------------------------------------------------------------------------
+# overview_row — locating a dump in a flash_overview archive
+# ---------------------------------------------------------------------------
+# Row position and plot-file index diverge under --stride/--t-start. The old
+# positional lookup (idx % n_rows) silently returned another dump's shock position,
+# which is a wrong answer rather than an error, so this is guarded.
+
+def test_overview_row_finds_the_dump_by_index():
+    indices = np.array([0, 4, 8, 12, 16])
+    assert shock.overview_row(8, indices, len(indices)) == 2
+    assert shock.overview_row(0, indices, len(indices)) == 0
+    assert shock.overview_row(16, indices, len(indices)) == 4
+
+
+def test_overview_row_is_the_identity_for_a_full_stride_one_archive():
+    indices = np.arange(62)
+    assert shock.overview_row(36, indices, 62) == 36
+
+
+def test_overview_row_rejects_a_dump_the_archive_does_not_cover():
+    """The exact failure the positional lookup hid: a stride-2 archive asked for
+    dump 36 would have returned row 36 % 31 = 5."""
+    indices = np.arange(0, 62, 2)
+    with pytest.raises(ValueError, match="not 37"):
+        shock.overview_row(37, indices, len(indices))
+
+
+def test_overview_row_falls_back_positionally_for_an_old_archive():
+    assert shock.overview_row(36, None, 62) == 36
+
+
+def test_overview_row_refuses_an_old_archive_that_cannot_hold_the_dump():
+    with pytest.raises(ValueError, match="predates"):
+        shock.overview_row(36, None, 31)

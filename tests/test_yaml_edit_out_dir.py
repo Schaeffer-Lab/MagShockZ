@@ -147,3 +147,29 @@ def test_roundtrip_still_rejects_a_numeric_looking_string():
 def test_roundtrip_rejects_a_genuinely_wrong_number():
     with pytest.raises(AssertionError):
         yaml_edit.assert_roundtrip("a:\n  b: 2.0\n", "a.b", 1.0)
+
+
+# ---------------------------------------------------------------------------
+# subdir — one tree per line of sight
+# ---------------------------------------------------------------------------
+# A config holding several rays writes each ray's outputs to its own directory, for
+# the same reason two configs do: flash_rh_prediction reads flash_overview_*.npz back
+# out of this directory, so sharing it means reading the wrong ray's line-out.
+
+def test_subdir_is_appended_to_the_dataset_tree():
+    assert _rel(yaml_edit.out_dir(DATASET, subdir="los30")) == os.path.join(NAME, "los30")
+
+
+def test_subdir_composes_with_results_subdir():
+    out = yaml_edit.out_dir(DATASET, cfg={"results_subdir": "offaxis"}, subdir="los45")
+    assert _rel(out) == os.path.join(NAME, "offaxis", "los45")
+
+
+def test_subdir_applies_under_an_explicit_output_dir(tmp_path):
+    out = yaml_edit.out_dir(DATASET, str(tmp_path / "elsewhere"), subdir="los00")
+    assert out == str(tmp_path / "elsewhere" / "los00")
+
+
+def test_no_subdir_leaves_the_path_flat():
+    assert _rel(yaml_edit.out_dir(DATASET, subdir=None)) == NAME
+    assert _rel(yaml_edit.out_dir(DATASET, subdir="")) == NAME

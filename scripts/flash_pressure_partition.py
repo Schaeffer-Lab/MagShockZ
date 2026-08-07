@@ -50,6 +50,7 @@ from magshockz.common import flash_source
 from magshockz.common import yaml_edit
 from magshockz.common import flash_utils as fu
 from magshockz.analysis.flash import flash_energy_partition as fep
+from magshockz.analysis.flash import shock
 
 # Momentum-flux (total-pressure) channels — the conserved RH quantity.
 CHANNELS = ["p_ram", "p_th_e", "p_th_i", "p_mag"]
@@ -92,6 +93,7 @@ def main():
                              "config 'gamma' key, else 5/3). gamma=(f+2)/f: 5/3 (3 DOF), "
                              "2 (2 DOF), 3 (1 DOF) — sweep to read off the effective index.")
     parser.add_argument("--output-dir", default=None, dest="output_dir")
+    flash_source.add_los_arg(parser)
     plot_style.add_publication_arg(parser)
     args = parser.parse_args()
     plot_style.apply(args.publication)
@@ -100,7 +102,7 @@ def main():
     # Config + run parameters
     # ------------------------------------------------------------------
     cfg    = analysis_utils.load_config(args.config)
-    source = flash_source.resolve(cfg, args.config)
+    source = flash_source.resolve(cfg, args.config, los=args.los)
 
     flash_dir   = source.flash_dir
     line_start  = source.line_start
@@ -110,7 +112,7 @@ def main():
     snap_file   = all_files[args.snapshot_idx % len(all_files)]
 
     out_dir = yaml_edit.out_dir(flash_dir, args.output_dir,
-                                cfg=cfg, config_path=args.config)
+                                cfg=cfg, config_path=args.config, subdir=source.label)
 
     # Optionally load shock position AND fitted shock velocity from a
     # flash_overview .npz (so the ram subtraction defaults to the shock rest frame).
@@ -124,12 +126,15 @@ def main():
         )
         if npz_files:
             d = np.load(os.path.join(out_dir, npz_files[-1]), allow_pickle=True)
-            snap_idx_mod = args.snapshot_idx % len(d["time_ns"])
+            row = shock.overview_row(
+                args.snapshot_idx % len(all_files),
+                d["dump_indices"] if "dump_indices" in d.files else None,
+                len(d["time_ns"]))
             if "x_shock_det_cm" in d.files:
-                x_shock_cm = float(d["x_shock_det_cm"][snap_idx_mod])
+                x_shock_cm = float(d["x_shock_det_cm"][row])
             if np.isnan(x_shock_cm) and "x_shock_0_cm" in d.files:
                 # Fit stored as x_shock(t) = x_shock_0_cm + v_shock_cms * t[s].
-                t_snap_s = (float(d["time_ns"][snap_idx_mod]) * u.ns).to("s").value
+                t_snap_s = (float(d["time_ns"][row]) * u.ns).to("s").value
                 x_shock_cm = (float(d["x_shock_0_cm"])
                               + float(d["v_shock_cms"]) * t_snap_s)
             if "v_shock_cms" in d.files:

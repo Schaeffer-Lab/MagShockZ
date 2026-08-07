@@ -248,6 +248,7 @@ def main():
     parser.add_argument("--nprocs", type=int, default=None,
                         help="Number of worker processes for loading dumps "
                              "(default: all cores on the node). Use 1 to load serially.")
+    flash_source.add_los_arg(parser)
     plot_style.add_publication_arg(parser)
     args = parser.parse_args()
     plot_style.apply(args.publication)
@@ -256,7 +257,7 @@ def main():
     # Config + run parameters
     # ------------------------------------------------------------------
     cfg    = analysis_utils.load_config(args.config)
-    source = flash_source.resolve(cfg, args.config)
+    source = flash_source.resolve(cfg, args.config, los=args.los)
 
     flash_dir      = source.flash_dir
     flash_ic_index = source.ic_index
@@ -266,7 +267,7 @@ def main():
     ref_density    = source.reference_density               # cm⁻³, or None
 
     # Shock velocity and position estimates from config (used to seed detection)
-    flash_cfg    = cfg.get("flash", {})
+    flash_cfg    = flash_source.los_params(cfg, "flash", source.label)
     v_shock_est  = float(flash_cfg.get("v_shock_est_cms", 0.0))
     x_shock_0_cm = float(flash_cfg.get("x_shock_0_cm", 0.0))
     # Trajectory anchor t₀: the time at which the front sat at x_shock_0_cm. Absent
@@ -288,7 +289,7 @@ def main():
         )
 
     out_dir = yaml_edit.out_dir(source.flash_dir, args.output_dir,
-                                cfg=cfg, config_path=args.config)
+                                cfg=cfg, config_path=args.config, subdir=source.label)
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"Config     : {args.config}")
@@ -411,7 +412,8 @@ def main():
     # region values are medians.  Independent of any trajectory fit, so it reveals
     # whether the front is accelerating.
     # ------------------------------------------------------------------
-    hand_fit = [cfg.get("flash_dump_params", {}).get(i) for i in loaded_indices]
+    per_dump = flash_source.los_params(cfg, "flash_dump_params", source.label)
+    hand_fit = [per_dump.get(i) for i in loaded_indices]
     use_hand_fit = any(hf for hf in hand_fit)
     mc = mass_continuity_vshock(
         lineouts, hand_fit=hand_fit if use_hand_fit else None,
@@ -635,6 +637,9 @@ def main():
     np.savez(
         npz_path,
         dump_files  = np.asarray([os.path.basename(f) for f in dump_files]),
+        # Plot-file index of each row, so a consumer can find a dump by its index
+        # rather than by position — the two differ under --stride/--t-start.
+        dump_indices = np.asarray(loaded_indices),
         time_ns     = time_ns,
         x_um        = x_um,
         ne_streak   = ne_streak,
