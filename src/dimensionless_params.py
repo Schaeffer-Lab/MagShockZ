@@ -3,7 +3,7 @@
 Pure functions (numpy only) that turn region-averaged primitive quantities into
 the dimensionless numbers that characterise the shock, all in OSIRIS normalised
 units.  ``magnetic_reynolds`` is the one exception: it converts to physical units
-via astropy/plasmapy (imported lazily, so this module stays CI-importable).
+via astropy/plasmapy.
 
 OSIRIS normalisation
 --------------------
@@ -22,6 +22,8 @@ macroparticle mass |rqm_i| m_e:
     B^2 / (4 pi n_i m_i c^2) = B_sim^2 / (n_e |rqm_i|).
 """
 
+import astropy.constants
+import astropy.units as u
 import numpy as np
 
 GAMMA_DEFAULT = 5.0 / 3.0  # adiabatic index for the ion sound speed
@@ -120,8 +122,7 @@ def magnetic_reynolds(T_e_sim: float, n_e_sim: float, v_shock: float, L_sim: flo
 
     A PIC run is collisionless; this is the *equivalent* resistive Rm of the real
     plasma the run represents, from the Spitzer conductivity at the run's physical
-    density and the measured electron temperature.  astropy/plasmapy are imported
-    lazily so the rest of this module stays dependency-light for CI.
+    density and the measured electron temperature.
 
     Parameters
     ----------
@@ -144,9 +145,7 @@ def magnetic_reynolds(T_e_sim: float, n_e_sim: float, v_shock: float, L_sim: flo
     if not (np.isfinite(T_e_sim) and T_e_sim > 0.0 and np.isfinite(n_e_sim) and n_e_sim > 0.0):
         return float("nan")
 
-    import astropy.constants
-    import astropy.units as u
-    from plasmapy.formulary import Mag_Reynolds
+    from plasmapy.formulary import Mag_Reynolds  # lazy: ~2.5 s to import
 
     try:  # works both as a package (src.*) and as a flat module (scripts add src/ to path)
         from .spitzer_resistivity import spitzer_resistivity

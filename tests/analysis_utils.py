@@ -1,8 +1,8 @@
 """Minimal analysis_utils stub for test environments.
 
 Provides only the symbols imported by the pure-function modules under test
-(energy_partition.py, temperature_anisotropy.py) so the full OSIRIS/astropy
-stack is not required in CI.
+(energy_partition.py, temperature_anisotropy.py) so the OSIRIS stack
+(osiris_utils, osh5io) is not required in CI.
 """
 
 import numpy as np

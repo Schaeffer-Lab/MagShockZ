@@ -1,6 +1,6 @@
 """Tests for flash_source.resolve — which FLASH data an analysis config points at.
 
-flash_source is dependency-light (stdlib + run_spec), so these run in CI without yt:
+flash_source is dependency-light (stdlib + run_spec) and never opens a dump:
 resolve() only ever handles paths and numbers, never opens a dump.
 """
 

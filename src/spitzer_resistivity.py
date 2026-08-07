@@ -8,9 +8,9 @@ electron temperature (~10-40 eV in the bulk, up to ~1 keV in the laser channel) 
 ionization ``Zbar`` (~4-14).  This module maps that variation so a defensible constant can
 be picked.
 
-Pure functions.  The Spitzer wrapper imports astropy/plasmapy **lazily** (as
-``dimensionless_params`` does) so the module stays importable in the numpy-only CI layer;
-``magnetic_diffusivity`` and ``warpx_electron_temperature`` are numpy-only and unit-tested.
+Pure functions.  The Spitzer wrapper imports plasmapy **lazily** (as ``dimensionless_params``
+does) only because plasmapy costs ~2.5 s to import and the other two helpers here are plain
+numpy; ``magnetic_diffusivity`` and ``warpx_electron_temperature`` need nothing beyond numpy.
 
 plasmapy quirks handled here (so callers can pass whole FLASH-slice arrays):
   * ``plasmapy.formulary.Spitzer_resistivity`` requires a **scalar** ``z_mean`` and an

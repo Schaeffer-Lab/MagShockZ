@@ -83,20 +83,7 @@ from .heater_piston_scaling import (
     ev_from_theta,
     cfl_timestep_s,
 )
-from .heater_deck import (
-    SPECIES_NAMES as heater_species_names,
-    render_deck as render_heater_deck,
-    scaling_report as heater_scaling_report,
-    parse_inputs,
-    resolve_constants,
-    key_params,
-    key_params_from_text,
-    verify as verify_heater_deck,
-)
-from .heater_spec import (
-    load as load_heater_spec,
-    targets as heater_targets,
-    scaling as heater_scaling,
-    validate as validate_heater_spec,
-    freeze as freeze_heater_spec,
-)
+
+# The WarpX heater pipeline lives in the `warpx` subpackage and is imported from there
+# (`from warpx import config, deck, units`), not re-exported here: it is a coherent
+# pipeline with its own namespace rather than a bag of helpers.

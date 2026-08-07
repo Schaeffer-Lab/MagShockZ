@@ -13,7 +13,7 @@
 #      this is not optional:
 #          bash init_warpx/build_warpx_gpu_2d.sh
 #   2. Generate the deck (seconds, `analysis` env):
-#          conda run -n analysis python init_warpx/gen_heater_deck.py \
+#          conda run -n analysis python scripts/make_warpx_deck.py \
 #              --config runs/magshockz_2d_heater.warpx.yaml --smoke
 #  This job aborts if either is missing.
 #
@@ -21,11 +21,10 @@
 #  1.6e8 macroparticles, 35760 steps -- ran at 0.058 s/step on 2 nodes / 8 GPUs, i.e.
 #  ~35 min end to end.
 #
-#  The CURRENT deck is 944x4720 at 4.5e8 macroparticles and 99326 steps, because kappa
-#  was corrected to its measured 1.01 and v_piston_c dropped to 0.03 to keep the piston
-#  electrons sub-relativistic (see the run spec). That is ~7.7x the work: ~4.4 h on
-#  2 nodes, ~2.2 h on 4 -- hence -N 4 below, which also keeps memory per GPU sane at
-#  5.6e7 macroparticles.
+#  The CURRENT deck is 1336x5232 at 7.0e8 macroparticles and 105511 steps. It carries
+#  REAL charge states (Al 6+ ambient, Si 14+ piston) at a reduced mass-per-charge of 50,
+#  and its piston speed is set by the measured heater calibration rather than by a fixed
+#  kappa. ~40 node-hours, i.e. ~2.5 h on the 16 nodes requested below.
 #
 #  The `node_hours` figure in scaling_report.txt is CPU-calibrated (that is the only
 #  timed reference point the cost model has) and overstates a GPU run by roughly an
@@ -50,7 +49,9 @@
 #SBATCH -C gpu
 #SBATCH -q regular
 #SBATCH -t 06:00:00
-#SBATCH -N 4
+# Node count must match the spec's runtime.nodes; #SBATCH is read before run_env.sh is
+# sourced, so this cannot be driven from the spec -- override with `sbatch -N <n>`.
+#SBATCH -N 16
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
 #SBATCH -c 32
@@ -114,7 +115,7 @@ ulimit -s unlimited
 if [[ ! -f "$DECK" ]]; then
   echo "ERROR: deck not found at $DECK"
   echo "       generate it first:  conda run -n analysis python \\"
-  echo "         init_warpx/gen_heater_deck.py --config runs/magshockz_2d_heater.warpx.yaml"
+  echo "         scripts/make_warpx_deck.py --config runs/magshockz_2d_heater.warpx.yaml"
   exit 1
 fi
 if [[ ! -x "$EXE" ]]; then

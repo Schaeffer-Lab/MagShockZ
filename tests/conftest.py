@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 # Put tests/ before src/ so stub modules (osh5def, analysis_utils) shadow the
-# real ones that pull in heavy optional dependencies (astropy, osiris, etc.).
+# real ones that pull in the OSIRIS stack (osiris_utils, osh5io), which is not
+# pip-installable and so is the one dependency CI cannot have.
 _TESTS_DIR = os.path.dirname(__file__)
 _SRC_DIR = os.path.join(_TESTS_DIR, "..", "src")
 for _p in (_SRC_DIR, _TESTS_DIR):

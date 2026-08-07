@@ -1,6 +1,6 @@
 """Tests for heater_piston_scaling: the FLASH -> reduced-mass WarpX deck mapping.
 
-Numpy-only, so these run in CI without yt / WarpX / astropy.  The contract under test
+Numpy-only, so these run in CI without WarpX itself.  The contract under test
 is the one the deck depends on: the dimensionless invariants listed in
 ``PistonTargets.invariants()`` come out of ``derive()`` unchanged, and everything else
 is either derived consistently from them or flagged in ``warnings``.

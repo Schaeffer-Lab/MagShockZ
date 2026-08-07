@@ -365,3 +365,102 @@ class TestCollapseProfile:
         xi, normalised = pp.collapse_profile(positions, np.zeros_like(positions),
                                              10.0, 1.0)
         assert np.all(np.isnan(xi)) and np.all(np.isnan(normalised))
+
+
+class TestWeightedBinAverage:
+    """The particle route to a bulk-velocity profile: weights must be honoured."""
+
+    def test_uniform_weights_reduce_to_the_plain_mean(self):
+        positions = np.array([0.5, 0.6, 1.5, 1.6])
+        values = np.array([10.0, 20.0, 30.0, 50.0])
+        out = pp.weighted_bin_average(positions, values, np.ones(4),
+                                      np.array([0.0, 1.0, 2.0]))
+        assert out == pytest.approx([15.0, 40.0])
+
+    def test_a_heavy_macroparticle_dominates_its_bin(self):
+        positions = np.array([0.2, 0.8])
+        velocities = np.array([0.0, 100.0])
+        out = pp.weighted_bin_average(positions, velocities, np.array([1.0, 9.0]),
+                                      np.array([0.0, 1.0]))
+        assert out[0] == pytest.approx(90.0)
+
+    def test_empty_bins_are_nan_not_zero(self):
+        # A zero would read as "plasma at rest here", which is the opposite claim.
+        out = pp.weighted_bin_average(np.array([0.5]), np.array([7.0]), np.array([1.0]),
+                                      np.array([0.0, 1.0, 2.0]))
+        assert out[0] == pytest.approx(7.0)
+        assert np.isnan(out[1])
+
+    def test_non_finite_samples_are_dropped(self):
+        positions = np.array([0.5, 0.5, 0.5])
+        values = np.array([10.0, np.nan, 30.0])
+        out = pp.weighted_bin_average(positions, values, np.ones(3),
+                                      np.array([0.0, 1.0]))
+        assert out[0] == pytest.approx(20.0)
+
+
+class TestWeightedBinDensity:
+    def test_weights_over_cell_volume(self):
+        out = pp.weighted_bin_density(np.array([0.5, 0.5, 1.5]),
+                                      np.array([2.0, 3.0, 4.0]),
+                                      np.array([0.0, 1.0, 2.0]), cell_volume=5.0)
+        assert out == pytest.approx([1.0, 0.8])
+
+    def test_empty_bins_are_zero(self):
+        out = pp.weighted_bin_density(np.array([0.5]), np.array([1.0]),
+                                      np.array([0.0, 1.0, 2.0]), cell_volume=1.0)
+        assert out[1] == pytest.approx(0.0)
+
+    @pytest.mark.parametrize("cell_volume", [0.0, -1.0, np.nan])
+    def test_bad_cell_volume_raises(self, cell_volume):
+        with pytest.raises(ValueError):
+            pp.weighted_bin_density(np.array([0.5]), np.array([1.0]),
+                                    np.array([0.0, 1.0]), cell_volume=cell_volume)
+
+
+class TestProfileMismatch:
+    def test_identical_profiles_match_exactly(self):
+        x = np.linspace(0.0, 10.0, 51)
+        y = np.exp(-x)
+        assert pp.profile_mismatch(x, y, x, y) == pytest.approx(0.0, abs=1e-12)
+
+    def test_a_scaled_profile_does_not_match(self):
+        # The metric compares shape at a common normalisation; it is NOT scale-invariant,
+        # so the caller must normalise first (both sides divide by their own n_drive).
+        x = np.linspace(0.0, 10.0, 51)
+        y = np.exp(-x)
+        assert pp.profile_mismatch(x, y, x, 2.0 * y) == pytest.approx(1.0, rel=1e-6)
+
+    def test_resamples_onto_a_different_grid(self):
+        reference_x = np.linspace(0.0, 10.0, 51)
+        x = np.linspace(0.0, 10.0, 37)
+        assert pp.profile_mismatch(reference_x, 3.0 * reference_x,
+                                   x, 3.0 * x) == pytest.approx(0.0, abs=1e-12)
+
+    def test_too_little_overlap_is_nan(self):
+        reference_x = np.linspace(0.0, 10.0, 51)
+        y = np.ones(51)
+        assert np.isnan(pp.profile_mismatch(reference_x, y,
+                                            np.array([9.9, 10.0]), np.array([1.0, 1.0])))
+
+    def test_unsorted_candidate_is_handled(self):
+        x = np.linspace(0.0, 10.0, 51)
+        order = np.argsort(np.sin(x))
+        assert pp.profile_mismatch(x, 2.0 * x, x[order],
+                                   2.0 * x[order]) == pytest.approx(0.0, abs=1e-12)
+
+
+class TestBestShapeMatch:
+    def test_picks_the_matching_candidate(self):
+        x = np.linspace(0.0, 10.0, 51)
+        reference = np.exp(-x)
+        candidates = [(x, np.exp(-x / 3.0)), (x, reference), (x, np.exp(-3.0 * x))]
+        index, mismatch = pp.best_shape_match(x, reference, candidates)
+        assert index == 1
+        assert mismatch == pytest.approx(0.0, abs=1e-12)
+
+    def test_no_scorable_candidate_returns_minus_one(self):
+        x = np.linspace(0.0, 10.0, 51)
+        far = (np.array([100.0, 101.0]), np.array([1.0, 1.0]))
+        index, mismatch = pp.best_shape_match(x, np.ones(51), [far])
+        assert index == -1 and np.isnan(mismatch)

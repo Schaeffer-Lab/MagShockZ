@@ -2,8 +2,8 @@
 
 A run records its parameters once, in its own directory; analysis reads them via
 :class:`RunSpec` instead of re-copying them into the analysis config.  This module
-is intentionally dependency-light (stdlib + PyYAML, with astropy imported lazily)
-so it can be imported and unit-tested without the full OSIRIS/astropy stack.
+is intentionally dependency-light (stdlib + PyYAML + astropy) so it can be imported
+and unit-tested without the OSIRIS/yt stack.
 """
 
 import glob
@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 
+import astropy.units
 import yaml
 
 # run.yaml groups that are one level of nesting purely for readability; their
@@ -131,8 +132,7 @@ class RunSpec:
 
     @property
     def norm_density(self):
-        """Normalisation density as an astropy Quantity [cm^-3] (astropy is lazy)."""
-        import astropy.units
+        """Normalisation density as an astropy Quantity [cm^-3]."""
         return self.reference_density * astropy.units.cm**-3
 
     @property

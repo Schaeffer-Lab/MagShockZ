@@ -15,6 +15,7 @@ Unit-tested in CI (numpy only, no yt / WarpX).
 """
 
 from dataclasses import dataclass
+from typing import Sequence
 
 import numpy as np
 
@@ -260,6 +261,117 @@ def behind_front_average(positions: np.ndarray, values: np.ndarray, x_front: flo
     if not np.any(band):
         return float("nan")
     return float(np.mean(values[band]))
+
+
+def weighted_bin_average(positions: np.ndarray, values: np.ndarray,
+                         weights: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
+    """Weight-averaged ``values`` per bin of ``positions``; nan in empty bins.
+
+    The particle-data route to a bulk-velocity profile: WarpX's field diagnostic carries
+    only the *total* current, so a per-species mean velocity has to be built from the raw
+    particles in the sparse ``phase`` dumps.  Macroparticle weights differ between the
+    piston and ambient populations, so the average must be weighted — an unweighted mean
+    over a mixed-weight sample is not the bulk velocity of anything.
+
+    Empty bins return nan rather than 0, because "no particles here" and "particles at
+    rest here" are physically opposite and a plotted zero would read as the latter.
+    """
+    positions = np.asarray(positions, dtype=float)
+    values = np.asarray(values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    bin_edges = np.asarray(bin_edges, dtype=float)
+
+    good = np.isfinite(positions) & np.isfinite(values) & np.isfinite(weights)
+    weight_sum, _ = np.histogram(positions[good], bins=bin_edges,
+                                 weights=weights[good])
+    value_sum, _ = np.histogram(positions[good], bins=bin_edges,
+                                weights=weights[good] * values[good])
+
+    out = np.full(weight_sum.shape, np.nan)
+    filled = weight_sum > 0.0
+    out[filled] = value_sum[filled] / weight_sum[filled]
+    return out
+
+
+def weighted_bin_density(positions: np.ndarray, weights: np.ndarray,
+                         bin_edges: np.ndarray, cell_volume: float) -> np.ndarray:
+    """Number density per bin from macroparticle ``weights``; 0 in empty bins.
+
+    ``cell_volume`` is the physical volume one bin represents, so the caller owns the
+    geometry (in 2D that is ``dz * transverse_extent * unit_depth``).  Unlike
+    :func:`weighted_bin_average`, an empty bin here legitimately means zero density.
+
+    Used to read density from the same sparse ``phase`` dump the velocity comes from, so
+    both are measured at exactly the same instant; the field diagnostic's ``rho`` is on a
+    different cadence and cannot be paired dump-for-dump.  With a ``random_fraction``
+    sample the result is the full density only because WarpX scales the surviving
+    particles' weights accordingly — verify against ``rho`` on a coincident dump.
+    """
+    positions = np.asarray(positions, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    bin_edges = np.asarray(bin_edges, dtype=float)
+    if not (np.isfinite(cell_volume) and cell_volume > 0.0):
+        raise ValueError(f"cell_volume must be positive and finite, got {cell_volume!r}")
+
+    good = np.isfinite(positions) & np.isfinite(weights)
+    weight_sum, _ = np.histogram(positions[good], bins=bin_edges, weights=weights[good])
+    return weight_sum / cell_volume
+
+
+def profile_mismatch(reference_x: np.ndarray, reference_y: np.ndarray,
+                     x: np.ndarray, y: np.ndarray,
+                     min_overlap: int = 8) -> float:
+    """Normalised RMS difference between two profiles on their common abscissa.
+
+    ``x`` / ``y`` are resampled onto the part of ``reference_x`` both cover, and the RMS
+    difference is divided by the reference's RMS so the result is dimensionless and
+    scale-free — comparing *shape*, which is all that is comparable between a reduced-mass
+    deck and FLASH.  Returns nan when the profiles overlap over fewer than
+    ``min_overlap`` reference samples, so a near-disjoint pair cannot win a search by
+    matching on three points.
+    """
+    reference_x = np.asarray(reference_x, dtype=float)
+    reference_y = np.asarray(reference_y, dtype=float)
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    ref_good = np.isfinite(reference_x) & np.isfinite(reference_y)
+    good = np.isfinite(x) & np.isfinite(y)
+    if np.count_nonzero(ref_good) < 2 or np.count_nonzero(good) < 2:
+        return float("nan")
+
+    x, y = x[good], y[good]
+    order = np.argsort(x)
+    x, y = x[order], y[order]
+
+    inside = ref_good & (reference_x >= x[0]) & (reference_x <= x[-1])
+    if np.count_nonzero(inside) < min_overlap:
+        return float("nan")
+
+    residual = np.interp(reference_x[inside], x, y) - reference_y[inside]
+    scale = np.sqrt(np.mean(reference_y[inside] ** 2))
+    if not (np.isfinite(scale) and scale > 0.0):
+        return float("nan")
+    return float(np.sqrt(np.mean(residual ** 2)) / scale)
+
+
+def best_shape_match(reference_x: np.ndarray, reference_y: np.ndarray,
+                     candidates: Sequence[tuple[np.ndarray, np.ndarray]],
+                     min_overlap: int = 8) -> tuple[int, float]:
+    """Index of the candidate profile whose shape best matches the reference.
+
+    Returns ``(index, mismatch)``, or ``(-1, nan)`` if no candidate overlaps the
+    reference enough to be scored.  This is how the WarpX/FLASH time offset is *measured*
+    rather than eyeballed: the piston that FLASH already has at its window start takes the
+    heater a finite time to build, so the two clocks do not share a zero.
+    """
+    scores = np.array([profile_mismatch(reference_x, reference_y, cx, cy,
+                                        min_overlap=min_overlap)
+                       for cx, cy in candidates])
+    if not np.any(np.isfinite(scores)):
+        return (-1, float("nan"))
+    best = int(np.nanargmin(scores))
+    return (best, float(scores[best]))
 
 
 def edge_is_resolved(positions: np.ndarray, density: np.ndarray, x_front: float,

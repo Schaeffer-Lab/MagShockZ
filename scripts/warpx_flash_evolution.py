@@ -4,8 +4,8 @@
 Two figures comparing the two codes as they evolve:
 
   ``evolution_lineouts.png``   1-D profiles (target-species density, ambient-species
-                               density, |B|, T_e) at matched times, FLASH and WarpX
-                               overlaid, one column per time
+                               density, bulk velocity, |B|, T_e) at matched times, FLASH
+                               and WarpX overlaid, one column per time
   ``evolution_slices.png``     2-D target-species slices at the same times, FLASH above
                                WarpX
   ``evolution_slices.mp4``     the same slices as a movie (--movie)
@@ -21,6 +21,14 @@ species: FLASH's electron density masked by its Si mass fraction (``targ``), aga
 WarpX's ``rho_piston_ions``, which at the deck's Z = 1 is that species' electron
 density too.  A combined n_e would fold FLASH's EOS ionization state (Zbar 3.7 in the
 ambient, ~11 in the piston) into a comparison whose deck has Z = 1 by construction.
+
+THE VELOCITY ROW COMES FROM RAW PARTICLES, ON A COARSER CLOCK.  The deck's field
+diagnostic writes only the TOTAL current (``jx jy jz``), and four species with two charge
+signs cannot be unpicked into one species' bulk velocity — nor can ``usq``, the second
+moment, give back a direction.  So the piston-ion velocity is binned from the sparse
+``phase`` dumps (2% of particles), which run every 11000 steps against the fields' 1400 and
+coincide only at step 0.  Each column therefore pairs its field profiles with the *nearest*
+particle dump and prints that dump's own time in the velocity panel.
 
 TWO CAVEATS THE FIGURES CANNOT HIDE, both stated on the plots:
 
@@ -117,7 +125,8 @@ def load_scaling(config_path: str):
     return spec, heater_spec.scaling(spec, smoke=False)
 
 
-def warpx_plotfiles(config_path: str, override: str | None) -> list[str]:
+def warpx_plotfiles(config_path: str, override: str | None,
+                    prefix: str = "diag1") -> list[str]:
     if override:
         candidates = [override]
     else:
@@ -125,10 +134,12 @@ def warpx_plotfiles(config_path: str, override: str | None) -> list[str]:
         run_dir = os.path.join(_REPO, "input_files", "warpx", run_name)
         candidates = [os.path.join(run_dir, "diags"), run_dir]
     for directory in candidates:
-        paths = sorted(p for p in glob.glob(os.path.join(directory, "diag1*"))
+        paths = sorted(p for p in glob.glob(os.path.join(directory, f"{prefix}*"))
                        if os.path.isdir(p))
         if paths:
             return paths
+    if prefix != "diag1":
+        return []
     raise SystemExit(f"No diag1* plotfiles under {candidates}; run the deck first.")
 
 
@@ -200,6 +211,96 @@ def warpx_frame(path: str, scaling: hps.ReducedScaling) -> dict:
     }
 
 
+def warpx_velocity_profile(path: str, scaling: hps.ReducedScaling,
+                           z_di: np.ndarray) -> np.ndarray:
+    """Piston-ion bulk velocity along z, in units of the deck's target piston speed.
+
+    This has to come from the raw particles in a ``phase`` dump: the field diagnostic
+    writes only the TOTAL current (``jx jy jz``), and a sum over four species with two
+    charge signs cannot be unpicked into one species' bulk velocity.  ``usq`` is no help
+    either -- it is the second moment, ``<u>^2 + thermal``, with the bulk direction and
+    sign already lost.
+
+    Sampled onto the caller's ``z_di`` bin centres so the row shares the field rows' axis,
+    and returned normalised the same way every other row is: by the deck's *intended*
+    reference (``v_piston_c``), not by what the run achieved.  A piston comoving with a
+    front running 9% fast therefore plateaus at 1.09, which is the honest reading.
+    """
+    import yt
+
+    dataset = yt.load(path)
+    left = np.asarray(dataset.domain_left_edge, dtype=float)
+    right = np.asarray(dataset.domain_right_edge, dtype=float)
+
+    data = dataset.all_data()
+    z = np.asarray(data[(PISTON_IONS, "particle_position_y")], dtype=float)
+    momentum = np.asarray(data[(PISTON_IONS, "particle_momentum_z")], dtype=float)
+    weight = np.asarray(data[(PISTON_IONS, "particle_weight")], dtype=float)
+    if z.size == 0:
+        return np.full(z_di.shape, np.nan)
+    # In a 2D WarpX plotfile yt still calls the second stored coordinate "y"; here that is
+    # the long (z) axis. Assert it rather than assume -- reading the transverse axis by
+    # mistake would give a piston that never moves, which looks like a physics result.
+    assert z.min() >= left[1] - 1e-9 and z.max() <= right[1] + 1e-9, (
+        f"{os.path.basename(path)}: particle_position_y spans "
+        f"[{z.min():.4g}, {z.max():.4g}] m, outside the z axis "
+        f"[{left[1]:.4g}, {right[1]:.4g}] -- wrong axis?")
+
+    ion_mass = scaling.mass_ratio * hps.M_E_KG
+    u = momentum / ion_mass                      # p/m, i.e. gamma*v
+    velocity = u / np.sqrt(1.0 + (u / hps.C_LIGHT_MS) ** 2)
+
+    spacing = float(z_di[1] - z_di[0])
+    edges = np.concatenate([z_di - 0.5 * spacing, [z_di[-1] + 0.5 * spacing]])
+    edges = edges * scaling.d_i_m
+    outward = z >= 0.0
+    bulk = pp.weighted_bin_average(z[outward], velocity[outward], weight[outward], edges)
+    return bulk / (scaling.v_piston_c * hps.C_LIGHT_MS)
+
+
+def read_warpx_velocity(phase_paths: list[str], scaling: hps.ReducedScaling,
+                        z_di: np.ndarray) -> list[dict]:
+    """Every ``phase`` dump's velocity profile, read alongside the field dumps.
+
+    Must run BEFORE ``flash_utils`` is imported, for the same reason
+    :func:`read_warpx_frames` must: the FLASH yt plugin registers derived ``('flash', ...)``
+    fields, and yt then evaluates them against every subsequently loaded dataset — so a
+    WarpX plotfile opened afterwards dies on ``('flash', 'velz')``.  Reading all nine dumps
+    up front costs little and keeps the pairing (which needs the FLASH-dependent alignment)
+    as pure arithmetic in :func:`attach_warpx_velocity`.
+    """
+    import yt
+
+    out = []
+    for path in phase_paths:
+        out.append({
+            "t_gyro": float(yt.load(path).current_time) / scaling.gyroperiod_s,
+            "velocity_profile": warpx_velocity_profile(path, scaling, z_di),
+        })
+    return out
+
+
+def attach_warpx_velocity(frames: list[dict], velocity_frames: list[dict]) -> None:
+    """Give each frame the velocity profile from its nearest ``phase`` dump.
+
+    The two diagnostics run on different cadences (1400 vs 11000 steps, coincident only at
+    step 0), so a field frame is paired with the closest raw-particle dump and the time
+    slip is recorded in ``velocity_t_gyro`` for the plot to state.  Without any phase dumps
+    the row is left as nan and the figure simply shows no WarpX velocity.
+    """
+    if not velocity_frames:
+        for frame in frames:
+            frame["velocity_profile"] = np.full(frame["z_di"].shape, np.nan)
+            frame["velocity_t_gyro"] = float("nan")
+        return
+
+    times = np.array([entry["t_gyro"] for entry in velocity_frames])
+    for frame in frames:
+        nearest = velocity_frames[int(np.argmin(np.abs(times - frame["t_gyro"])))]
+        frame["velocity_profile"] = nearest["velocity_profile"]
+        frame["velocity_t_gyro"] = nearest["t_gyro"]
+
+
 # ---------------------------------------------------------------------------
 # FLASH side
 # ---------------------------------------------------------------------------
@@ -244,6 +345,10 @@ def flash_frame(path: str, source, targets: hps.PistonTargets, *,
         "ambient_profile": (1.0 - piston_frac) * ne_cm3 / n_amb_cm3,
         "b_profile": lineout["B_mag"].to("gauss").value * 1e-4 / targets.b_amb_tesla,
         "te_profile": lineout["Te"].to("eV").value / targets.te_amb_ev,
+        # v.n_hat along the LOS, so no projection is needed; normalised by the fitted
+        # front speed that the deck's v_piston_c is the bridge image of, which is what
+        # makes this row comparable to the WarpX one.
+        "velocity_profile": (lineout["v_para"].to("m/s").value / targets.v_front_ms),
         "density_map": sliced["img"] / n_amb_cm3,
         "ambient_map": ambient_slice["img"] / n_amb_cm3,
         "extent_di": (los_lo / d_i_um, los_hi / d_i_um,
@@ -270,7 +375,10 @@ def pick_matched_times(flash_times_gyro: np.ndarray, warpx_times_gyro: np.ndarra
     if align == "front" and flash_fronts is not None and warpx_fronts is not None:
         usable_w = np.isfinite(warpx_fronts) & (warpx_times_gyro > 0)
         usable_f = np.isfinite(flash_fronts)
-        if np.count_nonzero(usable_w) >= 2 and np.count_nonzero(usable_f) >= 2:
+        # ONE finite FLASH front is enough -- only its first is used as the target, and
+        # main() deliberately loads just that dump. Demanding two here made --align front
+        # a silent no-op that still reported "shifted by 0.0000 T_ci".
+        if np.count_nonzero(usable_w) >= 2 and np.count_nonzero(usable_f) >= 1:
             target = float(flash_fronts[usable_f][0])
             # First WarpX time whose front has reached FLASH's starting front position.
             reached = warpx_times_gyro[usable_w][warpx_fronts[usable_w] >= target]
@@ -304,32 +412,43 @@ def plot_lineouts(flash_frames: list, warpx_frames: list, offset: float, align: 
     # Species are kept separate rather than summed: the piston row is target species on
     # both sides (FLASH Si, WarpX piston_ions) and the ambient row is the material each
     # code's piston is driving into. A combined n_e row would hide which species moved.
+    # The velocity row is LINEAR: it legitimately passes through zero and goes negative,
+    # which a log axis cannot show, and its interesting structure (does the piston comove
+    # with its front?) sits within a factor of two of 1.
     rows = [
-        ("piston_profile", r"$n_\mathrm{target} / n_\mathrm{amb}$", (1e-3, 1e3)),
-        ("ambient_profile", r"$n_\mathrm{ambient} / n_\mathrm{amb}$", (3e-1, 3e1)),
-        ("b_profile", r"$|B| / B_0$", (1e-3, 3e1)),
-        ("te_profile", r"$T_e / T_{e,\mathrm{amb}}$", (1e-2, 1e4)),
+        ("piston_profile", r"$n_\mathrm{target} / n_\mathrm{amb}$", (1e-3, 1e3), "log"),
+        ("ambient_profile", r"$n_\mathrm{ambient} / n_\mathrm{amb}$", (3e-1, 3e1), "log"),
+        ("velocity_profile", r"$v_\parallel / v_\mathrm{front}$", (-0.4, 2.0), "linear"),
+        ("b_profile", r"$|B| / B_0$", (1e-3, 3e1), "log"),
+        ("te_profile", r"$T_e / T_{e,\mathrm{amb}}$", (1e-2, 1e4), "log"),
     ]
     n_cols = len(flash_frames)
     fig, axes = plt.subplots(len(rows), n_cols, figsize=(3.5 * n_cols, 2.7 * len(rows)),
                              sharex=True, squeeze=False, layout="constrained")
 
-    def plottable(values: np.ndarray, floor: float) -> np.ndarray:
-        """Blank out values at/below the axis floor so the line breaks instead of diving."""
+    def plottable(values: np.ndarray, floor: float, scale: str) -> np.ndarray:
+        """Blank out values at/below a log axis's floor so the line breaks, not dives."""
         values = np.asarray(values, dtype=float)
+        if scale != "log":
+            return values
         return np.where(values > floor, values, np.nan)
 
     for col, (flash, warpx) in enumerate(zip(flash_frames, warpx_frames)):
-        for row, (key, label, ylim) in enumerate(rows):
+        for row, (key, label, ylim, scale) in enumerate(rows):
             ax = axes[row][col]
-            ax.plot(flash["z_di"], plottable(flash[key], ylim[0]),
+            ax.plot(flash["z_di"], plottable(flash[key], ylim[0], scale),
                     color="#1f77b4", lw=1.6, label="FLASH")
-            ax.plot(warpx["z_di"], plottable(warpx[key], ylim[0]),
+            ax.plot(warpx["z_di"], plottable(warpx[key], ylim[0], scale),
                     color="#d62728", lw=1.4, ls="--", label="WarpX")
             for frame, color in ((flash, "#1f77b4"), (warpx, "#d62728")):
                 if np.isfinite(frame["front_di"]):
                     ax.axvline(frame["front_di"], color=color, lw=0.9, alpha=0.5)
-            ax.set_yscale("log")
+            if scale == "linear":
+                # 1 = moving with the front, 0 = at rest: the two references that make the
+                # row readable without hunting along the axis.
+                ax.axhline(1.0, color="0.4", lw=0.8, ls="-.")
+                ax.axhline(0.0, color="0.7", lw=0.8)
+            ax.set_yscale(scale)
             ax.set_ylim(*ylim)
             ax.grid(alpha=0.25, which="both")
             if col == 0:
@@ -337,6 +456,14 @@ def plot_lineouts(flash_frames: list, warpx_frames: list, offset: float, align: 
             if row == 0:
                 ax.set_title(f"FLASH {flash['t_gyro']:.4f} / WarpX "
                              f"{warpx['t_gyro']:.4f} $T_{{ci}}$", fontsize=9)
+            # The velocity row's WarpX curve comes from the nearest phase dump, which is on
+            # a coarser cadence than the field rows -- say so rather than implying the
+            # whole column is one instant.
+            if key == "velocity_profile" and np.isfinite(warpx.get("velocity_t_gyro",
+                                                                   float("nan"))):
+                ax.text(0.02, 0.94,
+                        f"WarpX particles @ {warpx['velocity_t_gyro']:.4f} $T_{{ci}}$",
+                        transform=ax.transAxes, fontsize=7, va="top", color="#d62728")
             if row == len(rows) - 1:
                 ax.set_xlabel(r"distance from target [$d_i$]")
     axes[0][0].legend(fontsize=8, loc="best")
@@ -458,6 +585,20 @@ def main() -> None:
     warpx_frames_all = read_warpx_frames(warpx_paths, scaling)
     warpx_gyro = np.array([f["t_gyro"] for f in warpx_frames_all])
 
+    # Velocity needs raw particles, and every phase dump has to be read here -- before the
+    # FLASH import below -- even though only a few columns are plotted. The grid is fixed
+    # (no refinement), so one z axis serves them all.
+    phase_paths = warpx_plotfiles(args.config, args.diag_dir, prefix="phase")
+    if phase_paths:
+        print(f"         {len(phase_paths)} phase dumps for the velocity row")
+        velocity_frames = read_warpx_velocity(phase_paths, scaling,
+                                              warpx_frames_all[0]["z_di"])
+    else:
+        print("         WARNING: no phase* dumps found -- the velocity row will be empty. "
+              "The field diagnostic carries no per-species current, so bulk velocity "
+              "cannot be recovered from diag1.")
+        velocity_frames = []
+
     import flash_utils as fu
 
     t_lo_ns, t_hi_ns = (float(v) for v in spec["flash_target"]["t_window_ns"])
@@ -503,6 +644,7 @@ def main() -> None:
                     halfwidth_um=args.slice_halfwidth_um, t_start_s=t_lo_ns * 1e-9)
         for i in flash_idx]
     warpx_frames = [warpx_frames_all[i] for i in warpx_idx]
+    attach_warpx_velocity(warpx_frames, velocity_frames)
 
     out_dir = yaml_edit.out_dir(
         os.path.basename(args.config).replace(".warpx.yaml", ""),

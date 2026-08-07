@@ -166,42 +166,43 @@ def measure_dump(lineout: dict, *, mass_number: float, front_level_frac: float,
     sumy = np.asarray(lineout["sumy"], dtype=float)
     ne_cm3 = np.asarray(lineout["ne"].to("cm**-3").value, dtype=float)
 
-    # The piston metric is FLASH's own target-species mass fraction applied to the electron
-    # density: n_e belonging to Si.  Its WarpX counterpart is rho_piston_ions/e, which at
-    # the deck's Z = 1 is that species' electron density too, so the two sides compare
-    # like for like.  Going instead through rho*X/(A m_u) and multiplying by the EOS Zbar
-    # would fold the ionization state (3.7 in the ambient, ~11 in the piston) into a
-    # comparison whose deck has Z = 1 by construction.
-    n_piston_electron = piston_frac * ne_cm3
+    # Everything is measured as an ION density, which is Z-free: it comes from the mass
+    # density and a mass fraction alone.  The deck then applies the charge states the run
+    # spec chose (Al 6+, Si 14+) to reach electron densities.  Measuring in electrons
+    # instead would fold FLASH's EOS Zbar -- 3.7 in the ambient, ~11 in the piston, and
+    # both varying along the line-out -- into a comparison whose deck has ONE charge state
+    # per species by construction, so the two sides would no longer be like for like.
     n_piston_ion = pp.piston_ion_density(rho, piston_frac, mass_number, AMU_G)
     zbar = np.divide(ye, sumy, out=np.zeros_like(ye), where=sumy > 0.0)
+    n_ion = np.divide(ne_cm3, zbar, out=np.zeros_like(ne_cm3), where=zbar > 0.0)
 
     # Absolute front level from the far-field ambient, so the front keeps tracking the
     # leading edge when the dense inner plume overtakes it in amplitude.
-    reference = pp.ambient_reference_level(x_cm, ne_cm3)
+    reference = pp.ambient_reference_level(x_cm, n_ion)
     level = (front_level_frac * reference if np.isfinite(reference) and reference > 0.0
              else None)
-    x_front = pp.front_position(x_cm, n_piston_electron, front_threshold, level=level)
-    scale_length = pp.efolding_length(x_cm, n_piston_electron, x_front, fit_window_cm)
+    x_front = pp.front_position(x_cm, n_piston_ion, front_threshold, level=level)
+    scale_length = pp.efolding_length(x_cm, n_piston_ion, x_front, fit_window_cm)
 
     def ahead(values) -> float:
         return pp.ahead_of_front_average(x_cm, values, x_front,
                                          ambient_offset_cm, ambient_width_cm)
 
-    n_piston_drive = pp.behind_front_average(x_cm, n_piston_electron, x_front,
+    n_piston_drive = pp.behind_front_average(x_cm, n_piston_ion, x_front,
                                              drive_offset_cm, drive_width_cm)
 
     return {
         "n_piston_drive_cm3": n_piston_drive,
-        "edge_resolved": pp.edge_is_resolved(x_cm, n_piston_electron, x_front,
+        "edge_resolved": pp.edge_is_resolved(x_cm, n_piston_ion, x_front,
                                              scale_length),
         "has_upstream": pp.upstream_is_pristine(
-            x_cm, n_piston_electron, ne_cm3, x_front, ambient_offset_cm,
+            x_cm, n_piston_ion, n_ion, x_front, ambient_offset_cm,
             ambient_width_cm, contamination_max=contamination_max),
         "ambient_reference_cm3": reference,
         "x_cm": x_cm,
-        "n_piston_cm3": n_piston_electron,
+        "n_piston_cm3": n_piston_ion,
         "n_piston_ion_cm3": n_piston_ion,
+        "n_ion_cm3": n_ion,
         "ne_cm3": ne_cm3,
         "B_mag_gauss": np.asarray(lineout["B_mag"].to("gauss").value, dtype=float),
         "Te_eV": np.asarray(lineout["Te"].to("eV").value, dtype=float),
@@ -211,7 +212,8 @@ def measure_dump(lineout: dict, *, mass_number: float, front_level_frac: float,
         "t_s": float(lineout["t_s"]),
         "x_front_cm": x_front,
         "scale_length_cm": scale_length,
-        "n_piston_peak_cm3": float(np.nanmax(n_piston_electron)),
+        "n_piston_peak_cm3": float(np.nanmax(n_piston_ion)),
+        "amb_ni_cm3": ahead(n_ion),
         "amb_ne_cm3": ahead(np.asarray(lineout["ne"].to("cm**-3").value)),
         "amb_B_gauss": ahead(np.asarray(lineout["B_mag"].to("gauss").value)),
         "amb_Te_eV": ahead(np.asarray(lineout["Te"].to("eV").value)),
@@ -231,13 +233,16 @@ def measure_unperturbed(lineout: dict, max_contaminant: float = 1.0e-6) -> dict:
     ye = np.asarray(lineout["ye"], dtype=float)
     sumy = np.asarray(lineout["sumy"], dtype=float)
     zbar = np.divide(ye, sumy, out=np.zeros_like(ye), where=sumy > 0.0)
+    ne_cm3 = np.asarray(lineout["ne"].to("cm**-3").value, dtype=float)
+    n_ion = np.divide(ne_cm3, zbar, out=np.zeros_like(ne_cm3), where=zbar > 0.0)
 
     def pristine(values) -> float:
         return pp.unperturbed_average(values, piston_frac, max_contaminant)
 
     return {
         "t_s": float(lineout["t_s"]),
-        "amb_ne_cm3": pristine(lineout["ne"].to("cm**-3").value),
+        "amb_ni_cm3": pristine(n_ion),
+        "amb_ne_cm3": pristine(ne_cm3),
         "amb_B_gauss": pristine(lineout["B_mag"].to("gauss").value),
         "amb_Te_eV": pristine(lineout["Te"].to("eV").value),
         "amb_Ti_eV": pristine(lineout["Ti"].to("eV").value),
@@ -362,6 +367,44 @@ def yaml_block(targets: hps.PistonTargets, source: flash_source.FlashSource,
         f"  z_amb: {targets.z_amb:.6g}",
         f"  a_piston: {targets.a_piston:.6g}",
         f"  z_piston: {targets.z_piston:.6g}",
+    ])
+
+
+def flash_block(per_dump: list, trajectory: pp.FrontTrajectory,
+                source: flash_source.FlashSource, *, upstream: dict | None,
+                r_spot_um: float, ambient_species: str, piston_species: str) -> str:
+    """The ``flash:`` block of a ``schema: heater_pic_2d`` run spec.
+
+    Densities are ION densities, in the charge state each species is named with: the
+    charge is stated once, in the species string, and ``src/warpx/config.py`` applies it.
+    """
+    ambient_dumps = ([upstream] if upstream
+                     else [d for d in per_dump if d["has_upstream"]])
+
+    def mean_of(dumps: list, key: str) -> float:
+        values = np.array([d[key] for d in dumps], dtype=float)
+        return float(np.nanmean(values))
+
+    return "\n".join([
+        "flash:",
+        f"  dataset: {source.flash_dir}",
+        f"  source: scripts/flash_piston_profile.py over {len(per_dump)} dumps, "
+        f"front fit rms {trajectory.residual_rms / CM_PER_UM:.0f} um",
+        f"  window_ns: [{per_dump[0]['t_s'] * 1e9:.3f}, "
+        f"{per_dump[-1]['t_s'] * 1e9:.3f}]",
+        "",
+        "  ambient:",
+        f"    species: {ambient_species}",
+        f"    ion_density_per_m3: {1e6 * mean_of(ambient_dumps, 'amb_ni_cm3'):.4e}",
+        f"    magnetic_field_tesla: {1e-4 * mean_of(ambient_dumps, 'amb_B_gauss'):.6g}",
+        f"    electron_temperature_ev: {mean_of(ambient_dumps, 'amb_Te_eV'):.6g}",
+        f"    ion_temperature_ev: {mean_of(ambient_dumps, 'amb_Ti_eV'):.6g}",
+        "",
+        "  piston:",
+        f"    species: {piston_species}",
+        f"    ion_density_per_m3: {1e6 * mean_of(per_dump, 'n_piston_drive_cm3'):.4e}",
+        f"    front_speed_km_s: {abs(trajectory.speed) * 1e-5:.5g}",
+        f"    spot_radius_um: {r_spot_um:.6g}",
     ])
 
 
@@ -655,7 +698,10 @@ def main() -> None:
     print()
     print(text)
 
-    block = yaml_block(targets, source, per_dump, trajectory)
+    block = flash_block(
+        per_dump, trajectory, source, upstream=unperturbed, r_spot_um=r_spot_um,
+        ambient_species=str(cfg.get("ambient_species", "Al 6+")),
+        piston_species=str(cfg.get("piston_species", "Si 14+")))
     print()
     print("Paste into runs/magshockz_2d_heater.warpx.yaml:")
     print()
@@ -663,7 +709,8 @@ def main() -> None:
 
     txt_path = os.path.join(out_dir, "flash_piston_profile.txt")
     with open(txt_path, "w") as handle:
-        handle.write(text + "\n\n" + block + "\n")
+        handle.write(text + "\n\n" + block + "\n\n"
+                     + yaml_block(targets, source, per_dump, trajectory) + "\n")
 
     png_path = os.path.join(out_dir, "flash_piston_profile.png")
     plot(per_dump, targets, trajectory, args.n_profiles, png_path)

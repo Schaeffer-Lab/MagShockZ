@@ -1,8 +1,7 @@
 """Tests for src/spitzer_resistivity.py.
 
-The numpy-only helpers (``magnetic_diffusivity``, ``warpx_electron_temperature``) are
-exact-checked in the CI-pure layer.  The plasmapy wrapper (``spitzer_resistivity``) is
-guarded by ``importorskip`` since astropy/plasmapy are not in the CI-pure stack.
+``magnetic_diffusivity`` and ``warpx_electron_temperature`` are exact-checked; the
+plasmapy wrapper ``spitzer_resistivity`` is checked against known Spitzer regimes.
 """
 
 import math
@@ -17,21 +16,9 @@ from spitzer_resistivity import (
     spitzer_resistivity,
 )
 
-# spitzer_resistivity imports plasmapy lazily, so the module + the numpy-only helpers stay
-# importable in the CI-pure layer.  Only the wrapper tests below need the heavy stack, so
-# they carry a skipif marker (a module-level importorskip would skip this whole file).
-try:
-    import astropy  # noqa: F401
-    import plasmapy  # noqa: F401
-    HAS_PLASMAPY = True
-except ImportError:
-    HAS_PLASMAPY = False
-
-requires_plasmapy = pytest.mark.skipif(not HAS_PLASMAPY, reason="plasmapy/astropy not installed")
-
 
 # ---------------------------------------------------------------------------
-# magnetic_diffusivity: D_m = eta / mu0   (numpy-only, CI-safe)
+# magnetic_diffusivity: D_m = eta / mu0
 # ---------------------------------------------------------------------------
 
 def test_magnetic_diffusivity_scalar():
@@ -47,7 +34,7 @@ def test_magnetic_diffusivity_array_preserves_shape():
 
 
 # ---------------------------------------------------------------------------
-# warpx_electron_temperature: Te = Te0 (n/n0)^(gamma-1)   (numpy-only, CI-safe)
+# warpx_electron_temperature: Te = Te0 (n/n0)^(gamma-1)
 # ---------------------------------------------------------------------------
 
 def test_warpx_Te_at_reference_density_is_Te0():
@@ -72,10 +59,9 @@ def test_warpx_Te_zero_density_returns_zero():
 
 
 # ---------------------------------------------------------------------------
-# spitzer_resistivity: plasmapy wrapper (needs the heavy stack)
+# spitzer_resistivity: plasmapy wrapper
 # ---------------------------------------------------------------------------
 
-@requires_plasmapy
 def test_spitzer_scalar_order_of_magnitude():
     # ~40 eV, Z~10, HED density -> ~1e-6 Ohm*m (few micro-ohm-metre), a known regime.
     eta = spitzer_resistivity(40.0, 7.5e24, 10.0)
@@ -83,7 +69,6 @@ def test_spitzer_scalar_order_of_magnitude():
     assert 1e-7 < eta < 1e-5
 
 
-@requires_plasmapy
 def test_spitzer_decreases_with_temperature():
     # Spitzer eta ~ T^-3/2, so hotter is less resistive.
     eta = spitzer_resistivity(np.array([10.0, 100.0, 1000.0]), np.full(3, 7.5e24), np.full(3, 10.0))
@@ -91,7 +76,6 @@ def test_spitzer_decreases_with_temperature():
     assert eta[0] > eta[1] > eta[2]
 
 
-@requires_plasmapy
 def test_spitzer_array_broadcast_and_grouping():
     # Mixed charge states (incl. fully-stripped Si Z~14) map via integer-charge grouping.
     Te = np.array([15.0, 40.0, 300.0, 1000.0])
@@ -102,7 +86,6 @@ def test_spitzer_array_broadcast_and_grouping():
     assert np.all(np.isfinite(eta))
 
 
-@requires_plasmapy
 def test_spitzer_invalid_inputs_are_nan():
     Te = np.array([0.0, -1.0, 40.0, math.nan])
     ne = np.array([7.5e24, 7.5e24, 0.0, 7.5e24])
@@ -112,7 +95,6 @@ def test_spitzer_invalid_inputs_are_nan():
     assert math.isnan(eta[3])       # nan Te
 
 
-@requires_plasmapy
 def test_spitzer_ion_identity_negligible():
     # Al vs Si agree to well within 1% for e-i resistivity (ion mass barely enters).
     eta_al = spitzer_resistivity(40.0, 7.5e24, 13.0, ion="Al")

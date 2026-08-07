@@ -23,13 +23,16 @@ Two conda environments, used for disjoint stages — do not mix them:
   `run_flash_pressure_partition.py`) run here too — they import `analysis_utils`
   (→ `osiris_utils`) for config/`RunSpec` loading, which only exists in `analysis`.
 
-The installable package (`src/`, see `pyproject.toml`) depends only on numpy/scipy/unyt
-so the pure-function modules import and test without the heavy OSIRIS/yt/astropy stack.
+The installable package (`src/`, see `pyproject.toml`) depends on numpy/scipy/unyt +
+astropy/plasmapy/yt, all of which CI installs — so `src/` may use them freely, and a new
+module that needs units, plasma formulary or a FLASH reader does not have to be contorted
+to avoid them. The one stack CI does **not** have is OSIRIS's (`osiris_utils`, `osh5*`),
+which is not pip-installable; those imports are stubbed in `tests/` (see Tests below).
 
 ## Commands
 
 ```bash
-# Tests (CI runs this; pip install numpy scipy unyt pyyaml pytest pytest-cov first)
+# Tests (CI runs this; pip install numpy scipy unyt astropy plasmapy yt pyyaml pytest pytest-cov first)
 pytest                                  # full suite (testpaths=tests)
 pytest --cov=src --cov-report=term-missing
 pytest tests/test_shock.py              # single file
@@ -128,7 +131,7 @@ resolved copy to `<run_dir>/run.yaml`. Analysis reads parameters back through
 In a `run.yaml`, the `geometry` / `solver` / `diagnostics` groups exist purely for
 readability and are flattened to top-level keys (matching the original CLI flags);
 `species_names` / `charge_states` stay nested as metadata. `RunSpec` is deliberately
-dependency-light (stdlib + PyYAML, astropy imported lazily) so it is unit-testable.
+dependency-light (stdlib + PyYAML + astropy) so it is unit-testable without the OSIRIS stack.
 
 ### FLASH analysis configs: which data, resolved two ways
 
@@ -600,10 +603,22 @@ cached value (`make_movie.py` honours it too).
 
 ### Tests
 
-`tests/conftest.py` puts `tests/` *ahead of* `src/` on `sys.path` so lightweight stubs
-(`tests/osh5def.py`, `tests/analysis_utils.py`) shadow the real modules that would pull in
-osiris/astropy. This is why the pure-function modules can be tested in CI without the
-analysis env — keep new testable logic dependency-light and in `src/`.
+CI installs numpy/scipy/unyt/astropy/plasmapy/yt/PyYAML, so tests may use any of them.
+The only thing it cannot install is **OSIRIS's own stack** (`osiris_utils`, `osh5io`,
+`osh5def`, `osh5vis`), so `tests/conftest.py` puts `tests/` *ahead of* `src/` on
+`sys.path` and lightweight stubs (`tests/osh5def.py`, `tests/analysis_utils.py`) shadow
+the real modules that would import it. Keep new testable logic in `src/` and free of
+OSIRIS imports; astropy, plasmapy and yt are fine.
+
+plasmapy (~2.5 s) and yt are still imported **lazily** in a few `src/` modules — that is
+now purely an import-time cost decision for scripts, not a CI constraint, so don't add a
+new lazy import just to keep a module "pure".
+
+One thing yt-in-CI does *not* buy: `src/flash_utils.py` is still un-importable there,
+because it calls `yt.enable_plugins()` at module scope and yt **raises**
+`FileNotFoundError` when there is no `~/.config/yt/my_plugins.py` (the flash2osiris
+plugin, symlinked in on Perlmutter). Testing `flash_utils` in CI needs that call guarded
+first — installing yt is necessary but not sufficient.
 
 `tests/test_heater_deck.py` asserts on `key_params` — *what WarpX will do* — rather than on
 the deck text wherever the claim is about behaviour, so rewording a comment is not a
