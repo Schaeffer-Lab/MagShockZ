@@ -52,7 +52,6 @@ yt.set_log_level(50)   # suppress yt chatter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
-sys.path.insert(0, os.path.join(_HERE, "..", "init_nopython"))
 
 import unyt as u
 
