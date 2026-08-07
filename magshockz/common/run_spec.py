@@ -73,6 +73,12 @@ class RunSpec:
     # -- construction ---------------------------------------------------
     @classmethod
     def from_sim_dir(cls, sim_dir: str) -> "RunSpec":
+        """Load a run's parameters, first hit wins.
+
+        ``run.yaml`` (what the generator freezes) → ``run_manifest.yaml`` (parse its
+        ``cli_command``) → legacy ``runme*.sh`` (parse the python flags). The fallbacks
+        exist so runs generated before the run spec still resolve.
+        """
         run_yaml = os.path.join(sim_dir, "run.yaml")
         if os.path.exists(run_yaml):
             return cls._from_run_yaml(run_yaml)
@@ -120,6 +126,7 @@ class RunSpec:
         return self.params[key]
 
     def get(self, key, default=None):
+        """One flattened top-level parameter, or ``default``."""
         return self.params.get(key, default)
 
     @property
@@ -169,6 +176,7 @@ class RunSpec:
         return None if v is None else int(v)
 
     def charge_state(self, species: str) -> int:
+        """Z for one species, from the spec's ``charge_states`` block."""
         try:
             return int(self.charge_states[species])
         except KeyError:

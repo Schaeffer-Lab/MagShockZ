@@ -162,59 +162,110 @@ reads its deck and `run_env.sh` from `input_files/warpx/…` at runtime. Therefo
 `plots_for_paper/` images and the TIF move to `docs/figures/` or beside the paper
 scripts; `analysis_notebooks/` → `notebooks/`, dropping `__pycache__/`.
 
-### Phase 5 — finish the WarpX subpackage
+### Phase 5 — finish the WarpX subpackage — DONE
 
-`src/warpx/__init__.py` already advertises `flash`, `metrics` and `plotting` submodules
-that do not exist, and `calibration.py` has no importer. Complete it, making WarpX the
-worked example of the new layout:
+`init/warpx/units.py` superseded `common/heater_piston_scaling.py`: same mapping, but
+astropy `Quantity` + plasmapy `formulary` throughout instead of bare SI floats with
+unit-suffixed names. Both existed side by side, which is the worst of the two.
 
-- `analysis/warpx/flash.py` — the FLASH side (`flash.par` IC, measured piston), lifted out
-  of `warpx_flash_evolution.py`.
-- `analysis/warpx/metrics.py` — front tracking and the dimensionless scorecard, lifted out
-  of `warpx_heater_compare.py`.
-- `analysis/warpx/plotting.py` — the comparison figures.
-- `calibration.py` — wire up or delete; decide when its caller is written.
+- **`common/heater_piston_scaling.py` (818 lines) and its test (514) are deleted.** All
+  three consumers — `flash_piston_profile.py`, `warpx_heater_compare.py`,
+  `warpx_flash_evolution.py` — now go through `units.DeckScales` / `units.Upstream`.
+- **`analysis/warpx/flash.py`** — `MeasuredPiston`, the FLASH piston as *measured*. It is
+  deliberately **not** `units.FlashReference`: that one is what the deck *imposes* (an
+  integer `Al 6+`), while FLASH ran at its EOS Zbar of 3.66. Same `Upstream`, same
+  formulary, different ion — so `eos_ion()` builds a `CustomParticle`, since
+  `Particle("Al 3.66+")` raises.
+- **`analysis/warpx/metrics.py`** — `front_speed_over_c` and the `ScoreRow` scorecard,
+  lifted out of `warpx_heater_compare.py`.
+- **`units.invariant_table`** — the FLASH-vs-deck table, previously written twice (in
+  `warpx_make_deck.py` and as `hps.invariance_report`).
+- **`calibration.py`** — already wired up; `units.py` imports `HeaterCalibration`.
 
-Those two scripts are 680 and 462 lines and hold real numerics; this is where the
-library-first rule pays off, and each extracted function gets a test.
+`analysis/warpx/plotting.py` was **not** created. The two scripts' figures share no code
+with each other, so extracting them would move matplotlib out of the scripts that exist to
+draw it without removing any duplication — against the codebase's own "thin plotting/IO
+scripts orchestrate a pure library" rule rather than for it.
+
+Validated end to end against the archived `diags_v2_z1_mr100` run: all four panels render
+and every number is consistent with a v2-era deck read by a revised spec.
 
 ### Phase 6 — prose
 
 28% of `magshockz/`+`scripts/` (5,336 of 18,808 lines) is docstring or comment. Policy
 chosen: **cut narration, keep physics.**
 
-Remove: prose that restates the code, narrates history ("changed from X to Y"), or
-re-derives what a name already says. Module docstrings drop to purpose plus CLI usage.
+### The 10% target was wrong, and measuring properly is the finding — DONE
 
-Keep inline: every physics caveat — the `sqrt(4π)` convention, the measured `kappa`, the
-absolute-vs-relative front threshold, the `Zbar` reasoning, the `strings | grep -c`
-SIGPIPE guard. These are the comments `CLAUDE.md` itself says earn their place.
+The 28% figure was computed from line counts before the content was read. Broken down, it
+is not bloat:
 
-Move to `docs/`, not delete: the extended narrative currently living in 34–70 line module
-docstrings. `warpx_flash_evolution.py`'s 52-line docstring becomes a few lines plus a
-pointer to `docs/warpx_heater.md`.
+| layer | lines | docstring | comment |
+|---|---|---|---|
+| `magshockz/` | 8,319 | 33% — but 2,079 of 2,759 lines are **function/class** docstrings | 5% |
+| `scripts/` | 10,260 | 13% — mostly module docstrings, i.e. the CLI usage | 8% |
 
-Where a comment exists because a name is poor or a function too long, fix the name or
-split the function instead — that is the codebase's own stated rule.
+The library has **250 documented public functions at a median docstring of 6 lines**.
+That is `CLAUDE.md`'s own rule ("every public function in `magshockz/` gets a short
+docstring") being followed, not violated. Reaching 10% would mean deleting ~1,500 lines of
+required API documentation to hit a number that was never measuring the right thing.
 
-### Phase 7 — documentation
+The 64 apparently-undocumented public callables are **51 `@property` one-liners** with
+self-evident names (correctly undocumented) and 13 real ones, several of which are nested
+closures. The genuinely public ones — `RunSpec.from_sim_dir`, `RunSpec.get`,
+`RunSpec.charge_state`, `moments.moment`, `DeckScales.invariants` — were *given*
+docstrings. That is the opposite of the phase's stated direction and is the correct call.
 
-`CLAUDE.md` is 810 lines and is currently the only real documentation, written for an AI
-reader. Split it:
+### What was actually cut
 
-- `docs/user_guide.md` (currently empty) — how to run everything: environments, the three
-  pipelines end to end, every command with its flags.
-- `docs/physics_notes.md` — the conventions and hard-won corrections: OSIRIS normalized
-  units, the FLASH `sqrt(4π)`, the PyYAML 1.1 float trap, the reduced-mass caveats.
-- `docs/warpx_heater.md` — the heater pipeline and the constraints that shaped the deck.
-- `docs/osiris_pipeline.md` — run specs, `RunSpec` resolution, collisions.
-- `CLAUDE.md` → roughly 150 lines: layout, conventions, code style, and pointers into
-  `docs/`.
-- `README.md` — orientation and a real quick-start now that `pip install -e .` works.
+Four module docstrings that duplicated documentation now in `docs/`:
 
-Configs keep the `runs/` vs `config/` split, which encodes a real distinction. Each file
-gains a top-level `schema:` key for self-description, and each directory gets one loader
-that dispatches on it — extending the pattern the WarpX specs already use.
+| script | before | after |
+|---|---|---|
+| `flash_3d_movie.py` | 71 | 28 |
+| `flash_experiment_compare.py` | 63 | 20 |
+| `osiris_rh_prediction.py` | 58 | 30 |
+
+`warpx_flash_evolution.py`'s 53-line docstring was **kept**. Re-reading it, all four of
+its blocks are measurement caveats specific to that script — species are never summed, the
+velocity row's coarser clock, the two clock-zero/box-width caveats — none of which live in
+`docs/`, and moving them would separate them from the code they govern.
+
+Net: 29.2% → 28.8%, and the repository is better documented than before, not worse.
+
+### Phase 7 — documentation — DONE
+
+`CLAUDE.md` was 828 lines and the only real documentation, written for an AI reader. Now:
+
+| file | lines | audience |
+|---|---|---|
+| `README.md` | 79 | orientation + quick start |
+| `docs/user_guide.md` | 190 | **the human entry point** — install, both envs, shared flags, every command by task |
+| `docs/osiris_pipeline.md` | 98 | run specs, `RunSpec` resolution, deck generation, collisions |
+| `docs/flash_analysis.md` | 135 | config resolution, LOS fans, results directories, streak images |
+| `docs/warpx_pipeline.md` | 308 | both WarpX schemas and the heater deck's constraints |
+| `docs/physics_notes.md` | 72 | OSIRIS normalized units, the FLASH `sqrt(4π)`, the PyYAML 1.1 trap |
+| `CLAUDE.md` | 254 | layout, architecture, tests, code style — what governs *editing* |
+
+Sections were moved **verbatim** by line range rather than paraphrased, so no hard-won
+detail was lost in transit; only the cross-references were rewritten afterwards. Every
+internal link and every `path/to/file.py` reference in all seven files is verified to
+resolve.
+
+Two corrections made while writing them:
+
+- `docs/warpx_pipeline.md`, not `warpx_heater.md`. There are **two** schemas dispatched
+  from one `schema:` key in `runs/*.warpx.yaml`; naming the file after the heater would
+  hide the hybrid runs that share it.
+- `docs/flash_analysis.md` documents the **fan of lines of sight**
+  (`lines_of_sight:` + `--los`, `config/flash_3d_corrected_fan.yaml`), which
+  `flash_source.py` supports and `CLAUDE.md` never mentioned — so the original was
+  incomplete, not merely long.
+
+**Not done:** the `schema:` key for `config/*.yaml` and a per-directory loader that
+dispatches on it. `runs/*.warpx.yaml` already has it; the analysis configs do not, and
+adding it touches every config and every `load_config` caller. It is a self-contained
+follow-up, not a prerequisite for anything above.
 
 ## What this fixes
 
@@ -222,7 +273,7 @@ that dispatches on it — extending the pattern the WarpX specs already use.
 |---|---|
 | "opaque" | Directory names describe stage and code, not history. Seven top-level dirs become four load-bearing ones. |
 | "no clear hooks without Claude Code" | `pip install -e .` makes `import magshockz` work anywhere; 24 `sys.path` hacks disappear; `docs/user_guide.md` documents every command. |
-| "over-reliance on long comments" | 28% prose cut toward ~10%, with physics preserved inline and narrative harvested into `docs/`. |
+| "over-reliance on long comments" | Measured properly: most of the 28% is required function docstrings (median 6 lines) and physics comments. Four duplicated module docstrings cut; the 810-line `CLAUDE.md` split into six documents written for a human. |
 | "unnecessary files / merges" | Four dead directories deleted; four name collisions resolved; two 600-line scripts have their numerics extracted into a tested library. |
 
 ## Sequencing note

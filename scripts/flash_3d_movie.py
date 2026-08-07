@@ -1,73 +1,32 @@
 # -*- coding: utf-8 -*-
 """scripts/flash_3d_movie.py — 3D volume-rendered movies of a FLASH run.
 
-Renders time-evolving yt **volume renderings** of a chosen set of FLASH fields
-(electron density, electron/ion temperature, and the components + magnitude of
-the magnetic field) for a 3D FLASH run, then encodes each field's frames to an
-MP4.  The dense planar target slab at the base (y < --ycrop) is cropped out so
-the expanding magnetized plume / blast bubble is visible (it otherwise dominates
-the volume and renders as a flat opaque sheet).
+Per dump: sample each field onto an N^3 uniform grid, crop the dense basal target slab
+(which otherwise renders as a flat opaque sheet hiding the plume), volume-render from a
+fixed camera, and encode each field's frames to an MP4.
 
-Available fields (--fields):
-    ne    electron density n_e            log magma, emissive
-    te    electron temperature T_e        log afmhot, emissive (ambient transparent)
-    ti    ion temperature T_i             log plasma, emissive (ambient transparent)
-    bx    magnetic field B_x              diverging red/blue about 0 (zero transparent)
-    by    magnetic field B_y              diverging red/blue about 0 (zero transparent)
-    bz    magnetic field B_z              red compression / blue cavity (ambient transparent)
-    bmag  magnetic field |B|              log viridis, emissive (ambient transparent)
+Fields (--fields): ``ne te ti bx by bz bmag``. The camera and transfer functions are
+FIXED across a movie so colour maps to the same physical value in every frame, and that
+tuning is per-run: each run's settings are a named entry in ``PRESETS``, selected with
+--preset, which must match the --config's data.
 
-Pipeline, per dump:
-    yt.load  ->  sample each field onto an N^3 uniform grid (arbitrary_grid)
-             ->  crop the basal slab  ->  fixed-camera volume render per field
-    with a transfer-function colorbar + timestamp  ->  PNG.
-ffmpeg then assembles each field's PNGs into an MP4.
-
-The camera and transfer functions are FIXED across the movie (tuned constants in
-the FIELDS registry) so colour maps to the same physical value in every frame.
-That tuning is per-run — the frame has to hold the plume at its latest time and
-colour has to map onto that run's ambient/peak values — so each run's settings
-live in a named entry of PRESETS, selected with --preset (default `noshield`,
-the original FLASH_3D_noshield tuning).  Two transfer-function kinds are used:
-  * "emissive"  — a positive scalar (n_e, T_e, T_i, |B|); a sequential colormap
-                  whose per-layer alpha ramps from ~transparent at the ambient
-                  (low) end to opaque at the high end, so only the bright end
-                  (dense plume / hot gas / compressed field) shows.
-  * "gaussians" — a signed / ambient-offset field (B_x, B_y, B_z); explicit
-                  red (positive / compression) and blue (negative / cavity)
-                  Gaussians with the near-uniform ambient band left transparent.
-
-Sampling each 24-36 GB AMR dump is the bottleneck, so this is meant to run as a
-SLURM batch job on a COMPUTE node (see scripts/flash_3d_movie.sbatch), never on a
-shared login node.  It is resumable: the sampled N^3 grids are cached (one .npz
-per dump, one array per field) under <out>/grids/ and reused — so re-tuning a
-transfer function or camera re-renders in seconds — and frames that already exist
-are skipped unless --force.  When a cached grid is missing only some requested
-fields, only the missing fields are sampled and merged back into the cache.
-
-Which FLASH data to read comes from the config, through flash_source.resolve —
-either directly (`flash_data_dir:`) or from the OSIRIS run that was seeded from
-it (`sim_dir:` -> RunSpec), never duplicated here. --data-dir bypasses the config
-entirely, for a one-off look at a directory that has no config yet.
+Sampling each 24-36 GB AMR dump is the bottleneck, so run this as a batch job on a COMPUTE
+node (scripts/flash_3d_movie.sbatch), never on a login node. It is resumable: sampled
+grids are cached under <out>/grids/ and reused, so re-tuning a transfer function
+re-renders in seconds. Existing frames are skipped unless --force.
 
 Usage
 -----
-    # on a compute node (see the .sbatch wrapper). --config picks the data,
-    # --preset the matching camera + transfer functions.
     python scripts/flash_3d_movie.py --config config/flash_3d_2026-07.yaml \\
         --preset trantham2026-07 \\
-        [--fields ne te ti bx by bz bmag] [--stride 1] \\
-        [--t-start 0] [--t-stop 61] \\
+        [--fields ne te ti bx by bz bmag] [--stride 1] [--t-start 0] [--t-stop 61] \\
         [--grid-res 256] [--img-res 800] [--fps 5] [--force] [--no-encode]
 
     # a bare FLASH dump directory, no config
-    python scripts/flash_3d_movie.py \\
-        --data-dir ~/shared/simulations/FLASH_MagShockZ3D-Trantham_2026-07 \\
-        --preset trantham2026-07 --fields ne te ti bx by bz bmag
+    python scripts/flash_3d_movie.py --data-dir <dir> --preset trantham2026-07
 
-    # new run: prime the grid cache first (the slow half), then render/re-render
-    # for free while tuning a new PRESETS entry (--width/--campos/--focus/--ycrop
-    # override the preset for a one-off test frame)
+    # new run: prime the grid cache (the slow half), then tune a PRESETS entry for free
+    # (--width/--campos/--focus/--ycrop override the preset for a one-off test frame)
     python scripts/flash_3d_movie.py --config ...yaml --fields ne bz --grids-only
 """
 

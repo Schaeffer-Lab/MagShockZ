@@ -1,66 +1,26 @@
 # -*- coding: utf-8 -*-
 """scripts/flash_experiment_compare.py — experimental streaked shadowgraphy vs FLASH nₑ.
 
-The streak camera records one spatial axis (mm) against time (ns) — the same layout
-as the FLASH nₑ streak that ``scripts/flash_tune_shock.py`` draws from LOS line-outs.
+Three figures, all drawn in the *image's* own ns and mm — the experimental streak is
+never stretched or resampled into simulation units; FLASH is translated onto it and the
+image cropped to the window in view:
 
-**The experimental image's axes are the reference frame.**  Everything is plotted in
-its own ns and mm; the image is never stretched or resampled into simulation units.
-The simulation, which covers only the first ~15 ns of a ~69 ns record and a 6.3 mm
-stretch of a ±5 mm slit, is *translated* onto those axes, and the image is *cropped*
-to the window being looked at:
+  ``flash_experiment_side_by_side.png``  the two streaks stacked, sharing both axes
+  ``flash_experiment_overlay.png``       both in one panel, FLASH's opacity ramping with nₑ
+  ``flash_experiment_lineouts.png``      spatial profiles at ``--times``
 
-  Figure 1 ``flash_experiment_side_by_side.png``
-      the experimental streak above the FLASH nₑ streak, sharing both axes, with every
-      straight-line feature drawn on both.
-  Figure 2 ``flash_experiment_overlay.png``
-      both in one panel: the experiment underneath in greyscale, FLASH nₑ on top in a
-      second colormap whose opacity ramps with density, so the simulated structure
-      glows over the data while the upstream stays see-through.
-  Figure 3 ``flash_experiment_lineouts.png``
-      spatial profiles at a few times: FLASH nₑ (log, left axis) against the
-      experimental brightness at the nearest streak column (right axis), with each
-      feature marked where it sits at that instant.
+The FLASH→image registration is **hand-tuned, not derived**: the camera trigger and the
+mm zero have no known FLASH counterpart. See ``docs/flash_analysis.md`` for the
+``experiment:`` config block — loading, cropping, registration and the trajectory frames.
 
-Features
---------
-Straight lines ``x(t) = x0_mm + v_kms·(t − t0_ns)`` overlaid on every panel, listed in
-``experiment.trajectories`` and hand-fitted in the units the axes are in (km/s, mm, ns).
-``frame: experiment`` (the default) measures a feature *in the data* — the observed
-shock front, the piston plasma — so it is independent of the registration; ``frame:
-flash`` is a simulated feature, translated onto the image like the FLASH data itself.
-The ``flash:`` block's shock front is added automatically as a ``flash``-frame line.
-
-Registration
-------------
-The experiment's time origin (camera trigger) and mm zero have no known FLASH
-counterpart, so where FLASH lands on the image's axes is **hand-tuned, not derived** —
-a rigid translation, plus a direction flip when the slit's +mm runs opposite to the
-line of sight::
-
-    t_exp = t_flash + t_offset_ns          mm = ±(los_µm / 1000) + x_offset_mm
-
-Defaults come from the config's ``experiment.registration`` block; ``--t-offset-ns`` /
-``--x-offset-mm`` / ``--flip-space`` override them.  Slide them until the features line
-up, then write the values into the config.
-
-The image itself is a *decorated* matplotlib figure (axes burned in), so it is cropped
-to its plot box — auto-detected unless ``experiment.crop_px`` says otherwise — and
-labelled with ``experiment.axes`` (``t_ns`` / ``x_mm``), what that box spans, read off
-its ticks once (``calib.csv`` calibrates the *raw* streak, not the decorated PNG).
-Those are the image's axes, not a zoom: they may be *translated* (to re-zero the mm
-scale, say) but their span must stay the true one.  To look at part of the record use
-``experiment.view`` / ``--t-window`` / ``--x-window``, which crop pixels instead.
-
-Caveat: shadowgraphy brightness responds to ∇²∫nₑ dl through the probe, not to a
-point sample of nₑ, so **positions are comparable, amplitudes are not** — read the
-overlay for where the front is, not for how bright it is.
+Caveat: shadowgraphy brightness responds to ∇²∫nₑ dl through the probe, not to a point
+sample of nₑ, so **front positions are comparable, signal amplitudes are not**.
 
 Env: analysis (yt / unyt).  Examples:
     python scripts/flash_experiment_compare.py --config config/flash_3d_2026-07.yaml
-    python scripts/flash_experiment_compare.py --config config/flash_3d_2026-07.yaml \\
-        --stride 2 --t-offset-ns 3 --x-offset-mm 0.7 --flip-space
-    python scripts/flash_experiment_compare.py --config ...yaml --t-window 0 20 --full-range
+    python scripts/flash_experiment_compare.py --config ...yaml --fit   # fit the shift, + an r map
+    python scripts/flash_experiment_compare.py --config ...yaml \\
+        --t-offset-ns 3 --x-offset-mm 0.7 --flip-space --t-window 0 20
 """
 
 import argparse

@@ -52,7 +52,7 @@ With finite resistivity `η`, field slips through the plasma with magnetic diffu
 where `t_age` is the time since the laser drive created the interface (i.e. the dump
 time, minus any early time before the piston existed). This is the *only* smoothing an
 MHD code could ever have produced, and it is fully computable from the dump: we already
-have the machinery in `src/spitzer_resistivity.py` / `scripts/warpx_spitzer_resistivity.py`
+have the machinery in `magshockz/analysis/warpx/spitzer_resistivity.py` / `scripts/warpx_spitzer_resistivity.py`
 (Spitzer `η(T_e, Z̄)` maps over an extracted FLASH slice, built for choosing WarpX's
 `plasma_resistivity`).
 

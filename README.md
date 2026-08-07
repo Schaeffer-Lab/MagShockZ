@@ -1,61 +1,79 @@
 # MagShockZ
 
-Analysis code for the Magnetized Collisionless Shocks on Z (MagShockZ)
-experiment. Its core job is converting **FLASH** MHD simulation output into
-initialized **OSIRIS** PIC input decks, then analyzing the resulting OSIRIS runs
-(and the source FLASH data). Most work runs on NERSC Perlmutter.
+Analysis code for the Magnetized Collisionless Shocks on Z (MagShockZ) experiment. It
+converts **FLASH** MHD output into initialized **OSIRIS** PIC input decks, drives
+**WarpX** hybrid and full-PIC piston runs off the same data, and analyses all three. Most
+work runs on NERSC Perlmutter.
 
-> **Authoritative reference:** [`CLAUDE.md`](CLAUDE.md) documents the full
-> architecture, the two conda environments, and every command. This README is a
-> short orientation — see `CLAUDE.md` for details.
+## Quick start
+
+```bash
+conda activate analysis
+pip install -e .                    # editable; also do this in the osiris2 env
+
+python scripts/osiris_overview.py --config config/perlmutter_1.3.1d.yaml
+```
+
+`import magshockz` then works from a script, a notebook, a REPL or an sbatch file with no
+path manipulation:
+
+```python
+from magshockz.common import run_spec, piston_profile
+from magshockz.init.warpx import units
+```
+
+## Documentation
+
+**[docs/user_guide.md](docs/user_guide.md) is the place to start** — every command, both
+environments, the shared flags.
+
+| document | covers |
+|---|---|
+| [docs/user_guide.md](docs/user_guide.md) | every command, both environments, the shared flags |
+| [docs/osiris_pipeline.md](docs/osiris_pipeline.md) | run specs, `RunSpec` resolution, deck generation, collisions |
+| [docs/flash_analysis.md](docs/flash_analysis.md) | FLASH config resolution, results directories, experimental streak images |
+| [docs/warpx_pipeline.md](docs/warpx_pipeline.md) | both WarpX schemas; the heater deck's constraints |
+| [docs/physics_notes.md](docs/physics_notes.md) | OSIRIS normalized units, the FLASH `sqrt(4π)`, the PyYAML 1.1 float trap |
+
+[`CLAUDE.md`](CLAUDE.md) is the guidance file for Claude Code: layout, architecture and
+code style. It is not a substitute for the above.
 
 ## Layout
 
-- `runs/*.run.yaml` — version-controlled run specs (the single source of truth
-  for each run's parameters).
-- `init_python/` — thin drivers/wrappers around the external **`flash2osiris`**
-  package (the FLASH→OSIRIS converter; pip-installed, repo at
-  `/pscratch/sd/d/dschnei/flash2osiris`).
-- `src/` — the pure, unit-testable analysis library (numpy/scipy/unyt only).
-- `scripts/` — `--config`-driven analysis orchestration (plotting/IO).
-- `analysis_notebooks/` — exploratory notebooks.
-- `config/*.yaml` — analysis configs (inspection results; parameters are read
-  back through `src/run_spec.py::RunSpec`, not re-copied here).
-- `tests/` — pytest suite for the `src/` library.
+```
+magshockz/            the installable package -- all pure, testable logic
+  common/             used by two or more codes
+  init/{osiris,warpx} deck generation and validation
+  analysis/{flash,osiris,warpx}
+scripts/              thin CLI wrappers, flat, prefixed by code (flash_/osiris_/warpx_/paper_)
+runs/                 run specs: the inputs that DEFINE a run (*.run.yaml, *.warpx.yaml)
+config/               analysis configs: how to ANALYSE a run
+init_warpx/           WarpX sbatch + build scripts
+notebooks/            exploratory notebooks
+tests/                pytest suite
+docs/                 the documentation above
+input_files/          generated run trees (gitignored, regenerable)
+```
+
+Each run's parameters live **once**, in a `run.yaml` in the run's own directory; analysis
+reads them back through `magshockz/common/run_spec.py::RunSpec` rather than re-copying
+them into analysis configs.
 
 ## Environments
 
 Two conda environments, used for disjoint stages — do not mix them:
 
-- **`osiris2`** — FLASH→OSIRIS initialization and deck generation
-  (`flash2osiris` + `init_python/`).
-- **`analysis`** — OSIRIS/FLASH analysis (`scripts/`); has pyVisOS
-  (`osh5io`/`osh5def`/`osh5vis`), `osiris_utils`, and `yt`/`unyt`.
+- **`osiris2`** — FLASH→OSIRIS deck generation. The converter is the standalone
+  [`flash2osiris`](https://github.com/Schaeffer-Lab/flash2osiris) package.
+- **`analysis`** — OSIRIS/WarpX/FLASH analysis; has pyVisOS (`osh5io`/`osh5def`/`osh5vis`),
+  `osiris_utils`, `yt` and `unyt`.
 
-## Quick start
+## Tests
 
 ```bash
-# Generate an OSIRIS deck from a run spec
-conda activate osiris2
-python -m flash_osiris.generator --config runs/perlmutter_1d.run.yaml
-
-# Run an analysis script
-conda activate analysis
-python scripts/osiris_overview.py --config config/perlmutter_1.3.1d.yaml
-
-# Tests (CI): pip install numpy scipy unyt pyyaml pytest pytest-cov
-pytest
+pytest                                        # full suite
+pytest --cov=magshockz --cov-report=term-missing
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the full command list, the run-spec / config
-single-source-of-truth design, and the OSIRIS normalized-unit conventions.
-
-## Contributing
-
-Please contact me through GitHub (ID: dschneidinger) with questions, or if you
-would like to use these tools to convert other FLASH simulation data to OSIRIS.
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file
-for more details.
+CI installs the package and runs the same suite. The OSIRIS stack is not pip-installable,
+so `tests/conftest.py` stubs it when absent and runs against the real one on Perlmutter.

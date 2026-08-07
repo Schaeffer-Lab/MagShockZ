@@ -28,6 +28,15 @@ if TYPE_CHECKING:
 
 def moment(data: "osh5def.H5Data", order: int, axis: str,
            p_mask: np.ndarray = None, debug: bool = False):
+    """Velocity moment of a phase space, integrated over one momentum axis.
+
+    Order 0 is the number density, 1 the mean velocity, 2 the central variance
+    (``sigma^2 = uth'^2 = T/(m_sp c^2)``, since OSIRIS momenta are per-species). Orders 1
+    and 2 are normalized by the zeroth, and return 0 where it vanishes.
+
+    ``p_mask`` selects part of the momentum axis before integrating — a boolean of the
+    axis's own length, used to isolate a population (reflected ions, say) from the rest.
+    """
     if not data.has_axis(axis):
         raise ValueError(f"Data does not have axis '{axis}'")
 
