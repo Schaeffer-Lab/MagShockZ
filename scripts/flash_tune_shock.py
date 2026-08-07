@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""scripts/tune_flash_shock.py — interactively place a FLASH run's shock front.
+"""scripts/flash_tune_shock.py — interactively place a FLASH run's shock front.
 
-The FLASH analog of ``scripts/tune_shock.py``.  The FLASH overview's automatic
+The FLASH analog of ``scripts/osiris_tune_shock.py``.  The FLASH overview's automatic
 steepest-gradient edge tracker is unreliable with so few dumps (it locks onto the
 fast leading edge, biased high relative to the mass-flux frame), so this tool lets
 you place the front by hand on the SAME physical-unit lineouts the analysis draws,
@@ -47,8 +47,8 @@ regions — tune one dump's ``x_shock_cm`` / ``x_downstream_start_cm`` against i
         q           quit
 
 Env: analysis (yt / unyt).  Examples:
-    python scripts/tune_flash_shock.py --config config/flash_3d_noshield.yaml
-    python scripts/tune_flash_shock.py --config ...yaml --mode regions --snapshot-idx -1
+    python scripts/flash_tune_shock.py --config config/flash_3d_noshield.yaml
+    python scripts/flash_tune_shock.py --config ...yaml --mode regions --snapshot-idx -1
 """
 
 import argparse
@@ -79,7 +79,7 @@ from flash_overview import assemble_streak
 
 
 # The interactive write-back plumbing (out_dir / confirm_write / …) is shared with
-# scripts/tune_shock.py and lives in src/yaml_edit.py; confirm_write routes the
+# scripts/osiris_tune_shock.py and lives in src/yaml_edit.py; confirm_write routes the
 # ``flash_dump_params.<idx>.<key>`` paths to set_dump_param automatically.
 
 

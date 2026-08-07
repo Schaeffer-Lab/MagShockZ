@@ -125,7 +125,7 @@ def compute(cfg: dict, timestep_idx: int = -1, config_path: str = "") -> Pressur
     x_downstream_start = dump["x_downstream_start"]
 
     # Shock-frame boost velocity is the tuned config shock.v_shock (set with
-    # scripts/tune_shock.py), used directly — no auto-fit of the front trajectory.
+    # scripts/osiris_tune_shock.py), used directly — no auto-fit of the front trajectory.
     v_shock = float(cfg["shock"]["v_shock"])
 
     species_rqm = {sp: sim.rqm_of(sp) for sp in species_list}  # per-species rqm from deck

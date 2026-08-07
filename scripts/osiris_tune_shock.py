@@ -1,4 +1,4 @@
-"""scripts/tune_shock.py — interactively tune a run's shock parameters.
+"""scripts/osiris_tune_shock.py — interactively tune a run's shock parameters.
 
 The analysis suite (overview / pressure_partition / temperature_ratios /
 dimensionless_params) reads the shock kinematics from the run's analysis config:
@@ -33,8 +33,8 @@ regions — tune one dump's ``x_shock`` / ``x_downstream_start`` against its p2x
         q           quit
 
 Env: analysis (osh5io / osh5vis).  Examples:
-    python scripts/tune_shock.py --config config/magshockz_rqm100_dx0.1.yaml
-    python scripts/tune_shock.py --config config/...yaml --mode regions --dump 400
+    python scripts/osiris_tune_shock.py --config config/magshockz_rqm100_dx0.1.yaml
+    python scripts/osiris_tune_shock.py --config config/...yaml --mode regions --dump 400
 """
 
 import argparse
@@ -60,7 +60,7 @@ from magshockz.common import yaml_edit
 
 
 # The interactive write-back plumbing (out_dir / confirm_write / …) is shared with
-# scripts/tune_flash_shock.py and lives in src/yaml_edit.py next to the comment-
+# scripts/flash_tune_shock.py and lives in src/yaml_edit.py next to the comment-
 # preserving scalar editors it wraps.
 
 

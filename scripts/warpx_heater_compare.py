@@ -439,7 +439,7 @@ def main() -> None:
     print()
     print(text)
 
-    # results/warpx/<run>/, matching scripts/spitzer_resistivity.py. Passed as the
+    # results/warpx/<run>/, matching scripts/warpx_spitzer_resistivity.py. Passed as the
     # override because out_dir() keys its default on basename(), which would flatten
     # the warpx/ level away.
     run_name = os.path.basename(args.config).replace(".warpx.yaml", "")

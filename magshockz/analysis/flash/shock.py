@@ -1,7 +1,7 @@
 """shock.py — shared shock-front detection and trajectory fitting.
 
 One module owns the shock-trajectory logic used by both the OSIRIS overview
-(``scripts/overview.py``) and the FLASH overview (``scripts/flash_overview.py`` via
+(``scripts/osiris_overview.py``) and the FLASH overview (``scripts/flash_overview.py`` via
 ``flash_utils``).  Two front-detection strategies are provided because the two data
 models call for different markers, plus a robust linear trajectory fit.
 

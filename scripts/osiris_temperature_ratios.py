@@ -24,7 +24,7 @@ also saved to an inspectable ``.npz`` whose schema is the
 
 Usage
 -----
-    python scripts/temperature_ratios.py --config config/<run>.yaml \\
+    python scripts/osiris_temperature_ratios.py --config config/<run>.yaml \\
         [--timestep-idx -1] [--no-plot] [--output ...] [--output-dir ...]
 """
 

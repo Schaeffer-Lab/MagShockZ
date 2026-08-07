@@ -2,7 +2,7 @@
 #
 # Everything derived -- B0, v_A, d_e, d_i, T_ci, the betas, the heater setpoint, dt,
 # the cell counts -- is computed by src/warpx/units.py. Regenerate with:
-#   python scripts/make_warpx_deck.py --config runs/magshockz_2d_heater.warpx.yaml
+#   python scripts/warpx_make_deck.py --config runs/magshockz_2d_heater.warpx.yaml
 #
 # YAML 1.1: an exponent needs a dot in the mantissa AND a sign, or it loads as a string.
 

@@ -135,7 +135,7 @@ experiment:
 # gamma: 1.6667
 
 # FLASH detection seeds / trajectory fit (physical units) — set by
-# scripts/tune_flash_shock.py (trajectory mode). Not yet tuned for this run.
+# scripts/flash_tune_shock.py (trajectory mode). Not yet tuned for this run.
 #   v_shock_est_cms : shock velocity along the LOS [cm/s]
 #   x_shock_0_cm    : shock position along the LOS at the anchor time t_shock_0_s [cm]
 #   t_shock_0_s     : anchor [s] — the time the front sat at x_shock_0_cm. Optional;
@@ -147,7 +147,7 @@ experiment:
 #   t_shock_0_s: 0
 
 # Per-dump hand-placed front, keyed by plot-file index (set by
-# scripts/tune_flash_shock.py --mode regions). These are per-dataset and do NOT
+# scripts/flash_tune_shock.py --mode regions). These are per-dataset and do NOT
 # carry over from flash_3d_noshield.yaml — this run needs its own regions pass.
 #   x_shock_cm            : shock-front position along the LOS [cm]
 #   x_downstream_start_cm : left edge of the downstream region [cm]

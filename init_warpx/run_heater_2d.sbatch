@@ -13,7 +13,7 @@
 #      this is not optional:
 #          bash init_warpx/build_warpx_gpu_2d.sh
 #   2. Generate the deck (seconds, `analysis` env):
-#          conda run -n analysis python scripts/make_warpx_deck.py \
+#          conda run -n analysis python scripts/warpx_make_deck.py \
 #              --config runs/magshockz_2d_heater.warpx.yaml --smoke
 #  This job aborts if either is missing.
 #
@@ -115,7 +115,7 @@ ulimit -s unlimited
 if [[ ! -f "$DECK" ]]; then
   echo "ERROR: deck not found at $DECK"
   echo "       generate it first:  conda run -n analysis python \\"
-  echo "         scripts/make_warpx_deck.py --config runs/magshockz_2d_heater.warpx.yaml"
+  echo "         scripts/warpx_make_deck.py --config runs/magshockz_2d_heater.warpx.yaml"
   exit 1
 fi
 if [[ ! -x "$EXE" ]]; then

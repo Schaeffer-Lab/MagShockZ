@@ -2,10 +2,10 @@
 # Batch-render OSIRIS movies non-interactively on Perlmutter.
 #
 # Batching lives HERE (shell loop over diagnostics), not in Python:
-# scripts/make_movie.py stays single-purpose and is called once per diagnostic
+# scripts/osiris_make_movie.py stays single-purpose and is called once per diagnostic
 # with --no-interactive so every knob comes from flags.
 #
-# Edit RUN and DIAGS below, then:  sbatch scripts/make_movie.sbatch
+# Edit RUN and DIAGS below, then:  sbatch scripts/osiris_make_movie.sbatch
 #
 #SBATCH -N 1
 #SBATCH -C cpu
@@ -40,7 +40,7 @@ DIAGS=(
 for diag in "${DIAGS[@]}"; do
   name="${diag//\//_}"
   echo "=== ${diag} -> ${name}.mp4 ==="
-  python scripts/make_movie.py \
+  python scripts/osiris_make_movie.py \
     -d "${RUN}/${diag}" --no-interactive \
     --units "${UNITS}" -s "${SKIP}" -n 32 \
     -o "${name}"

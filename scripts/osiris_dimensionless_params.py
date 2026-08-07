@@ -30,7 +30,7 @@ number, read the named function in ``src/dimensionless_params.py`` and its test 
 
 Usage
 -----
-    python scripts/dimensionless_params.py --config config/<run>.yaml \\
+    python scripts/osiris_dimensionless_params.py --config config/<run>.yaml \\
         [--timestep-idx -1] [--output ...]
 """
 

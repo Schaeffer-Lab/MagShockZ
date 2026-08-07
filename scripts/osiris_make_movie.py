@@ -1,4 +1,4 @@
-"""scripts/make_movie.py — quick MP4 movies of OSIRIS diagnostics.
+"""scripts/osiris_make_movie.py — quick MP4 movies of OSIRIS diagnostics.
 
 A fast "did the run break?" visualiser: point it at an OSIRIS ``MS`` tree (or a
 single diagnostic directory), render every ``*.h5`` dump to a PNG in parallel,
@@ -13,7 +13,7 @@ Two modes, one code path:
   - **Non-interactive** (``--no-interactive``, or ``-d`` pointing straight at a
     directory of ``*.h5`` files): renders from argv with no prompts.  Every
     interactive knob has a matching flag, so this is what an sbatch wrapper calls
-    (see ``scripts/make_movie.sbatch``) to batch many diagnostics.
+    (see ``scripts/osiris_make_movie.sbatch``) to batch many diagnostics.
 
 Units (``--units electron|ion``) set the spatial + time normalisation, read
 automatically from the run directory (no hand-entered gyrotime):
@@ -42,10 +42,10 @@ Usage
     conda activate analysis
 
     # interactive: browse a whole run in ion units
-    python scripts/make_movie.py -d /path/to/run/MS --units ion
+    python scripts/osiris_make_movie.py -d /path/to/run/MS --units ion
 
     # non-interactive: one diagnostic, cropped, for sbatch
-    python scripts/make_movie.py -d /path/to/run/MS/FLD/b2-savg --no-interactive \\
+    python scripts/osiris_make_movie.py -d /path/to/run/MS/FLD/b2-savg --no-interactive \\
         --units ion --xlim 80 120 --vmin -0.1 --vmax 0.1 -s 4 -o b2_crop
 """
 

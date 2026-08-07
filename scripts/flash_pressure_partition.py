@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""scripts/run_flash_pressure_partition.py — momentum-flux (pressure) partition
+"""scripts/flash_pressure_partition.py — momentum-flux (pressure) partition
 for a MagShockZ FLASH run.
 
 Energy density is not conserved across a shock, so this reports the **momentum
@@ -22,7 +22,7 @@ the pure, unit-tested module ``src/flash_energy_partition.py`` (``momentum_fluxe
 
 Usage
 -----
-    python scripts/run_flash_pressure_partition.py \\
+    python scripts/flash_pressure_partition.py \\
         --config config/flash_3d_noshield.yaml \\
         [--snapshot-idx -1] \\
         [--x-shock-cm 0.185] \\

@@ -30,7 +30,7 @@ result is saved to an inspectable ``.npz`` whose schema is the
 
 Usage
 -----
-    python scripts/heating_decomposition.py --config config/<run>.yaml \\
+    python scripts/osiris_heating_decomposition.py --config config/<run>.yaml \\
         [--timestep-idx -1] [--no-plot] [--half-window 250] [--output ...] [--output-dir ...]
 """
 

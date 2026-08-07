@@ -30,7 +30,7 @@ inspectable ``.npz`` whose schema is the ``EnergyFluxResult`` dataclass below.
 
 Usage
 -----
-    python scripts/energy_flux.py --config config/<run>.yaml \\
+    python scripts/osiris_energy_flux.py --config config/<run>.yaml \\
         [--timestep-idx -1] [--no-plot] [--output ...] [--output-dir ...]
 """
 

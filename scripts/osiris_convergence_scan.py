@@ -1,4 +1,4 @@
-"""scripts/convergence_scan.py — upstream anomalous-heating convergence scan.
+"""scripts/osiris_convergence_scan.py — upstream anomalous-heating convergence scan.
 
 The science question this answers: how low can the resolution (dx) and particle
 count (ppc) go before the cold UPSTREAM plasma starts to heat *anomalously* --
@@ -31,7 +31,7 @@ under results/convergence/.
 
 Usage
 -----
-    python scripts/convergence_scan.py \\
+    python scripts/osiris_convergence_scan.py \\
         [--glob 'input_files/magshockz_rqm100_dx*_ppc500_g20.1d'] \\
         [--stride 4] [--up-lo 0.55] [--up-hi 0.90] [--output-dir DIR]
 

@@ -2,7 +2,7 @@
 """scripts/flash_experiment_compare.py — experimental streaked shadowgraphy vs FLASH nₑ.
 
 The streak camera records one spatial axis (mm) against time (ns) — the same layout
-as the FLASH nₑ streak that ``scripts/tune_flash_shock.py`` draws from LOS line-outs.
+as the FLASH nₑ streak that ``scripts/flash_tune_shock.py`` draws from LOS line-outs.
 
 **The experimental image's axes are the reference frame.**  Everything is plotted in
 its own ns and mm; the image is never stretched or resampled into simulation units.

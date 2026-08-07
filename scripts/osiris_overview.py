@@ -1,4 +1,4 @@
-"""scripts/overview.py — general overview of a MagShockZ OSIRIS shock run.
+"""scripts/osiris_overview.py — general overview of a MagShockZ OSIRIS shock run.
 
 Time-space "streak" plots (time on the horizontal axis, space on the vertical)
 for the quantities that track a collisionless shock front:
@@ -8,7 +8,7 @@ for the quantities that track a collisionless shock front:
     T_i   ion temperature (parallel)  [m_e c^2]
 
 The config's linear shock-front trajectory (x_shock = x_shock_0 + v_shock * t_sim,
-tuned with scripts/tune_shock.py) is overlaid on every streak so the chosen
+tuned with scripts/osiris_tune_shock.py) is overlaid on every streak so the chosen
 velocity can be eyeballed against the compression ridge directly.  On top of that
 line, each bespoke per-dump position from cfg["dump_params"] (the x_shock /
 x_downstream_start hand-tuned in tune_shock.py regions mode) is marked at its own
@@ -30,7 +30,7 @@ overlay comes straight from cfg["shock"] = {v_shock, x_shock_0}.
 
 Usage
 -----
-    python scripts/overview.py --config config/perlmutter_1.3.1d.yaml \\
+    python scripts/osiris_overview.py --config config/perlmutter_1.3.1d.yaml \\
         [--stride 16] [--t-start 0] [--t-stop 512] \\
         [--snapshot-idx -1] [--output-dir DIR]
 """
@@ -54,7 +54,7 @@ from magshockz.common import plot_style
 import osh5def
 from magshockz.common.analysis_utils import axis_values, diag_path
 # Streak frame-builders + assembly are single-sourced in src/streak.py (shared with
-# scripts/tune_shock.py), so the front overlay is tuned against identical data.
+# scripts/osiris_tune_shock.py), so the front overlay is tuned against identical data.
 from magshockz.analysis.osiris.streak import bmag_frame, density_frame, temperature_frame, assemble_streak
 
 ME_C2_EV = 510998.95  # electron rest energy [eV]; T[eV] = T[m_e c^2] * ME_C2_EV
@@ -242,7 +242,7 @@ def main():
     # ------------------------------------------------------------------
     # Shock-front trajectory from the tuned config (no auto-detection).  The
     # front is x_shock(t) = x_shock_0 + v_shock * t with the values set in the
-    # config via scripts/tune_shock.py; that single tuned line is overlaid on the
+    # config via scripts/osiris_tune_shock.py; that single tuned line is overlaid on the
     # streaks so it can be eyeballed against the compression ridge directly.
     # ------------------------------------------------------------------
     x_config = x_shock_0 + v_shock_cfg * time_f
@@ -270,7 +270,7 @@ def main():
     # ------------------------------------------------------------------
     # Per-dump tuned markers.  cfg["dump_params"].<idx> holds the hand-fit front
     # (x_shock) and downstream-region edge (x_downstream_start) set with
-    # scripts/tune_shock.py (regions mode) for specific dumps.  OSIRIS dump time
+    # scripts/osiris_tune_shock.py (regions mode) for specific dumps.  OSIRIS dump time
     # is linear in the dump index, so map index -> t_sim from the loaded field
     # frames and place each marker at its own simulation time (data coords, so it
     # overlays correctly on any panel regardless of that panel's grid).  Dumps

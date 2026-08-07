@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""scripts/spitzer_resistivity.py — map the Spitzer resistivity of a flash2warpx slice.
+"""scripts/warpx_spitzer_resistivity.py — map the Spitzer resistivity of a flash2warpx slice.
 
 WarpX's hybrid (Ohm's-law) solver takes a single scalar ``run.plasma_resistivity`` [Ohm*m]
 (magnetic diffusivity ``D_m = eta / mu0``).  The physically-motivated value is the Spitzer
@@ -21,7 +21,7 @@ Runs in the ``analysis`` env (needs plasmapy for ``src/spitzer_resistivity.py``)
 Usage
 -----
     conda activate analysis
-    python scripts/spitzer_resistivity.py input_files/warpx/magshockz_2d_prod \\
+    python scripts/warpx_spitzer_resistivity.py input_files/warpx/magshockz_2d_prod \\
         [--config runs/magshockz_2d_production.warpx.yaml] \\
         [--density-floor-frac 1e-3] [--ion Si] [--output-dir results/warpx/<tree>] [--pub]
 """

@@ -2,7 +2,7 @@
 
 The MagShockZ streaked-shadowgraphy data arrives as a *streak image*: one spatial
 axis (mm) against time (ns), the same layout as the FLASH nₑ streak that
-``scripts/flash_overview.py`` / ``scripts/tune_flash_shock.py`` assemble from
+``scripts/flash_overview.py`` / ``scripts/flash_tune_shock.py`` assemble from
 line-outs.  Two jobs live here, both pure array/number work:
 
 1. **Crop** — the shot-3 PNG is a *decorated* matplotlib figure (axes, ticks and

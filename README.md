@@ -41,7 +41,7 @@ python -m flash_osiris.generator --config runs/perlmutter_1d.run.yaml
 
 # Run an analysis script
 conda activate analysis
-python scripts/overview.py --config config/perlmutter_1.3.1d.yaml
+python scripts/osiris_overview.py --config config/perlmutter_1.3.1d.yaml
 
 # Tests (CI): pip install numpy scipy unyt pyyaml pytest pytest-cov
 pytest

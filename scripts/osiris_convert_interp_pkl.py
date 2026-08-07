@@ -1,4 +1,4 @@
-"""scripts/convert_interp_pkl_to_npy.py — migrate legacy interp/*.pkl to *.npy.
+"""scripts/osiris_convert_interp_pkl.py — migrate legacy interp/*.pkl to *.npy.
 
 Older runs stored each field as a pickled scipy RegularGridInterpolator.  Those
 pickles break across scipy versions (the internal grid attribute was renamed), and
@@ -8,7 +8,7 @@ calls the interpolator, so it works even when the pickle is otherwise unusable) 
 writes the matching .npy, letting an existing run be re-run without regenerating the
 slices from FLASH.
 
-Usage:  python scripts/convert_interp_pkl_to_npy.py <run_dir> [<run_dir> ...]
+Usage:  python scripts/osiris_convert_interp_pkl.py <run_dir> [<run_dir> ...]
 """
 import pickle
 import sys

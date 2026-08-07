@@ -30,7 +30,7 @@ dataclass below.
 
 Usage
 -----
-    python scripts/synthetic_diagnostics.py --config config/<run>.yaml \\
+    python scripts/osiris_synthetic_diagnostics.py --config config/<run>.yaml \\
         [--timestep-idx -1] [--resolution-um 50] [--no-plot] \\
         [--half-window 300] [--output ...] [--output-dir ...]
 """

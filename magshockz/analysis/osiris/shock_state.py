@@ -102,7 +102,7 @@ def load_shock_state(cfg: dict, timestep_idx: int = -1,
     config (default 200 cells each, measured from ``x_shock``).
 
     The shock-frame boost velocity is the tuned config ``shock.v_shock`` (set with
-    ``scripts/tune_shock.py``), used directly — there is no auto-fit of the front
+    ``scripts/osiris_tune_shock.py``), used directly — there is no auto-fit of the front
     trajectory; ``x_shock`` likewise comes from the config (per-dump override or the
     ``x_shock_0 + v_shock*t_sim`` formula in ``resolve_dump_params``).
     """

@@ -46,12 +46,12 @@ python -m flash_osiris.generator --config runs/perlmutter_1d.run.yaml
 
 # Run an analysis script (config-driven; see each script's module docstring)
 conda activate analysis
-python scripts/overview.py --config config/perlmutter_1.3.1d.yaml [--stride 16 ...]
+python scripts/osiris_overview.py --config config/perlmutter_1.3.1d.yaml [--stride 16 ...]
 
 # Interactively tune the config's shock params, then write them back (comments
 # preserved). Each command re-renders results/<run>/tune_*.png to refresh in your IDE.
-python scripts/tune_shock.py --config config/perlmutter_1.3.1d.yaml          # v_shock/x_shock_0
-python scripts/tune_shock.py --config ...yaml --mode regions --dump 400      # per-dump x_shock/x_downstream_start
+python scripts/osiris_tune_shock.py --config config/perlmutter_1.3.1d.yaml          # v_shock/x_shock_0
+python scripts/osiris_tune_shock.py --config ...yaml --mode regions --dump 400      # per-dump x_shock/x_downstream_start
 
 # FLASH analog of tune_shock: place the FLASH front by hand on physical-unit (µm/ns)
 # line-outs, then feed it to flash_rh_prediction.py. trajectory mode writes
@@ -64,8 +64,8 @@ python scripts/tune_shock.py --config ...yaml --mode regions --dump 400      # p
 # regions mode also shows a 2D n_e SlicePlot through the LOS, sharing the LOS-distance
 # axis with the line-outs so the shock/downstream markers fall over the 2D density jump
 # (--slice-axis {x,y,z}, --slice-halfwidth-um <transverse window>, --no-slice to skip).
-python scripts/tune_flash_shock.py --config config/flash_3d_noshield.yaml                  # v_shock_est/x_shock_0/t_shock_0 on n_e/|B| streak
-python scripts/tune_flash_shock.py --config ...yaml --mode regions --snapshot-idx -1       # per-dump x_shock_cm/x_downstream_start_cm (+ slice)
+python scripts/flash_tune_shock.py --config config/flash_3d_noshield.yaml                  # v_shock_est/x_shock_0/t_shock_0 on n_e/|B| streak
+python scripts/flash_tune_shock.py --config ...yaml --mode regions --snapshot-idx -1       # per-dump x_shock_cm/x_downstream_start_cm (+ slice)
 
 # Experimental streaked shadowgraphy vs FLASH n_e, drawn in the IMAGE's own ns/mm axes
 # (never rescaled — the shorter simulation is translated onto them and the image cropped):
@@ -80,8 +80,8 @@ python scripts/flash_experiment_compare.py --config ...yaml --t-offset-ns 2.5 --
 # Quick MP4 movie of a diagnostic (analysis env; --units electron|ion sets axis/time
 # normalization read from the run dir; crop bounds are physical values in that unit;
 # --config uses the tuned upstream region for ion T_ci instead of the whole box)
-python scripts/make_movie.py -d <run>/MS --units ion --config config/<run>.yaml  # interactive
-python scripts/make_movie.py -d <run>/MS/FLD/b2-savg --no-interactive \
+python scripts/osiris_make_movie.py -d <run>/MS --units ion --config config/<run>.yaml  # interactive
+python scripts/osiris_make_movie.py -d <run>/MS/FLD/b2-savg --no-interactive \
     --units ion --config config/<run>.yaml --xlim 80 120 --log -s 4 -o b2   # headless
 
 # 3D volume-rendered FLASH movies (analysis env; compute node — see the .sbatch).
@@ -279,7 +279,7 @@ them. MagShockZ keeps only the MagShockZ-specific run assets, mirroring the OSIR
 The generic package (extractor/run/`viz/` diagnostics, the `examples/magshockz_2d.yaml`
 usage example, docs) stays in flash2warpx. Check a slice resolves the ion skin depth with
 `python -m flash_warpx.resolution input_files/warpx/<tree> [--dx <sim_dx_m>]` (pure numpy;
-`analysis` env). The MagShockZ-side Spitzer resistivity tool (`scripts/spitzer_resistivity.py`,
+`analysis` env). The MagShockZ-side Spitzer resistivity tool (`scripts/warpx_spitzer_resistivity.py`,
 `src/spitzer_resistivity.py`) reads these trees to pick `run.plasma_resistivity`.
 
 ### WarpX heater-driven piston runs: `schema: heater_pic_2d` (no FLASH extraction)
@@ -596,7 +596,7 @@ coordinates, `disp.xlabel()` / `disp.tlabel()` / `disp.time_title()` give labels
 is numpy-only and unit-tested (`tests/test_plot_style.py`); `build_units`' ion path imports
 `analysis_utils` lazily. `T_ci` needs the upstream `|B'|`: it is read from the config's
 cached top-level `t_ci` key when present, else measured from the field. That `t_ci` is
-written **for free** by `scripts/tune_shock.py` (trajectory mode) — it already loads the t=0
+written **for free** by `scripts/osiris_tune_shock.py` (trajectory mode) — it already loads the t=0
 upstream field for `v_A`/`M_A`, so it computes `T_ci = ion_gyroperiod(|rqm_i|, |B'|)` there
 and includes it in the `save` write-back — so every `--units ion` run reads one consistent
 cached value (`make_movie.py` honours it too).

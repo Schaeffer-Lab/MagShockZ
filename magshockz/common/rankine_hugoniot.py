@@ -25,7 +25,7 @@ All speeds are in units of the upstream normal inflow speed ``u1`` and densities
 in units of ``rho1`` while solving, so the core is **unit-agnostic**: it takes
 Mach numbers and works unchanged in OSIRIS-normalised units, CGS, or SI.  The
 convenience wrapper :func:`solve_jump` builds the Mach numbers from upstream
-primitives in the same convention as ``scripts/dimensionless_params.py``.
+primitives in the same convention as ``scripts/osiris_dimensionless_params.py``.
 
 Adiabatic index ``gamma``
 -------------------------
@@ -235,7 +235,7 @@ def solve_jump(
     """Oblique-MHD downstream state from upstream primitives (OSIRIS units).
 
     Mirrors the upstream-quantity conventions of
-    ``scripts/dimensionless_params.py``::
+    ``scripts/osiris_dimensionless_params.py``::
 
         c_s = sqrt( gamma * (T_e + T_i) / |rqm_i| )      [c]
         v_A = sqrt( B^2 / (|rqm_i| * n_e) )              [c]   (total field)

@@ -201,7 +201,7 @@ def build_units(units, *, cfg=None, sim_dir=None, config_path=None) -> DisplayUn
     ``electron`` is the identity mapping.  ``ion`` needs the ion mass-per-charge
     ``|rqm_i|`` (from the run's deck) for ``d_i = sqrt(|rqm_i|)`` and the upstream ion
     gyroperiod ``T_ci``.  ``T_ci`` is taken from the config's cached ``t_ci`` key when
-    present (written for free by ``scripts/tune_shock.py`` at t=0); otherwise it is
+    present (written for free by ``scripts/osiris_tune_shock.py`` at t=0); otherwise it is
     measured from the field — over the config's tuned upstream region when a config is
     given (``analysis_utils.upstream_field_magnitude``), else the whole box at t=0.
 

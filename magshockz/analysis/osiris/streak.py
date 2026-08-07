@@ -7,7 +7,7 @@ They are I/O orchestration (they pull in ``osh5io`` / ``osh5def`` /
 ``analysis_utils``), so this module is NOT part of the dependency-light, CI-tested
 pure-function layer — it only composes the loaders in ``analysis_utils`` with the
 pure ``temperature_anisotropy`` moment.  Shared single source of truth for both
-``scripts/overview.py`` (streak figures) and ``scripts/tune_shock.py`` (the
+``scripts/osiris_overview.py`` (streak figures) and ``scripts/osiris_tune_shock.py`` (the
 interactive trajectory tuner) so the front overlay is drawn against identical data.
 """
 

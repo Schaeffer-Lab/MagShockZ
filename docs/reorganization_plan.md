@@ -44,7 +44,7 @@ deliberately places OSIRIS physics such as `rankine_hugoniot` in `common/`, beca
 |---|---|
 | `common/` | `run_spec` `yaml_edit` `plot_style` `flash_utils` `flash_source` `moments` `dimensionless_params` `energy_partition` `perpendicular_shock` `rankine_hugoniot` `temperature_anisotropy` `piston_profile` `heater_piston_scaling` |
 | `init/warpx/` | `units` `config` `deck` `calibration` (from `src/warpx/`) |
-| `init/osiris/` | validation logic lifted out of `scripts/validate_init.py` |
+| `init/osiris/` | validation logic lifted out of `scripts/osiris_validate_init.py` |
 | `analysis/flash/` | `experiment_image` `flash_energy_partition` `shock` |
 | `analysis/osiris/` | `shock_state` `streak` `reflected_ions` `cross_shock_potential` `field_particle_correlation` `energy_flux` `synthetic_diagnostics` |
 | `analysis/warpx/` | `spitzer_resistivity`, plus new `flash` `metrics` `plotting` (Phase 5) |
@@ -154,7 +154,7 @@ Unchanged: the seven already-prefixed `flash_*.py`, `warpx_heater_compare.py`,
 reads its deck and `run_env.sh` from `input_files/warpx/…` at runtime. Therefore:
 
 - `init_warpx/` and `input_files/` do **not** move this round.
-- `scripts/make_warpx_deck.py` stays as a one-line forwarding shim to
+- `scripts/warpx_make_deck.py` stays as a one-line forwarding shim to
   `warpx_make_deck.py`, because the sbatch's help text and the `--verify` loop name it.
 - Old script names remain as forwarding shims until the job completes, then are deleted
   in a single follow-up commit.

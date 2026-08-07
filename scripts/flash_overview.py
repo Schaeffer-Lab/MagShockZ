@@ -2,7 +2,7 @@
 """scripts/flash_overview.py — general overview of a MagShockZ FLASH shock run.
 
 Produces two figures and a data archive that mirror the output of
-scripts/overview.py for the OSIRIS run, but in physical units throughout:
+scripts/osiris_overview.py for the OSIRIS run, but in physical units throughout:
 
   Figure 1 — time-space streak plots (time [ns] horizontal, distance [µm] vertical):
     nₑ     electron number density   [cm⁻³]

@@ -1,4 +1,4 @@
-"""scripts/validate_init.py — does the OSIRIS initial condition match FLASH?
+"""scripts/osiris_validate_init.py — does the OSIRIS initial condition match FLASH?
 
 The flash2osiris generation pipeline writes interp/*.npy slices of the FLASH
 midplane plus a py-script that OSIRIS calls to fill the fields/particles at t=0.
@@ -13,7 +13,7 @@ lineout (rotated into OSIRIS components), so the two curves must coincide.  A
 mismatch means the deck and the py-script disagree about how OSIRIS coordinates
 map onto the FLASH plane.
 
-Usage:  python scripts/validate_init.py <run_dir>
+Usage:  python scripts/osiris_validate_init.py <run_dir>
 """
 import argparse
 import glob
