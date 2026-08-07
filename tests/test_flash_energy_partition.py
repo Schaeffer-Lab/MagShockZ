@@ -396,3 +396,69 @@ class TestPartitionSummary:
         result = self._make_result()
         summary = fep.partition_summary(result)
         assert "Upstream" in summary or "upstream" in summary.lower()
+
+
+# ---------------------------------------------------------------------------
+# heating_partition — downstream heating and its electron/ion split
+# ---------------------------------------------------------------------------
+# MHD hands ONE T2/T1 to both species; FLASH's 3T model splits them itself. The
+# excess over the single-T baseline is what that transport did.
+
+def _heating(**over):
+    args = dict(Te_up=10.0, Ti_up=10.0, Te_dn=40.0, Ti_dn=25.0,
+                ne_up=1.0e18, ni_up=3.0e17, ne_dn=3.0e18, ni_dn=9.0e17,
+                T_factor=2.0)
+    args.update(over)
+    return fep.heating_partition(**args)
+
+
+def test_purely_adiabatic_heating_has_zero_excess():
+    """T_dn exactly T_factor*T_up is the baseline itself, so nothing is left over."""
+    r = _heating(Te_dn=20.0, Ti_dn=20.0)
+    assert r["electron"]["anomalous"] == pytest.approx(0.0)
+    assert r["ion"]["anomalous"] == pytest.approx(0.0)
+    assert r["electron"]["anomalous_frac"] == pytest.approx(0.0)
+
+
+def test_excess_is_measured_minus_adiabatic_per_species():
+    r = _heating()
+    assert r["electron"]["adiabatic"] == pytest.approx(20.0)   # 10 * 2
+    assert r["electron"]["anomalous"] == pytest.approx(20.0)   # 40 - 20
+    assert r["electron"]["total_heating"] == pytest.approx(30.0)   # 40 - 10
+    assert r["ion"]["anomalous"] == pytest.approx(5.0)         # 25 - 20
+    assert r["ion"]["anomalous_frac"] == pytest.approx(5.0 / 15.0)
+
+
+def test_species_shares_of_the_energy_gained_sum_to_one():
+    r = _heating()
+    assert r["f_e"] + r["f_i"] == pytest.approx(1.0)
+
+
+def test_energy_shares_use_each_species_own_density():
+    """The electron and ion shares must not be read off the temperatures: they
+    weight by (3/2) n kT, and n_e / n_ion differ (Zbar), so the two views can
+    disagree — which is the point of reporting both."""
+    r = _heating()
+    assert r["du_th_e"] == pytest.approx(1.5 * (3.0e18 * 40.0 - 1.0e18 * 10.0))
+    assert r["du_th_i"] == pytest.approx(1.5 * (9.0e17 * 25.0 - 3.0e17 * 10.0))
+    # electrons got hotter by 4x and ions by 2.5x, yet the energy split is not 4:2.5
+    assert r["f_e"] > r["f_i"]
+    assert r["f_e"] != pytest.approx(30.0 / 45.0)
+
+
+def test_cooling_gives_a_negative_excess_not_an_error():
+    """A ray whose downstream is COOLER than the adiabatic baseline is a real
+    (radiatively cooled / conduction-drained) outcome, not a failure."""
+    r = _heating(Te_dn=15.0)
+    assert r["electron"]["anomalous"] == pytest.approx(-5.0)
+
+
+def test_zero_total_gain_reports_nan_rather_than_dividing_by_zero():
+    r = _heating(Te_dn=10.0, Ti_dn=10.0, ne_dn=1.0e18, ni_dn=3.0e17)
+    assert np.isnan(r["f_e"]) and np.isnan(r["f_i"])
+
+
+def test_heating_summary_names_both_species_and_the_baseline():
+    text = fep.heating_summary(_heating())
+    assert "electrons" in text and "ions" in text
+    assert "2.000" in text          # the T2/T1 it was handed

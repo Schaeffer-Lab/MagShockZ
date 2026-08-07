@@ -359,3 +359,111 @@ def continuity_summary(check: dict, unit: str = "dyn/cm²") -> str:
         f"({100 * check['rel_imbalance']:+.1f}%)",
         sep,
     ])
+
+
+def heating_partition(*, Te_up, Ti_up, Te_dn, Ti_dn,
+                      ne_up, ni_up, ne_dn, ni_dn, T_factor) -> dict:
+    """Downstream heating per species, and how it splits between electrons and ions.
+
+    Single-fluid MHD predicts ONE temperature jump ``T_factor`` and applies it to
+    both species alike — it does not predict the electron/ion split at all.  FLASH
+    runs 3T and *does* evolve T_e and T_i separately, with its own electron-ion
+    coupling and thermal conduction, so what this measures is FLASH's split against
+    the single-temperature adiabatic baseline.  The departure from that baseline is
+    what FLASH's non-ideal transport did, and it is the MHD-side prediction a
+    kinetic (PIC) run would be compared against.  It is NOT a kinetic anomalous
+    heating measurement, and should not be quoted as one.
+
+    Both the temperature view and the energy view are returned, because they answer
+    different questions.  ``T_e``/``T_i`` say how hot each species got; the thermal
+    energy densities ``(3/2) n kT`` say which species absorbed more of the energy,
+    and those disagree whenever the compression differs from n_e to n_ion (that is,
+    whenever Zbar changes across the front).
+
+    Parameters
+    ----------
+    Te_up, Ti_up, Te_dn, Ti_dn :
+        Region-averaged temperatures as energies kT.  Bare floats in eV, or unyt
+        quantities; whatever goes in comes back out.
+    ne_up, ni_up, ne_dn, ni_dn :
+        Matching electron and total-ion number densities.
+    T_factor : float
+        Adiabatic downstream/upstream temperature ratio from the RH solution
+        (``perpendicular_shock.solve``'s ``T_ratio``).
+
+    Returns
+    -------
+    dict
+        ``electron`` / ``ion`` : the :func:`rankine_hugoniot.anomalous_heating`
+        split for that species, plus ``T_up``, ``T_dn`` and the measured ratio
+        ``T_dn/T_up``.
+        ``u_th_e_up`` / ``u_th_e_dn`` / ``u_th_i_up`` / ``u_th_i_dn`` : thermal
+        energy densities (3/2) n kT.
+        ``du_th_e`` / ``du_th_i`` : downstream minus upstream, i.e. the thermal
+        energy density each species gained.
+        ``f_e`` / ``f_i`` : each species' share of the total thermal energy gained.
+        ``T_factor`` : echoed back.
+    """
+    electron = rh.anomalous_heating(float(Te_dn), float(Te_up), T_factor)
+    ion = rh.anomalous_heating(float(Ti_dn), float(Ti_up), T_factor)
+    electron.update(T_up=float(Te_up), T_dn=float(Te_dn),
+                    T_ratio_measured=_ratio(float(Te_dn), float(Te_up)))
+    ion.update(T_up=float(Ti_up), T_dn=float(Ti_dn),
+               T_ratio_measured=_ratio(float(Ti_dn), float(Ti_up)))
+
+    u_th_e_up = 1.5 * ne_up * Te_up
+    u_th_e_dn = 1.5 * ne_dn * Te_dn
+    u_th_i_up = 1.5 * ni_up * Ti_up
+    u_th_i_dn = 1.5 * ni_dn * Ti_dn
+    du_e = u_th_e_dn - u_th_e_up
+    du_i = u_th_i_dn - u_th_i_up
+    du_total = du_e + du_i
+
+    return {
+        "electron": electron,
+        "ion": ion,
+        "u_th_e_up": u_th_e_up, "u_th_e_dn": u_th_e_dn,
+        "u_th_i_up": u_th_i_up, "u_th_i_dn": u_th_i_dn,
+        "du_th_e": du_e, "du_th_i": du_i, "du_th_total": du_total,
+        "f_e": _ratio(float(du_e), float(du_total)),
+        "f_i": _ratio(float(du_i), float(du_total)),
+        "T_factor": T_factor,
+    }
+
+
+def _ratio(numerator: float, denominator: float) -> float:
+    """``numerator/denominator``, or nan when the denominator vanishes."""
+    return numerator / denominator if denominator else float("nan")
+
+
+def heating_summary(result: dict, t_unit: str = "eV",
+                    u_unit: str = "erg/cm³") -> str:
+    """Return a formatted table from :func:`heating_partition` output."""
+    sep = "-" * 72
+    lines = [
+        sep,
+        f"  Downstream heating vs the adiabatic MHD baseline "
+        f"(T2/T1 = {result['T_factor']:.3f})",
+        sep,
+        f"  {'species':<10}{'T_up':>11}{'T_dn meas':>12}{'T_dn adiab':>12}"
+        f"{'excess':>11}{'excess/tot':>12}",
+    ]
+    for name, key in (("electrons", "electron"), ("ions", "ion")):
+        s = result[key]
+        lines.append(
+            f"  {name:<10}{s['T_up']:>11.3g}{s['T_dn']:>12.3g}"
+            f"{s['adiabatic']:>12.3g}{s['anomalous']:>11.3g}"
+            f"{s['anomalous_frac']:>11.1%} ")
+    lines += [
+        f"  (temperatures in {t_unit}; MHD applies ONE T2/T1 to both species, so the",
+        "   excess is what FLASH's 3T transport did, not a kinetic measurement)",
+        sep,
+        f"  thermal energy density gained across the front [{u_unit}]",
+        f"    electrons  {float(result['du_th_e']):>12.4g}   "
+        f"({result['f_e']:.1%} of the total)",
+        f"    ions       {float(result['du_th_i']):>12.4g}   "
+        f"({result['f_i']:.1%} of the total)",
+        f"    total      {float(result['du_th_total']):>12.4g}",
+        sep,
+    ]
+    return "\n".join(lines)

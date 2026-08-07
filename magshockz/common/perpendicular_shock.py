@@ -155,6 +155,26 @@ def pressure_ratio(r: float, mach_s: float, mach_a: float,
     return 1.0 + gamma * mach_s ** 2 * (1.0 - 1.0 / r) + inv_beta * (1.0 - r ** 2)
 
 
+def magnetosonic_mach(mach_s: float, mach_a: float) -> float:
+    """Fast magnetosonic Mach number at theta_Bn = 90 deg.
+
+    The perpendicular fast speed is ``v_ms = sqrt(v_A^2 + c_s^2)``, so
+
+        1/M_ms^2 = 1/M_s^2 + 1/M_A^2
+
+    and no speeds are needed — the two Mach numbers already carry it.  This is the
+    Mach number that decides whether a shock forms (``M_ms > 1`` is exactly
+    :func:`shock_exists`) and the one to compare against the ~2.76 critical Mach
+    number for ion reflection; ``M_A`` is not.
+    """
+    inv_sq = 0.0
+    if np.isfinite(mach_s) and mach_s > 0.0:
+        inv_sq += 1.0 / mach_s**2
+    if np.isfinite(mach_a) and mach_a > 0.0:
+        inv_sq += 1.0 / mach_a**2
+    return float("inf") if inv_sq <= 0.0 else 1.0 / np.sqrt(inv_sq)
+
+
 def solve(mach_s: float, mach_a: float, gamma: float = GAMMA_DEFAULT) -> dict:
     """Full perpendicular-shock jump from the two upstream Mach numbers.
 
@@ -167,6 +187,7 @@ def solve(mach_s: float, mach_a: float, gamma: float = GAMMA_DEFAULT) -> dict:
         beta1      : upstream plasma beta
         mach_s     : sonic Mach number (echoed back)
         mach_a     : Alfvenic Mach number (echoed back)
+        mach_ms    : fast magnetosonic Mach number (> 1 iff a shock forms)
         exists     : whether a compressive shock forms
     """
     exists = shock_exists(mach_s, mach_a, gamma)
@@ -179,6 +200,7 @@ def solve(mach_s: float, mach_a: float, gamma: float = GAMMA_DEFAULT) -> dict:
         "beta1": plasma_beta(mach_s, mach_a, gamma) if np.isfinite(mach_a) else float("inf"),
         "mach_s": mach_s,
         "mach_a": mach_a,
+        "mach_ms": magnetosonic_mach(mach_s, mach_a),
         "exists": exists,
     }
 
@@ -197,6 +219,7 @@ def solve_from_speeds(v_inflow: float, c_s: float, v_A: float,
     out = solve(mach_s, mach_a, gamma)
     out["c_s"] = c_s
     out["v_A"] = v_A
+    out["v_ms"] = np.sqrt(v_A**2 + c_s**2)
     out["v_inflow"] = v_inflow
     return out
 
@@ -303,7 +326,7 @@ def solve_from_upstream(*, ne, Te, n_ion, Ti, B_perp, rho, v_shock,
         v_inflow = |v_shock - v_para|            shock-frame normal inflow
         theta_bn = atan2(|B_perp|, |B_para|)     obliquity (diagnostic only)
 
-    Returns the :func:`solve` dict augmented with ``c_s``, ``v_A``,
+    Returns the :func:`solve` dict augmented with ``c_s``, ``v_A``, ``v_ms``,
     ``v_inflow`` (and ``theta_bn`` when ``B_para`` is given).  The jump itself
     is the theta = 90 deg perpendicular solution; theta_bn is reported only so
     you can see how perpendicular the data actually is.
@@ -320,6 +343,7 @@ def solve_from_upstream(*, ne, Te, n_ion, Ti, B_perp, rho, v_shock,
     out = solve(_ratio(v_inflow, c_s), _ratio(v_inflow, v_A), gamma)
     out["c_s"] = c_s
     out["v_A"] = v_A
+    out["v_ms"] = np.sqrt(v_A**2 + c_s**2)
     out["v_inflow"] = v_inflow
     if B_para is not None:
         out["theta_bn"] = float(np.arctan2(abs(float(B_perp)), abs(float(B_para))))
@@ -358,3 +382,52 @@ def predict_downstream(jump: dict, *, rho1=None, p1=None, B_perp1=None,
     if v_inflow is not None:
         out["v_inflow"] = v_inflow / r
     return out
+
+
+def effective_gamma(r_measured: float, upstream: dict,
+                    bounds: tuple = (1.02, 1.95)) -> float:
+    """Adiabatic index whose perpendicular-RH solution reproduces ``r_measured``.
+
+    The gas-dynamic ceiling on compression is ``(gamma+1)/(gamma-1)`` — 4 at
+    gamma = 5/3 — so a measured compression above 4 cannot be explained by an ideal
+    gamma = 5/3 shock at any Mach number.  These FLASH shocks are **ionizing**
+    (Zbar roughly doubles across the front), and the energy going into ionization is
+    energy not going into thermal pressure, which shows up as a softer effective
+    index and a higher compression.  Solving for that index turns the discrepancy
+    into a number instead of leaving it as a caveat.
+
+    Gamma enters twice — through the jump relations and through the sound speed that
+    sets M_s — so the whole upstream state is re-solved at each trial gamma rather
+    than the Mach numbers being held fixed.
+
+    Parameters
+    ----------
+    r_measured :
+        Measured mass compression rho_dn/rho_up.
+    upstream :
+        Keyword arguments for :func:`solve_from_upstream` **without** ``gamma``
+        (``ne``, ``Te``, ``n_ion``, ``Ti``, ``B_perp``, ``rho``, ``v_shock``, ...).
+    bounds :
+        Bracket to search.  The lower end is near the isothermal limit; the upper is
+        just under 2 (a 2-degree-of-freedom gas).
+
+    Returns
+    -------
+    float
+        The effective index, or nan when ``r_measured`` is not attainable anywhere in
+        ``bounds`` (which is itself informative: no single-fluid index describes that
+        jump).
+    """
+    from scipy.optimize import brentq
+
+    def residual(gamma: float) -> float:
+        return solve_from_upstream(**upstream, gamma=gamma)["r"] - r_measured
+
+    lo, hi = bounds
+    try:
+        f_lo, f_hi = residual(lo), residual(hi)
+    except (ValueError, ZeroDivisionError):
+        return float("nan")
+    if not (np.isfinite(f_lo) and np.isfinite(f_hi)) or f_lo * f_hi > 0.0:
+        return float("nan")
+    return float(brentq(residual, lo, hi, xtol=1e-6))
