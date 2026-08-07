@@ -45,17 +45,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-from analysis_utils import axis_values
-import shock_state
-import rankine_hugoniot as rh
-import cross_shock_potential as csp
-import reflected_ions as ri
-import field_particle_correlation as fpc
-import energy_partition as ep
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common.analysis_utils import axis_values
+from magshockz.analysis.osiris import shock_state
+from magshockz.common import rankine_hugoniot as rh
+from magshockz.analysis.osiris import cross_shock_potential as csp
+from magshockz.analysis.osiris import reflected_ions as ri
+from magshockz.analysis.osiris import field_particle_correlation as fpc
+from magshockz.common import energy_partition as ep
 
 _BUDGET_KEYS = ("ram", "thermal_e", "thermal_i", "B_field", "E_field")
 

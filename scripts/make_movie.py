@@ -64,10 +64,9 @@ import osh5io
 import osh5vis
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import plot_style
-from analysis_utils import axis_values, load_config
+from magshockz.common import plot_style
+from magshockz.common.analysis_utils import axis_values, load_config
 
 
 # ---------------------------------------------------------------------------

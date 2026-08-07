@@ -59,16 +59,15 @@ import osh5io
 import astropy.units as u_ap
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import moments
-import temperature_anisotropy as ta
-import energy_partition as ep
-import flash_utils as fu
-import flash_energy_partition as fep
-from analysis_utils import axis_values, diag_path
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common import moments
+from magshockz.common import temperature_anisotropy as ta
+from magshockz.common import energy_partition as ep
+from magshockz.common import flash_utils as fu
+from magshockz.analysis.flash import flash_energy_partition as fep
+from magshockz.common.analysis_utils import axis_values, diag_path
 
 # m_e c^2 in eV and erg — the OSIRIS energy normalisation n_0 m_e c^2 -> erg/cm^3.
 ME_C2_EV = 510998.95
@@ -437,7 +436,7 @@ def main():
     rqm_factor = spec.rqm_factor or 1.0
     t_ci_wpe = cfg.get("t_ci")
     if t_ci_wpe is None:
-        from dimensionless_params import ion_gyroperiod
+        from magshockz.common.dimensionless_params import ion_gyroperiod
         t_ci_wpe = ion_gyroperiod(abs(run.rqm), analysis_utils.upstream_field_magnitude(cfg))
     t_ci_wpe = float(t_ci_wpe)
     T_ci_real_s = rqm_factor * t_ci_wpe / wpe_hz   # physical ion gyroperiod [s]

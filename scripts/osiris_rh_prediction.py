@@ -68,13 +68,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import shock_state
-import dimensionless_params as dp
-import perpendicular_shock as ps
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.analysis.osiris import shock_state
+from magshockz.common import dimensionless_params as dp
+from magshockz.common import perpendicular_shock as ps
 
 
 def _region_mean(profile, mask):
@@ -142,7 +141,7 @@ def main():
     # Ion bulk velocity profile [c] is not stored on ShockState as a full profile,
     # only its region means (prim_up/prim_dn["u_bulk_i"]).  Recompute it here from
     # the same p1x1 phase space the loader used, so we can plot |v_i - v_shock|.
-    import moments as mom_module
+    from magshockz.common import moments as mom_module
     u_bulk_i = mom_module.moment(st.pha_p1[ion], axis="p1", order=1)   # [c]
     v_sf = np.abs(u_bulk_i - st.v_shock)                              # shock-frame [c]
 

@@ -50,14 +50,13 @@ import osh5vis
 from matplotlib.colors import LogNorm
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-from analysis_utils import axis_values, diag_path
-from dimensionless_params import ion_gyroperiod
-from streak import bmag_frame, density_frame, assemble_streak
-import plot_style
-import yaml_edit
+from magshockz.common import analysis_utils
+from magshockz.common.analysis_utils import axis_values, diag_path
+from magshockz.common.dimensionless_params import ion_gyroperiod
+from magshockz.analysis.osiris.streak import bmag_frame, density_frame, assemble_streak
+from magshockz.common import plot_style
+from magshockz.common import yaml_edit
 
 
 # The interactive write-back plumbing (out_dir / confirm_write / …) is shared with

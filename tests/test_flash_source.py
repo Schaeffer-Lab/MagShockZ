@@ -4,21 +4,10 @@ flash_source is dependency-light (stdlib + run_spec) and never opens a dump:
 resolve() only ever handles paths and numbers, never opens a dump.
 """
 
-import importlib.util
-import os
-
 import pytest
 
+from magshockz.common import flash_source
 
-def _load(name):
-    path = os.path.join(os.path.dirname(__file__), "..", "src", f"{name}.py")
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-flash_source = _load("flash_source")
 resolve = flash_source.resolve
 
 LOS_START = [0, 0.07, 0]

@@ -215,8 +215,8 @@ def build_units(units, *, cfg=None, sim_dir=None, config_path=None) -> DisplayUn
     if units == "electron":
         return electron_units()
 
-    import analysis_utils
-    from dimensionless_params import ion_gyroperiod, ion_skin_depth
+    from magshockz.common import analysis_utils
+    from magshockz.common.dimensionless_params import ion_gyroperiod, ion_skin_depth
 
     run_dir = sim_dir if sim_dir is not None else (cfg["sim_dir"] if cfg else None)
     if run_dir is None:
@@ -272,7 +272,7 @@ def _wholebox_field_magnitude(sim_dir) -> float:
     import glob
     import os
     import osh5io
-    from analysis_utils import detect_layout, diag_path
+    from magshockz.common.analysis_utils import detect_layout, diag_path
 
     layout = detect_layout(sim_dir)
     b2_sum = None

@@ -61,14 +61,13 @@ import numpy as np
 import unyt
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import flash_source
-import yaml_edit
-import flash_utils as fu
-import perpendicular_shock as ps
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common import flash_source
+from magshockz.common import yaml_edit
+from magshockz.common import flash_utils as fu
+from magshockz.common import perpendicular_shock as ps
 
 
 def _load_shock_geometry(cfg, idx, out_dir, snapshot_idx, x_shock_cm, x_ds_start):

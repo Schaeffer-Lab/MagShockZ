@@ -20,10 +20,10 @@ from typing import Dict, Sequence
 import numpy as np
 import osh5io
 
-import analysis_utils
-from analysis_utils import axis_values
-import moments as mom_module
-import temperature_anisotropy as ta
+from magshockz.common import analysis_utils
+from magshockz.common.analysis_utils import axis_values
+from magshockz.common import moments as mom_module
+from magshockz.common import temperature_anisotropy as ta
 
 EMF_FIELDS = ("b1", "b2", "b3", "e1", "e2", "e3")
 

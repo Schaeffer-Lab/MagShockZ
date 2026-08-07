@@ -1,15 +1,10 @@
 """Tests for synthetic_diagnostics.py."""
 
-import importlib.util
-import os
 
 import numpy as np
 import pytest
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "synthetic_diagnostics.py")
-_spec = importlib.util.spec_from_file_location("synthetic_diagnostics", _PATH)
-sd = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(sd)
+from magshockz.analysis.osiris import synthetic_diagnostics as sd
 
 
 # ---------------------------------------------------------------------------

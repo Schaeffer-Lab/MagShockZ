@@ -9,7 +9,7 @@ import math
 import numpy as np
 import pytest
 
-from spitzer_resistivity import (
+from magshockz.analysis.warpx.spitzer_resistivity import (
     MU_0,
     magnetic_diffusivity,
     warpx_electron_temperature,

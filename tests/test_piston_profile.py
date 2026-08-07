@@ -7,7 +7,7 @@ failure points at the estimator rather than at a FLASH dump.
 import numpy as np
 import pytest
 
-import piston_profile as pp
+from magshockz.common import piston_profile as pp
 
 AMU_G = 1.66053906660e-24
 

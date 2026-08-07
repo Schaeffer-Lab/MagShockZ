@@ -51,17 +51,16 @@ import yt
 yt.set_log_level(50)   # suppress yt chatter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import unyt as u
 
-import analysis_utils
-import plot_style
-import flash_source
-import flash_utils as fu
-import shock
-import perpendicular_shock as ps
-import yaml_edit
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common import flash_source
+from magshockz.common import flash_utils as fu
+from magshockz.analysis.flash import shock
+from magshockz.common import perpendicular_shock as ps
+from magshockz.common import yaml_edit
 
 
 # ---------------------------------------------------------------------------

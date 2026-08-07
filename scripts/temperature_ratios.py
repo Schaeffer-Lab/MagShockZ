@@ -40,12 +40,11 @@ import numpy as np
 import osh5io
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-from analysis_utils import axis_values
-import temperature_anisotropy as ta
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common.analysis_utils import axis_values
+from magshockz.common import temperature_anisotropy as ta
 
 # The eight profiles whose upstream/downstream averages are stored (and bar-charted).
 _AVG_KEYS = ("T_par_e", "T_par_al", "T_perp_e", "T_perp_al",

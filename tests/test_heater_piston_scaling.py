@@ -9,7 +9,7 @@ is either derived consistently from them or flagged in ``warnings``.
 import numpy as np
 import pytest
 
-import heater_piston_scaling as hps
+from magshockz.common import heater_piston_scaling as hps
 
 
 def make_targets(**overrides) -> hps.PistonTargets:

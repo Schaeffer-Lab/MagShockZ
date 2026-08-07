@@ -38,7 +38,10 @@ import yaml
 
 # RunSpec — the single source of truth for a run's parameters — lives in its own
 # dependency-light module; re-exported here so analysis_utils.RunSpec keeps working.
-from run_spec import RunSpec, _parse_cli_flags  # noqa: F401
+from magshockz.common.run_spec import RunSpec, _parse_cli_flags  # noqa: F401
+
+# This module is magshockz/common/analysis_utils.py, so the repo root is two levels up.
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 # Fallback input-deck filename when neither the config nor the run spec names one.
 DEFAULT_INPUT_DECK = "magshockz_gpu.1d"
@@ -582,7 +585,7 @@ def default_output_path(output: Optional[str], sim_dir: str, stem: str, t_val: i
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
         return output
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    repo_root = REPO_ROOT
     run_name = os.path.basename(sim_dir.rstrip("/"))
     out_dir = os.path.join(repo_root, "results", run_name)
     os.makedirs(out_dir, exist_ok=True)

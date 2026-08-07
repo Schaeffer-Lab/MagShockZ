@@ -28,11 +28,10 @@ import sys
 import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-from warpx import config as spec_config
-from warpx import deck as deck_module
-from warpx import units
+from magshockz.init.warpx import config as spec_config
+from magshockz.init.warpx import deck as deck_module
+from magshockz.init.warpx import units
 
 
 def parse_args() -> argparse.Namespace:

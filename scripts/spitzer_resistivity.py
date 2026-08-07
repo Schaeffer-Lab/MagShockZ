@@ -38,10 +38,9 @@ import numpy as np
 import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import plot_style
-from spitzer_resistivity import spitzer_resistivity, magnetic_diffusivity, warpx_electron_temperature
+from magshockz.common import plot_style
+from magshockz.analysis.warpx.spitzer_resistivity import spitzer_resistivity, magnetic_diffusivity, warpx_electron_temperature
 
 EV_PER_K = 8.617333262e-5  # eV per Kelvin (k_B / e)
 

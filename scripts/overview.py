@@ -48,15 +48,14 @@ import osh5vis
 from matplotlib.colors import LogNorm
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
 import osh5def
-from analysis_utils import axis_values, diag_path
+from magshockz.common.analysis_utils import axis_values, diag_path
 # Streak frame-builders + assembly are single-sourced in src/streak.py (shared with
 # scripts/tune_shock.py), so the front overlay is tuned against identical data.
-from streak import bmag_frame, density_frame, temperature_frame, assemble_streak
+from magshockz.analysis.osiris.streak import bmag_frame, density_frame, temperature_frame, assemble_streak
 
 ME_C2_EV = 510998.95  # electron rest energy [eV]; T[eV] = T[m_e c^2] * ME_C2_EV
 

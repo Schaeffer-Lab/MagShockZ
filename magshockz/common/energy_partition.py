@@ -8,8 +8,8 @@ All energy densities are in OSIRIS simulation units (n_0 m_e c^2).
 
 import numpy as np
 
-import moments
-from analysis_utils import region_masks
+from magshockz.common import moments
+from magshockz.common.analysis_utils import region_masks
 
 
 def _momentum_axis_name(phase_space) -> str:

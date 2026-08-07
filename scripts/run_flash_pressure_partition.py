@@ -41,16 +41,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import unyt as u
 
-import analysis_utils
-import plot_style
-import flash_source
-import yaml_edit
-import flash_utils as fu
-import flash_energy_partition as fep
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common import flash_source
+from magshockz.common import yaml_edit
+from magshockz.common import flash_utils as fu
+from magshockz.analysis.flash import flash_energy_partition as fep
 
 # Momentum-flux (total-pressure) channels — the conserved RH quantity.
 CHANNELS = ["p_ram", "p_th_e", "p_th_i", "p_mag"]

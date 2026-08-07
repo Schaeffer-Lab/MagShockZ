@@ -31,6 +31,9 @@ import re
 import yaml
 
 # A "key:" line: leading indent, an identifier, a colon, then the remainder.
+# This module is magshockz/common/yaml_edit.py, so the repo root is two levels up.
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+
 _KEY_RE = re.compile(r"^(\s*)([A-Za-z0-9_]+):(.*)$")
 # Split a scalar line into (prefix up to & incl. the colon+space)(value)(trailing
 # whitespace + optional comment) so only the middle group is rewritten.
@@ -304,7 +307,7 @@ def out_dir(base_dir, override=None, *, cfg=None, config_path=None):
 
     ``override`` (the scripts' ``--output-dir``) beats both.
     """
-    repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    repo = REPO_ROOT
     cfg = cfg or {}
 
     if override:

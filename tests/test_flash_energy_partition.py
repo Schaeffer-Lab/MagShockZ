@@ -9,7 +9,7 @@ import pytest
 import unyt
 
 from conftest import make_phase_space  # noqa: F401 — triggers path setup
-import flash_energy_partition as fep
+from magshockz.analysis.flash import flash_energy_partition as fep
 
 
 # ---------------------------------------------------------------------------

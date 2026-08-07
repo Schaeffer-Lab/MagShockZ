@@ -42,12 +42,11 @@ from dataclasses import dataclass
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import shock_state
-import dimensionless_params as dp
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.analysis.osiris import shock_state
+from magshockz.common import dimensionless_params as dp
 
 _PARAM_KEYS = ("beta", "sigma", "v_A", "M_A", "c_s", "M_s", "T_e_Ti", "d_i")
 

@@ -16,7 +16,7 @@ here stays unambiguous.  Everything is in OSIRIS normalised units.
 
 import numpy as np
 
-import moments
+from magshockz.common import moments
 
 
 def _axis_index(phase_space, axis: str) -> int:

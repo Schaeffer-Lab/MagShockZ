@@ -78,14 +78,13 @@ from matplotlib.colors import LogNorm, Normalize
 yt.set_log_level(50)   # suppress yt chatter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import experiment_image as ei
-import flash_source
-import flash_utils as fu
-import plot_style
-import yaml_edit
+from magshockz.common import analysis_utils
+from magshockz.analysis.flash import experiment_image as ei
+from magshockz.common import flash_source
+from magshockz.common import flash_utils as fu
+from magshockz.common import plot_style
+from magshockz.common import yaml_edit
 # Same streak assembly as the overview and the tuner, so the nₑ map compared here is
 # byte-for-byte the one the rest of the FLASH analysis draws.
 from flash_overview import assemble_streak

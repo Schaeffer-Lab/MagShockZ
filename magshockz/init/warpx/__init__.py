@@ -1,11 +1,11 @@
-"""MagShockZ WarpX heater-driven piston pipeline.
+"""Generation of the WarpX heater-driven piston deck.
 
 ``units``   -- primaries -> every derived scale (the single source of truth)
 ``config``  -- load / validate / freeze a run's ``config.yaml``
 ``deck``    -- render the ParmParse deck, and parse it back to prove it still means it
-``flash``   -- the FLASH side: ``flash.par`` IC + the measured piston
-``metrics`` -- front tracking and the dimensionless scorecard
-``plotting`` -- the FLASH-vs-WarpX comparison figures
+
+The comparison against FLASH is post-processing and lives in
+``magshockz.analysis.warpx``.
 """
 
 from __future__ import annotations

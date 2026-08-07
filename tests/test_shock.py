@@ -1,15 +1,10 @@
 """Tests for shock.py — shared front detection and trajectory fitting."""
 
-import importlib.util
-import os
 
 import numpy as np
 import pytest
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "shock.py")
-_spec = importlib.util.spec_from_file_location("shock", _PATH)
-shock = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(shock)
+from magshockz.analysis.flash import shock
 
 
 # ---------------------------------------------------------------------------

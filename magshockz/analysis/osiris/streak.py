@@ -15,8 +15,8 @@ import numpy as np
 import osh5def
 import osh5io
 
-import temperature_anisotropy as ta
-from analysis_utils import StreakBuilder, axis_values, diag_path, transverse_profile
+from magshockz.common import temperature_anisotropy as ta
+from magshockz.common.analysis_utils import StreakBuilder, axis_values, diag_path, transverse_profile
 
 
 # ---------------------------------------------------------------------------

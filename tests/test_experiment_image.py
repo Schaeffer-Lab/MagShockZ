@@ -9,16 +9,12 @@ Pure numpy: the module imports matplotlib only inside ``load_streak``, so none o
 these touch it (or any image file).
 """
 
-import importlib.util
 import os
 
 import numpy as np
 import pytest
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "experiment_image.py")
-_spec = importlib.util.spec_from_file_location("experiment_image", _PATH)
-ei = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ei)
+from magshockz.analysis.flash import experiment_image as ei
 
 
 # ---------------------------------------------------------------------------

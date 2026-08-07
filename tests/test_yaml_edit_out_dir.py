@@ -6,22 +6,18 @@ an output directory, because the FLASH scripts hand data to each other through i
 wrong-line-of-sight bug and not just clutter.
 """
 
-import importlib.util
 import os
 import shutil
 
 import pytest
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "yaml_edit.py")
-_spec = importlib.util.spec_from_file_location("yaml_edit", _PATH)
-yaml_edit = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(yaml_edit)
+from magshockz.common import yaml_edit
 
 # out_dir creates directories under the real <repo>/results, so the tests use a
 # throwaway dataset name and delete its tree afterwards rather than littering it.
 NAME = "_test_dataset_FLASH_2026-07"
 DATASET = f"/data/sims/{NAME}"
-_RESULTS = os.path.realpath(os.path.join(os.path.dirname(_PATH), "..", "results"))
+_RESULTS = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "results"))
 
 
 @pytest.fixture(autouse=True)

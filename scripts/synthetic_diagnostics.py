@@ -46,13 +46,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import shock_state
-import moments as mom
-import synthetic_diagnostics as sd
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.analysis.osiris import shock_state
+from magshockz.common import moments as mom
+from magshockz.analysis.osiris import synthetic_diagnostics as sd
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 import yaml
 
-from yaml_edit import set_scalar, set_dump_param, assert_roundtrip
+from magshockz.common.yaml_edit import set_scalar, set_dump_param, assert_roundtrip
 
 
 SAMPLE = """\

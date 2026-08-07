@@ -6,17 +6,12 @@ jump conditions (mass, normal & tangential momentum, induction, energy) with
 scipy.optimize.fsolve, plus the perpendicular / hydrodynamic / parallel limits.
 """
 
-import importlib.util
-import os
 
 import numpy as np
 import pytest
 import scipy.optimize
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "rankine_hugoniot.py")
-_spec = importlib.util.spec_from_file_location("rankine_hugoniot", _PATH)
-rh = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(rh)
+from magshockz.common import rankine_hugoniot as rh
 
 GAMMA = 5.0 / 3.0
 

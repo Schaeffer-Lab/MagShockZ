@@ -14,8 +14,8 @@ Directions:
 
 import numpy as np
 
-import moments
-from analysis_utils import region_masks
+from magshockz.common import moments
+from magshockz.common.analysis_utils import region_masks
 
 
 def temperature_profile(

@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=61"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "magshockz"
@@ -13,14 +13,18 @@ dependencies = [
     "astropy",
     "plasmapy",
     "yt",
+    "pyyaml",
 ]
+
+[tool.setuptools.packages.find]
+include = ["magshockz*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--tb=short -q"
 
 [tool.coverage.run]
-source = ["src"]
+source = ["magshockz"]
 
 [tool.coverage.report]
 show_missing = true

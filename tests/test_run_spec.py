@@ -4,18 +4,13 @@ run_spec is dependency-light (stdlib + PyYAML + astropy), so these run in CI wit
 the OSIRIS/yt stack.
 """
 
-import importlib.util
-import os
 
 import pytest
 
 # Load the real src/run_spec.py directly (conftest puts tests/ first on the path,
 # but there is no run_spec stub, so a normal import would also work; loading by
 # path keeps this independent of sys.path ordering).
-_SPEC_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "run_spec.py")
-_spec = importlib.util.spec_from_file_location("run_spec", _SPEC_PATH)
-run_spec = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(run_spec)
+from magshockz.common import run_spec
 RunSpec = run_spec.RunSpec
 
 

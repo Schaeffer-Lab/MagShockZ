@@ -1,15 +1,10 @@
 """Tests for cross_shock_potential.py."""
 
-import importlib.util
-import os
 
 import numpy as np
 import pytest
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "cross_shock_potential.py")
-_spec = importlib.util.spec_from_file_location("cross_shock_potential", _PATH)
-csp = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(csp)
+from magshockz.analysis.osiris import cross_shock_potential as csp
 
 
 def test_constant_field_gives_linear_potential():

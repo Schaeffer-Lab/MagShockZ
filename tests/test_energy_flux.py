@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from conftest import make_phase_space, FakeAxis, FakeH5Data
-import energy_flux as ef
+from magshockz.analysis.osiris import energy_flux as ef
 
 
 def gaussian_phase_space(mu, sigma, p_arr, x_arr, axis_name="p1"):

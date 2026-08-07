@@ -52,15 +52,14 @@ import numpy as np
 import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
 import osh5io
 import osh5def
 import osh5vis
-import analysis_utils
-import plot_style
-from analysis_utils import diag_path, axis_values, detect_layout
-import temperature_anisotropy as ta
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common.analysis_utils import diag_path, axis_values, detect_layout
+from magshockz.common import temperature_anisotropy as ta
 
 ME_C2_EV = 510998.95  # electron rest energy [eV]; T[eV] = T[m_e c^2] * ME_C2_EV
 

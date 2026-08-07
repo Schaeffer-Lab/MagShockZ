@@ -285,7 +285,7 @@ def load_lineouts(paths: list, start_pt: tuple, end_pt: tuple, nprocs: int = 1,
 # Shock-front detection — single-sourced in src/shock.py
 # ---------------------------------------------------------------------------
 
-import shock as _shock
+from magshockz.analysis.flash import shock as _shock
 
 
 def detect_front(

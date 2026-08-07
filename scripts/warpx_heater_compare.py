@@ -46,14 +46,13 @@ import numpy as np
 import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import heater_deck
-import heater_piston_scaling as hps
-import heater_spec
-import piston_profile as pp
-import plot_style
-import yaml_edit
+from magshockz.init.warpx import deck as deck_module
+from magshockz.common import heater_piston_scaling as hps
+from magshockz.init.warpx import config as spec_config
+from magshockz.common import piston_profile as pp
+from magshockz.common import plot_style
+from magshockz.common import yaml_edit
 
 _REPO = os.path.abspath(os.path.join(_HERE, ".."))
 
@@ -63,7 +62,7 @@ _REPO = os.path.abspath(os.path.join(_HERE, ".."))
 PISTON_IONS = "piston_ions"
 AMBIENT_IONS = "amb_ions"
 AMBIENT_ELECTRONS = "amb_electrons"
-assert {PISTON_IONS, AMBIENT_IONS, AMBIENT_ELECTRONS} <= set(heater_deck.SPECIES_NAMES)
+assert {PISTON_IONS, AMBIENT_IONS, AMBIENT_ELECTRONS} <= set(deck_module.SPECIES_NAMES)
 
 #: Front travel below which no speed is reported.  One ion inertial length is the
 #: smallest displacement over which "the piston is expanding" is a statement about
@@ -97,8 +96,8 @@ def load_spec_and_scaling(config_path: str) -> tuple[dict, hps.ReducedScaling]:
     Re-deriving rather than reading the frozen ``run.yaml`` means editing the spec and
     re-running this script cannot silently compare against the previous deck's scales.
     """
-    spec = heater_spec.load(config_path)
-    return spec, heater_spec.scaling(spec, smoke=False)
+    spec = spec_config.load(config_path)
+    return spec, spec_config.scales(spec, smoke=False)
 
 
 def find_plotfiles(spec: dict, config_path: str, override: str | None) -> list[str]:

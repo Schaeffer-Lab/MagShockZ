@@ -15,9 +15,9 @@ import astropy.units as u
 import pytest
 import yaml
 
-from warpx import config as spec_config
-from warpx import deck as deck_module
-from warpx import units
+from magshockz.init.warpx import config as spec_config
+from magshockz.init.warpx import deck as deck_module
+from magshockz.init.warpx import units
 
 REPO = Path(__file__).resolve().parents[1]
 SPEC_PATH = REPO / "runs" / "magshockz_2d_heater.warpx.yaml"

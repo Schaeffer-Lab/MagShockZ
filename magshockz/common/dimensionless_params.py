@@ -148,9 +148,9 @@ def magnetic_reynolds(T_e_sim: float, n_e_sim: float, v_shock: float, L_sim: flo
     from plasmapy.formulary import Mag_Reynolds  # lazy: ~2.5 s to import
 
     try:  # works both as a package (src.*) and as a flat module (scripts add src/ to path)
-        from .spitzer_resistivity import spitzer_resistivity
+        from magshockz.analysis.warpx.spitzer_resistivity import spitzer_resistivity
     except ImportError:
-        from spitzer_resistivity import spitzer_resistivity
+        from magshockz.analysis.warpx.spitzer_resistivity import spitzer_resistivity
 
     m_e_c2_eV = float((astropy.constants.m_e * astropy.constants.c**2).to(u.eV).value)
     T_e_eV = T_e_sim * m_e_c2_eV

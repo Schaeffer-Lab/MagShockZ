@@ -34,7 +34,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from run_spec import RunSpec
+from magshockz.common.run_spec import RunSpec
 
 # Config keys that select the direct mode / the via-run mode.
 DIRECT_KEY = "flash_data_dir"

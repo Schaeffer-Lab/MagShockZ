@@ -52,12 +52,11 @@ import numpy as np
 import osh5io
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-from analysis_utils import axis_values
-import energy_partition as ep
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common.analysis_utils import axis_values
+from magshockz.common import energy_partition as ep
 
 _CHANNELS = ("p_ram", "p_th_e", "p_th_i", "p_mag")
 _LABELS = ("Ram", "Thermal e⁻", "Thermal i⁺", "Magnetic")

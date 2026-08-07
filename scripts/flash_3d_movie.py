@@ -90,10 +90,9 @@ yt.set_log_level(50)
 # G), so B in Gauss is physical without the plugin.  See CLAUDE.md.
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import flash_source
+from magshockz.common import analysis_utils
+from magshockz.common import flash_source
 
 # NB: intentionally NOT importing flash_utils — its module-level yt.enable_plugins()
 # would register the OSIRIS derived fields globally and break the uniform-grid scene

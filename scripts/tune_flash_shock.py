@@ -66,14 +66,13 @@ from matplotlib.colors import LogNorm
 yt.set_log_level(50)   # suppress yt chatter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import flash_source
-import flash_utils as fu
-import shock
-import yaml_edit
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common import flash_source
+from magshockz.common import flash_utils as fu
+from magshockz.analysis.flash import shock
+from magshockz.common import yaml_edit
 # Reuse the overview's streak assembly so the streak the tuner draws is byte-for-byte
 # the one the analysis produces; dumps load via the shared fu.load_lineouts.
 from flash_overview import assemble_streak

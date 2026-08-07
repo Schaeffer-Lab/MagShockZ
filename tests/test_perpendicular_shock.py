@@ -1,28 +1,14 @@
-"""Tests for src/perpendicular_shock.py.
+"""Tests for magshockz.common.perpendicular_shock.
 
 Locks the perpendicular MHD shock to Fitzpatrick's equations and cross-checks it
 against the independently-derived perpendicular path in rankine_hugoniot.py.
 """
 
-import importlib.util
-import os
-
 import numpy as np
 import pytest
 
-_HERE = os.path.dirname(__file__)
-
-
-def _load(name):
-    path = os.path.join(_HERE, "..", "src", f"{name}.py")
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-ps = _load("perpendicular_shock")
-rh = _load("rankine_hugoniot")
+from magshockz.common import perpendicular_shock as ps
+from magshockz.common import rankine_hugoniot as rh
 
 GAMMA = 5.0 / 3.0
 

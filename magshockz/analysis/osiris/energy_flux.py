@@ -43,7 +43,7 @@ field analog of the kinetic bulk/pressure advection, NOT an O(v²/c²) correctio
 
 import numpy as np
 
-import moments
+from magshockz.common import moments
 
 
 def _momentum_axis_name(phase_space) -> str:

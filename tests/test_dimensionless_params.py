@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from dimensionless_params import (
+from magshockz.common.dimensionless_params import (
     ion_skin_depth,
     ion_gyroperiod,
     compute_dimensionless,

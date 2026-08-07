@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from conftest import make_phase_space, FakeAxis, FakeH5Data
-import energy_partition as ep
+from magshockz.common import energy_partition as ep
 
 
 def gaussian_phase_space(mu, sigma, p_arr, x_arr):

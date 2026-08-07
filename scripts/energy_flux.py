@@ -45,12 +45,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import shock_state
-import energy_flux as ef
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.analysis.osiris import shock_state
+from magshockz.analysis.osiris import energy_flux as ef
 
 # Flux channels, in plot order.
 _CHANNELS = ("bulk", "internal", "pressure", "poynting", "total")

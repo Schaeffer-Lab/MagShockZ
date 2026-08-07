@@ -17,7 +17,7 @@ fields).
 
 import numpy as np
 
-import rankine_hugoniot as rh
+from magshockz.common import rankine_hugoniot as rh
 
 
 def energy_densities(

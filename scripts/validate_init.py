@@ -27,8 +27,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
-import plot_style
+from magshockz.common import plot_style
 
 FIELD_COMPONENTS = ["b1", "b2", "b3", "e1", "e2", "e3"]
 

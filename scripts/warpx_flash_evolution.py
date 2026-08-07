@@ -66,16 +66,15 @@ import numpy as np
 from matplotlib.colors import LogNorm
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import flash_source
-import heater_deck
-import heater_piston_scaling as hps
-import heater_spec
-import piston_profile as pp
-import plot_style
-import yaml_edit
+from magshockz.common import analysis_utils
+from magshockz.common import flash_source
+from magshockz.init.warpx import deck as deck_module
+from magshockz.common import heater_piston_scaling as hps
+from magshockz.init.warpx import config as spec_config
+from magshockz.common import piston_profile as pp
+from magshockz.common import plot_style
+from magshockz.common import yaml_edit
 
 # flash_utils is imported LAZILY, and only after every WarpX plotfile has been read.
 # Importing it calls yt.enable_plugins(), which registers the flash2osiris ("flash", ...)
@@ -92,7 +91,7 @@ CM_PER_UM = 1.0e-4
 PISTON_IONS = "piston_ions"
 AMBIENT_IONS = "amb_ions"
 PISTON_ELECTRONS = "piston_electrons"
-assert {PISTON_IONS, AMBIENT_IONS, PISTON_ELECTRONS} <= set(heater_deck.SPECIES_NAMES)
+assert {PISTON_IONS, AMBIENT_IONS, PISTON_ELECTRONS} <= set(deck_module.SPECIES_NAMES)
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,8 +120,8 @@ def parse_args() -> argparse.Namespace:
 
 def load_scaling(config_path: str):
     """Run spec + re-derived scaling (never the frozen copy, so it cannot go stale)."""
-    spec = heater_spec.load(config_path)
-    return spec, heater_spec.scaling(spec, smoke=False)
+    spec = spec_config.load(config_path)
+    return spec, spec_config.scales(spec, smoke=False)
 
 
 def warpx_plotfiles(config_path: str, override: str | None,
@@ -313,7 +312,7 @@ def flash_frame(path: str, source, targets: hps.PistonTargets, *,
     Densities are split by FLASH material rather than summed, so the piston row of the
     comparison is target species against target species.
     """
-    import flash_utils as fu
+    from magshockz.common import flash_utils as fu
 
     extra = {"piston_frac": ("flash", piston_material)}
     lineout = fu.flash_lineout(path, source.line_start, source.line_end,
@@ -599,7 +598,7 @@ def main() -> None:
               "cannot be recovered from diag1.")
         velocity_frames = []
 
-    import flash_utils as fu
+    from magshockz.common import flash_utils as fu
 
     t_lo_ns, t_hi_ns = (float(v) for v in spec["flash_target"]["t_window_ns"])
     all_flash = fu.find_plot_files(source.flash_dir)
