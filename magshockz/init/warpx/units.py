@@ -348,6 +348,7 @@ class DeckScales:
             (self.piston_electron_density / self.upstream.electron_density).decompose())
 
     def invariants(self) -> dict[str, float]:
+        """The same numbers as :meth:`FlashReference.invariants`, as the deck realises them."""
         return {
             "M_A": self.mach_alfven,
             "M_ms": self.mach_magnetosonic,
@@ -435,6 +436,40 @@ class DeckScales:
             "steps": float(self.max_step),
             "node_hours": _COST_REF_NODE_HOURS * work / _COST_REF_WORK,
         }
+
+
+def invariant_table(scales: DeckScales) -> str:
+    """FLASH against deck, one row per matched invariant.
+
+    The relative error is always printed rather than reduced to a pass/fail marker: a
+    deliberately off-target deck (a hand-tuned setpoint that moves ``M_A``) is a
+    legitimate thing to render, and the size of the miss is the useful output.
+    """
+    if scales.flash is None:
+        raise ValueError("invariant_table needs the FLASH reference")
+
+    target = scales.flash.invariants()
+    lines = [f"{'invariant':<14}{'FLASH':>12}{'deck':>12}{'rel':>10}"]
+    for name, value in scales.invariants().items():
+        expected = target[name]
+        rel = abs(value / expected - 1.0) if expected else 0.0
+        lines.append(f"{name:<14}{expected:>12.5g}{value:>12.5g}{rel:>10.1e}")
+
+    flash_upstream = scales.flash.upstream
+    broken = [
+        ("m_i/(Z m_e)", mass_per_charge(flash_upstream.ion),
+         mass_per_charge(scales.upstream.ion)),
+        ("v_piston/c", float((scales.flash.piston_front_speed / c).decompose()),
+         scales.piston_speed_over_c),
+        ("n_amb [m^-3]", flash_upstream.electron_density.to_value(u.m**-3),
+         scales.upstream.electron_density.to_value(u.m**-3)),
+        ("T_ci [ns]", flash_upstream.gyroperiod.to_value(u.ns),
+         scales.gyroperiod.to_value(u.ns)),
+    ]
+    lines += ["", "deliberately broken (absolute scales are not matched)"]
+    lines += [f"{name:<14}{flash_value:>12.5g}{deck_value:>12.5g}"
+              for name, flash_value, deck_value in broken]
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #

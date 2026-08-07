@@ -11,8 +11,8 @@ meaningful because ``front_position`` / ``behind_front_average`` /
 
 WHAT IS COMPARABLE.  The deck runs at a reduced mass ratio and an arbitrary reference
 density, so absolute ns and um are NOT comparable — only the dimensionless invariants
-are (see ``src/heater_piston_scaling.py``).  Where a physical axis is wanted,
-``ReducedScaling.to_ns`` / ``to_um`` bridge through the matched ion scales (d_i, T_ci);
+are (see ``magshockz/init/warpx/units.py``).  Where a physical axis is wanted,
+``DeckScales.to_time`` / ``to_length`` bridge through the matched ion scales (d_i, T_ci);
 every such axis is labelled "FLASH-equivalent" to keep that explicit.
 
 Panels
@@ -47,9 +47,13 @@ import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-from magshockz.init.warpx import deck as deck_module
-from magshockz.common import heater_piston_scaling as hps
+import astropy.units as u
+from astropy.constants import c, e
+
+from magshockz.analysis.warpx import metrics
 from magshockz.init.warpx import config as spec_config
+from magshockz.init.warpx import deck as deck_module
+from magshockz.init.warpx import units
 from magshockz.common import piston_profile as pp
 from magshockz.common import plot_style
 from magshockz.common import yaml_edit
@@ -63,12 +67,6 @@ PISTON_IONS = "piston_ions"
 AMBIENT_IONS = "amb_ions"
 AMBIENT_ELECTRONS = "amb_electrons"
 assert {PISTON_IONS, AMBIENT_IONS, AMBIENT_ELECTRONS} <= set(deck_module.SPECIES_NAMES)
-
-#: Front travel below which no speed is reported.  One ion inertial length is the
-#: smallest displacement over which "the piston is expanding" is a statement about
-#: physics rather than about the profile's discretisation.
-MIN_TRAVEL_DI = 1.0
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -90,8 +88,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_spec_and_scaling(config_path: str) -> tuple[dict, hps.ReducedScaling]:
-    """Load the run spec and re-derive its scaling, so the bridge is never stale.
+def load_spec_and_scales(config_path: str) -> tuple[dict, units.DeckScales]:
+    """Load the run spec and re-derive its scales, so the bridge is never stale.
 
     Re-deriving rather than reading the frozen ``run.yaml`` means editing the spec and
     re-running this script cannot silently compare against the previous deck's scales.
@@ -119,7 +117,7 @@ def find_plotfiles(spec: dict, config_path: str, override: str | None) -> list[s
         f"  sbatch init_warpx/run_heater_2d.sbatch")
 
 
-def transverse_average(dataset, field: str, scaling: hps.ReducedScaling
+def transverse_average(dataset, field: str, scales: units.DeckScales
                        ) -> tuple[np.ndarray, np.ndarray]:
     """z-profile of ``field``, averaged over x, from a 2D WarpX plotfile.
 
@@ -135,10 +133,10 @@ def transverse_average(dataset, field: str, scaling: hps.ReducedScaling
     z_edges = np.linspace(float(dataset.domain_left_edge[1]),
                           float(dataset.domain_right_edge[1]), profile.size + 1)
     z_centres = 0.5 * (z_edges[:-1] + z_edges[1:])
-    return z_centres / scaling.d_e_m, profile
+    return z_centres / scales.electron_skin_depth.to_value(u.m), profile
 
 
-def measure_plotfile(path: str, scaling: hps.ReducedScaling, *,
+def measure_plotfile(path: str, scales: units.DeckScales, *,
                      front_level_frac: float) -> dict:
     """Piston front, drive density and ambient state from one WarpX plotfile.
 
@@ -149,15 +147,15 @@ def measure_plotfile(path: str, scaling: hps.ReducedScaling, *,
     import yt
 
     dataset = yt.load(path)
-    time_omega_pe = float(dataset.current_time) * scaling.omega_pe_rad_s
+    time = float(dataset.current_time) * u.s
 
-    z_de, piston_charge = transverse_average(dataset, f"rho_{PISTON_IONS}", scaling)
-    _, ambient_charge = transverse_average(dataset, f"rho_{AMBIENT_IONS}", scaling)
-    _, ambient_usq = transverse_average(dataset, f"usq_{AMBIENT_ELECTRONS}", scaling)
+    z_de, piston_charge = transverse_average(dataset, f"rho_{PISTON_IONS}", scales)
+    _, ambient_charge = transverse_average(dataset, f"rho_{AMBIENT_IONS}", scales)
+    _, ambient_usq = transverse_average(dataset, f"usq_{AMBIENT_ELECTRONS}", scales)
 
     # rho is a charge density; the species carry +q_e, so n = rho/q_e.
-    piston_density = piston_charge / hps.Q_E
-    ambient_density = ambient_charge / hps.Q_E
+    piston_density = piston_charge / e.si.value
+    ambient_density = ambient_charge / e.si.value
 
     outward = z_de >= 0.0
     z_out = z_de[outward]
@@ -169,15 +167,15 @@ def measure_plotfile(path: str, scaling: hps.ReducedScaling, *,
 
     # Bands scaled to the run's own geometry, so they mean the same thing as the FLASH
     # side's (which used ~1 d_i inward and ~6 d_i outward, in its own d_i).
-    d_i_de = scaling.d_i_m / scaling.d_e_m
+    d_i_de = scales.di_over_de
     drive = pp.behind_front_average(z_out, piston_out, x_front,
                                     offset=0.2 * d_i_de, width=1.2 * d_i_de)
     ambient = pp.ahead_of_front_average(z_out, ambient_out, x_front,
                                         offset=6.0 * d_i_de, width=2.5 * d_i_de)
 
     return {
-        "t_omega_pe": time_omega_pe,
-        "t_gyro": time_omega_pe / (scaling.gyroperiod_s * scaling.omega_pe_rad_s),
+        "t_omega_pe": float((time * scales.upstream.plasma_frequency / u.rad).decompose()),
+        "t_gyro": float((time / scales.gyroperiod).decompose()),
         "z_de": z_out,
         "piston_density": piston_out,
         "ambient_density": ambient_out,
@@ -215,7 +213,7 @@ def load_flash_target(spec: dict, override: str | None) -> dict | None:
     if override:
         path = override
     else:
-        dataset = spec["flash_target"].get("dataset", "")
+        dataset = spec["flash"].get("dataset", "")
         stem = os.path.basename(str(dataset).rstrip("/"))
         candidates = sorted(glob.glob(os.path.join(
             _REPO, "results", stem, "**", "flash_piston_profile.npz"), recursive=True))
@@ -228,64 +226,35 @@ def load_flash_target(spec: dict, override: str | None) -> dict | None:
         return {key: handle[key] for key in handle.files}
 
 
-def scorecard(per_dump: list, targets: hps.PistonTargets,
-              scaling: hps.ReducedScaling) -> list[tuple[str, float, float, float]]:
-    """``(name, FLASH target, WarpX measured, deck intended)`` rows.
+def measure_run(per_dump: list, scales: units.DeckScales) -> list[metrics.ScoreRow]:
+    """Fit the front across the dump series and score it against FLASH and the deck."""
+    tracked = [d for d in per_dump if np.isfinite(d["x_front_de"])]
+    speed_over_c = metrics.front_speed_over_c(
+        np.array([d["t_omega_pe"] for d in tracked]),
+        np.array([d["x_front_de"] for d in tracked]),
+        di_over_de=scales.di_over_de)
+    if len(tracked) >= 2 and not np.isfinite(speed_over_c):
+        travel_di = (abs(tracked[-1]["x_front_de"] - tracked[0]["x_front_de"])
+                     / scales.di_over_de)
+        print(f"NOTE: the front has moved only {travel_di:.3f} d_i over "
+              f"{tracked[-1]['t_gyro'] - tracked[0]['t_gyro']:.4f} T_ci — too little to "
+              f"fit a speed (need {metrics.MIN_TRAVEL_DI} d_i). Speed/M_A left as nan; "
+              f"run the full deck, not the smoke one.")
 
-    Three columns, not two, because there are two distinct ways to be wrong: the deck
-    can be built with the wrong constants (target vs intended), or the run can fail to
-    realise the constants it was built with (intended vs measured).  Collapsing them
-    would hide which.
-    """
-    late = [d for d in per_dump if np.isfinite(d["x_front_de"])]
-    d_i_de = scaling.d_i_m / scaling.d_e_m
-    measured_v_c = np.nan
-    if len(late) >= 2:
-        travel_di = abs(late[-1]["x_front_de"] - late[0]["x_front_de"]) / d_i_de
-        if travel_di < MIN_TRAVEL_DI:
-            # A front that has moved a fraction of an ion inertial length has not
-            # started expanding yet, and fitting a slope to it yields a number that
-            # looks like a speed but is line-out quantisation. Refuse it outright: a
-            # smoke run reporting 'v = 0.0027 c' invites believing the deck is 20x slow.
-            print(f"NOTE: the front has moved only {travel_di:.3f} d_i over "
-                  f"{late[-1]['t_gyro'] - late[0]['t_gyro']:.4f} T_ci — too little to "
-                  f"fit a speed (need {MIN_TRAVEL_DI} d_i). Speed/M_A left as nan; run "
-                  f"the full deck, not the smoke one.")
-        else:
-            fit = pp.fit_front_trajectory(
-                np.array([d["t_omega_pe"] for d in late]),
-                np.array([d["x_front_de"] for d in late]))
-            # d_e per 1/omega_pe is exactly c, so the slope is already v/c.
-            measured_v_c = fit.speed
-
-    measured_contrast = float(np.nanmean([d["contrast"] for d in late])) if late else np.nan
-
-    # Front speed in d_i per gyroperiod. This is the MATCHED form of the speed: the
-    # absolute v/c differs by ~20x between the codes on purpose (reduced mass ratio),
-    # so quoting only v/c makes a correct mapping look broken.
-    def to_di_per_gyro(speed_ms: float, d_i_m: float, gyroperiod_s: float) -> float:
-        return speed_ms * gyroperiod_s / d_i_m
-
-    return [
-        ("front [d_i/T_ci]",
-         to_di_per_gyro(targets.v_front_ms, targets.d_i_m, targets.gyroperiod_s),
-         to_di_per_gyro(measured_v_c * hps.C_LIGHT_MS, scaling.d_i_m,
-                        scaling.gyroperiod_s),
-         to_di_per_gyro(scaling.v_piston_ms, scaling.d_i_m, scaling.gyroperiod_s)),
-        ("M_A", targets.mach_alfven,
-         measured_v_c / (scaling.v_alfven_ms / hps.C_LIGHT_MS), scaling.mach_alfven),
-        ("n_piston / n_amb", targets.contrast, measured_contrast, scaling.contrast),
-        ("v_piston / c  (NOT matched)", targets.v_front_ms / hps.C_LIGHT_MS,
-         measured_v_c, scaling.v_piston_c),
-    ]
+    contrast = (float(np.nanmean([d["contrast"] for d in tracked]))
+                if tracked else float("nan"))
+    return metrics.scorecard(scales, measured_speed_over_c=speed_over_c,
+                             measured_contrast=contrast)
 
 
 def plot(per_dump: list, reduced: dict, flash: dict | None,
-         targets: hps.PistonTargets, scaling: hps.ReducedScaling,
-         rows: list, out_path: str) -> None:
+         scales: units.DeckScales, rows: list[metrics.ScoreRow],
+         out_path: str) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(14, 9))
     ax_profile, ax_trajectory, ax_operator, ax_score = axes.flat
-    d_i_de = scaling.d_i_m / scaling.d_e_m
+    d_i_de = scales.di_over_de
+    flash_di = scales.flash.upstream.ion_skin_depth
+    flash_gyroperiod = scales.flash.upstream.gyroperiod
 
     drawn = [per_dump[i] for i in
              np.linspace(0, len(per_dump) - 1, min(5, len(per_dump))).astype(int)]
@@ -305,7 +274,7 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
             drive = flash["n_piston_drive_cm3"][index]
             if not (np.isfinite(front) and np.isfinite(drive) and drive > 0):
                 continue
-            xi = (flash_x - front) / (targets.d_i_m * 1e2)
+            xi = (flash_x - front) / flash_di.to_value(u.cm)
             ax_profile.semilogy(xi, flash["n_piston_cm3"][index] / drive, "--",
                                 color="0.35", lw=1.2,
                                 label="FLASH" if index == 0 else None)
@@ -325,35 +294,34 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
     finite = np.isfinite(gyro) & np.isfinite(fronts_di)
     if np.count_nonzero(finite) >= 2:
         # The intended slope in these axes: v_piston in d_i per gyroperiod.
-        intended = (scaling.v_piston_ms * scaling.gyroperiod_s / scaling.d_i_m)
+        intended = float((scales.piston_speed * scales.gyroperiod
+                          / scales.ion_skin_depth).decompose())
         ax_trajectory.plot(gyro, fronts_di[finite][0] + intended
                            * (gyro - gyro[finite][0]), "k--", lw=1.4,
-                           label=f"deck target ({scaling.v_piston_c:.3f} c)")
+                           label=f"deck target ({scales.piston_speed_over_c:.3f} c)")
     if flash is not None:
-        flash_gyro = (flash["t_s"] - flash["t_s"][0]) / targets.gyroperiod_s
-        flash_di = (flash["x_front_cm"] - flash["x_front_cm"][0]) / (
-            targets.d_i_m * 1e2)
-        ax_trajectory.plot(flash_gyro, flash_di + fronts_di[finite][0]
-                           if np.any(finite) else flash_di, "-", color="0.35", lw=1.4,
-                           label="FLASH front")
+        flash_gyro = (flash["t_s"] - flash["t_s"][0]) / flash_gyroperiod.to_value(u.s)
+        flash_front_di = ((flash["x_front_cm"] - flash["x_front_cm"][0])
+                          / flash_di.to_value(u.cm))
+        ax_trajectory.plot(flash_gyro, flash_front_di + fronts_di[finite][0]
+                           if np.any(finite) else flash_front_di, "-", color="0.35",
+                           lw=1.4, label="FLASH front")
     ax_trajectory.set_xlabel(r"$t / T_{ci}$")
     ax_trajectory.set_ylabel(r"front position [$d_i$]")
     ax_trajectory.set_title("front trajectory in matched units")
     ax_trajectory.legend(fontsize=8)
     ax_trajectory.grid(alpha=0.25)
 
-    if "EP_t" in reduced:
-        ax_operator.plot(reduced["EP_t"] * scaling.omega_pe_rad_s
-                         / (scaling.gyroperiod_s * scaling.omega_pe_rad_s),
-                         reduced["EP_total"] / reduced["EP_total"][0]
-                         if reduced["EP_total"][0] else reduced["EP_total"],
-                         color="#ff7f0e", label="ParticleEnergy / initial")
-    if "PN_t" in reduced:
-        ax_operator.plot(reduced["PN_t"] * scaling.omega_pe_rad_s
-                         / (scaling.gyroperiod_s * scaling.omega_pe_rad_s),
-                         reduced["PN_total"] / reduced["PN_total"][0]
-                         if reduced["PN_total"][0] else reduced["PN_total"],
-                         color="#1f77b4", label="ParticleNumber / initial")
+    # The reduced diagnostics timestamp in seconds, as the plotfiles do.
+    gyroperiod = scales.gyroperiod.to_value(u.s)
+    for name, color, label in (("EP", "#ff7f0e", "ParticleEnergy / initial"),
+                               ("PN", "#1f77b4", "ParticleNumber / initial")):
+        if f"{name}_t" not in reduced:
+            continue
+        total = reduced[f"{name}_total"]
+        ax_operator.plot(reduced[f"{name}_t"] / gyroperiod,
+                         total / total[0] if total[0] else total,
+                         color=color, label=label)
     # The ambient must stay cold: a rising <u^2> upstream is numerical grid heating, the
     # failure mode SHOCK_PLAN.md flags for long runs of a cold magnetized ambient.
     usq = np.array([d["ambient_usq"] for d in per_dump])
@@ -367,32 +335,33 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
     ax_operator.grid(alpha=0.25)
 
     ax_score.axis("off")
-    header = f"{'quantity':<28}{'FLASH':>11}{'deck aim':>11}{'WarpX':>11}"
-    text = [header, ""]
-    for name, target, measured, intended in rows:
-        text.append(f"{name:<28}{target:>11.4g}{intended:>11.4g}{measured:>11.4g}")
-    text += [
+    text = [
+        metrics.scorecard_text(rows),
         "",
-        "FLASH -> deck aim is the mapping (src/heater_piston_scaling.py);",
+        "FLASH -> deck aim is the mapping (magshockz/init/warpx/units.py);",
         "deck aim -> WarpX is whether the run realised it.",
         "",
-        f"theta_e = {scaling.theta_e_heater:.4g}   B0 = {scaling.b0_tesla * 1e4:.4g} G",
-        f"n_target/n0 = {scaling.contrast:.4g}   slab = "
-        f"{scaling.slab_halfwidth_di:.2f} d_i   r_H = {scaling.r_spot_di:.2f} d_i",
+        f"theta_e = {scales.theta_e_heater:.4g}   "
+        f"B0 = {scales.magnetic_field.to_value(u.mT):.4g} mT",
+        f"n_target/n0 = {scales.contrast:.4g}   slab = "
+        f"{scales.slab_halfwidth_di:.2f} d_i   r_H = {scales.spot_radius_di:.2f} d_i",
         "",
         "Tuning knobs, in the order worth trying:",
-        "  front too slow/fast     -> scaling.theta_e_heater",
-        "  contrast off            -> flash_target.n_piston_drive_per_m3",
-        "  piston runs out of mass -> scaling.slab_halfwidth_di, deck.injector_tau_wpe",
-        "  profile too narrow in x -> flash_target.r_spot_m",
+        "  front too slow/fast     -> add this run to calibration: (the setpoint is",
+        "                             fitted from completed runs, never modelled)",
+        "  contrast off            -> flash.piston.ion_density_per_m3",
+        "  piston runs out of mass -> geometry.slab_halfwidth_di,",
+        "                             operators.injector.tau_over_wpe_inv",
+        "  profile too narrow in x -> flash.piston.spot_radius_um",
     ]
     ax_score.text(0.0, 1.0, "\n".join(text), family="monospace", fontsize=9,
                   va="top", ha="left", transform=ax_score.transAxes)
     ax_score.set_title("invariant scorecard", loc="left")
 
     fig.suptitle("WarpX heater piston vs FLASH target "
-                 f"(mass ratio {scaling.mass_ratio:.0f}, "
-                 f"n0 = {scaling.n0_per_m3:.2g} m$^{{-3}}$)", fontsize=13)
+                 f"(m/Ze {units.mass_per_charge(scales.upstream.ion):.0f}, "
+                 f"n0 = {scales.reference_density.to_value(u.m**-3):.2g} m$^{{-3}}$)",
+                 fontsize=13)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -402,15 +371,15 @@ def main() -> None:
     args = parse_args()
     plot_style.apply(args.publication)
 
-    spec, scaling = load_spec_and_scaling(args.config)
-    targets = scaling.targets
-    assert targets is not None
+    spec, scales = load_spec_and_scales(args.config)
+    if scales.flash is None:
+        raise SystemExit(f"{args.config} has no flash: block — nothing to compare against")
 
     plot_paths = find_plotfiles(spec, args.config, args.diag_dir)[::max(args.stride, 1)]
     print(f"plotfiles : {len(plot_paths)} under "
           f"{os.path.dirname(plot_paths[0])}")
 
-    per_dump = [measure_plotfile(path, scaling,
+    per_dump = [measure_plotfile(path, scales,
                                  front_level_frac=args.front_level_frac)
                 for path in plot_paths]
     reduced = load_reduced_diags(plot_paths)
@@ -419,17 +388,15 @@ def main() -> None:
         print("NOTE: no flash_piston_profile.npz found — plotting WarpX only. Run "
               "scripts/flash_piston_profile.py to get the FLASH overlay.")
 
-    rows = scorecard(per_dump, targets, scaling)
+    rows = measure_run(per_dump, scales)
     lines = [
-        f"{'quantity':<28}{'FLASH':>12}{'deck aim':>12}{'WarpX':>12}",
-        *[f"{name:<28}{target:>12.4g}{intended:>12.4g}{measured:>12.4g}"
-          for name, target, measured, intended in rows],
+        metrics.scorecard_text(rows),
         "",
         "Per-plotfile WarpX measurement",
         f"  {'t/T_ci':>8} {'front [d_i]':>12} {'n_drive':>11} {'n_amb':>11} "
         f"{'contrast':>9} {'amb <u^2>':>11}",
     ]
-    d_i_de = scaling.d_i_m / scaling.d_e_m
+    d_i_de = scales.di_over_de
     for dump in per_dump:
         lines.append(
             f"  {dump['t_gyro']:>8.4f} {dump['x_front_de'] / d_i_de:>12.3f} "
@@ -448,10 +415,10 @@ def main() -> None:
         args.output_dir or os.path.join(_REPO, "results", "warpx", run_name),
         cfg=spec, config_path=args.config)
     png_path = os.path.join(out_dir, "heater_vs_flash.png")
-    plot(per_dump, reduced, flash, targets, scaling, rows, png_path)
+    plot(per_dump, reduced, flash, scales, rows, png_path)
     txt_path = os.path.join(out_dir, "heater_vs_flash.txt")
     with open(txt_path, "w") as handle:
-        handle.write(text + "\n\n" + hps.invariance_report(scaling) + "\n")
+        handle.write(text + "\n\n" + units.invariant_table(scales) + "\n")
 
     for path in (png_path, txt_path):
         print(f"Saved -> {path}")

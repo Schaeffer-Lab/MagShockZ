@@ -11,7 +11,7 @@ Two figures comparing the two codes as they evolve:
   ``evolution_slices.mp4``     the same slices as a movie (--movie)
 
 WHAT "MATCHED" MEANS.  The deck runs at a reduced mass ratio and an arbitrary reference
-density, so nothing absolute is comparable — see ``src/heater_piston_scaling.py``.  Every
+density, so nothing absolute is comparable — see ``magshockz/init/warpx/units.py``.  Every
 axis here is therefore in ion units: length in ``d_i``, time in ``T_ci``, density relative
 to the ambient, |B| relative to ``B0``.  In those units one FLASH gyroperiod IS one WarpX
 gyroperiod, which is what makes the panels comparable at all.
@@ -42,7 +42,7 @@ TWO CAVEATS THE FIGURES CANNOT HIDE, both stated on the plots:
 2. *The WarpX box is transversely narrower.*  Its x half-width is 4 heating-spot radii
    (~5.6 d_i) because the spot's periodic images must stay clear of the spot, while the
    FLASH domain spans ~24 d_i transversely.  The 2-D panels share a d_i axis so this is
-   visible rather than hidden by independent scaling.
+   visible rather than hidden by independent scales.
 
 Usage
 -----
@@ -69,9 +69,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 from magshockz.common import analysis_utils
 from magshockz.common import flash_source
-from magshockz.init.warpx import deck as deck_module
-from magshockz.common import heater_piston_scaling as hps
+import astropy.units as u
+from astropy.constants import c, e, m_e
+
 from magshockz.init.warpx import config as spec_config
+from magshockz.init.warpx import deck as deck_module
+from magshockz.init.warpx import units
 from magshockz.common import piston_profile as pp
 from magshockz.common import plot_style
 from magshockz.common import yaml_edit
@@ -118,8 +121,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_scaling(config_path: str):
-    """Run spec + re-derived scaling (never the frozen copy, so it cannot go stale)."""
+def load_scales(config_path: str) -> tuple[dict, units.DeckScales]:
+    """Run spec + re-derived scales (never the frozen copy, so they cannot go stale)."""
     spec = spec_config.load(config_path)
     return spec, spec_config.scales(spec, smoke=False)
 
@@ -146,17 +149,17 @@ def warpx_plotfiles(config_path: str, override: str | None,
 # WarpX side
 # ---------------------------------------------------------------------------
 
-def read_warpx_frames(paths: list[str], scaling: hps.ReducedScaling) -> list[dict]:
+def read_warpx_frames(paths: list[str], scales: units.DeckScales) -> list[dict]:
     """Every WarpX plotfile, read before any FLASH module can enable the yt plugin."""
     if "flash_utils" in sys.modules:
         raise RuntimeError(
             "flash_utils is already imported, so yt has the flash2osiris plugin fields "
             "registered and loading a WarpX plotfile will fail on ('flash','velz'). Read "
             "the WarpX side first.")
-    return [warpx_frame(path, scaling) for path in paths]
+    return [warpx_frame(path, scales) for path in paths]
 
 
-def warpx_frame(path: str, scaling: hps.ReducedScaling) -> dict:
+def warpx_frame(path: str, scales: units.DeckScales) -> dict:
     """One WarpX plotfile: 2-D maps and x-averaged z-profiles, in ion units.
 
     Only the +z half is kept.  The slab is symmetric about z = 0 and expands both ways, so
@@ -171,7 +174,7 @@ def warpx_frame(path: str, scaling: hps.ReducedScaling) -> dict:
     def field(name: str) -> np.ndarray:
         return np.asarray(grid["boxlib", name]).squeeze()
 
-    d_i = scaling.d_i_m
+    d_i = scales.ion_skin_depth.to_value(u.m)
     x_edges = np.linspace(float(dataset.domain_left_edge[0]),
                           float(dataset.domain_right_edge[0]),
                           field(f"rho_{PISTON_IONS}").shape[0] + 1)
@@ -182,12 +185,14 @@ def warpx_frame(path: str, scaling: hps.ReducedScaling) -> dict:
     z_di = 0.5 * (z_edges[:-1] + z_edges[1:]) / d_i
     outward = z_di >= 0.0
 
-    piston = field(f"rho_{PISTON_IONS}") / hps.Q_E / scaling.n_amb_per_m3
-    ambient = field(f"rho_{AMBIENT_IONS}") / hps.Q_E / scaling.n_amb_per_m3
-    b_mag = np.hypot(np.hypot(field("Bx"), field("By")), field("Bz")) / scaling.b0_tesla
+    ambient_density = scales.upstream.electron_density.to_value(u.m**-3)
+    piston = field(f"rho_{PISTON_IONS}") / e.si.value / ambient_density
+    ambient = field(f"rho_{AMBIENT_IONS}") / e.si.value / ambient_density
+    b_mag = (np.hypot(np.hypot(field("Bx"), field("By")), field("Bz"))
+             / scales.magnetic_field.to_value(u.T))
     te_ev = field(f"T_{PISTON_ELECTRONS}")
 
-    time_gyro = float(dataset.current_time) / scaling.gyroperiod_s
+    time_gyro = float(dataset.current_time) / scales.gyroperiod.to_value(u.s)
     # Every map and profile below assumes [x, z] indexing -- the x-average that builds the
     # profiles and the un-transposed imshow in plot_slices both depend on it.
     if piston.shape != (x_di.size, z_di.size):
@@ -205,12 +210,13 @@ def warpx_frame(path: str, scaling: hps.ReducedScaling) -> dict:
         "piston_profile": piston[:, outward].mean(axis=0),
         "ambient_profile": ambient[:, outward].mean(axis=0),
         "b_profile": b_mag[:, outward].mean(axis=0),
-        "te_profile": te_ev[:, outward].mean(axis=0) / max(scaling.te_amb_ev, 1e-30),
+        "te_profile": (te_ev[:, outward].mean(axis=0)
+                       / scales.upstream.electron_temperature.to_value(u.eV)),
         "front_di": front_di,
     }
 
 
-def warpx_velocity_profile(path: str, scaling: hps.ReducedScaling,
+def warpx_velocity_profile(path: str, scales: units.DeckScales,
                            z_di: np.ndarray) -> np.ndarray:
     """Piston-ion bulk velocity along z, in units of the deck's target piston speed.
 
@@ -222,7 +228,7 @@ def warpx_velocity_profile(path: str, scaling: hps.ReducedScaling,
 
     Sampled onto the caller's ``z_di`` bin centres so the row shares the field rows' axis,
     and returned normalised the same way every other row is: by the deck's *intended*
-    reference (``v_piston_c``), not by what the run achieved.  A piston comoving with a
+    reference (``DeckScales.piston_speed``), not by what the run achieved.  A piston comoving with a
     front running 9% fast therefore plateaus at 1.09, which is the honest reading.
     """
     import yt
@@ -245,19 +251,18 @@ def warpx_velocity_profile(path: str, scaling: hps.ReducedScaling,
         f"[{z.min():.4g}, {z.max():.4g}] m, outside the z axis "
         f"[{left[1]:.4g}, {right[1]:.4g}] -- wrong axis?")
 
-    ion_mass = scaling.mass_ratio * hps.M_E_KG
-    u = momentum / ion_mass                      # p/m, i.e. gamma*v
-    velocity = u / np.sqrt(1.0 + (u / hps.C_LIGHT_MS) ** 2)
+    proper_speed = momentum / scales.piston_ion.mass.to_value(u.kg)   # p/m = gamma*v
+    velocity = proper_speed / np.sqrt(1.0 + (proper_speed / c.si.value) ** 2)
 
     spacing = float(z_di[1] - z_di[0])
     edges = np.concatenate([z_di - 0.5 * spacing, [z_di[-1] + 0.5 * spacing]])
-    edges = edges * scaling.d_i_m
+    edges = edges * scales.ion_skin_depth.to_value(u.m)
     outward = z >= 0.0
     bulk = pp.weighted_bin_average(z[outward], velocity[outward], weight[outward], edges)
-    return bulk / (scaling.v_piston_c * hps.C_LIGHT_MS)
+    return bulk / scales.piston_speed.to_value(u.m / u.s)
 
 
-def read_warpx_velocity(phase_paths: list[str], scaling: hps.ReducedScaling,
+def read_warpx_velocity(phase_paths: list[str], scales: units.DeckScales,
                         z_di: np.ndarray) -> list[dict]:
     """Every ``phase`` dump's velocity profile, read alongside the field dumps.
 
@@ -273,8 +278,9 @@ def read_warpx_velocity(phase_paths: list[str], scaling: hps.ReducedScaling,
     out = []
     for path in phase_paths:
         out.append({
-            "t_gyro": float(yt.load(path).current_time) / scaling.gyroperiod_s,
-            "velocity_profile": warpx_velocity_profile(path, scaling, z_di),
+            "t_gyro": (float(yt.load(path).current_time)
+                       / scales.gyroperiod.to_value(u.s)),
+            "velocity_profile": warpx_velocity_profile(path, scales, z_di),
         })
     return out
 
@@ -304,7 +310,7 @@ def attach_warpx_velocity(frames: list[dict], velocity_frames: list[dict]) -> No
 # FLASH side
 # ---------------------------------------------------------------------------
 
-def flash_frame(path: str, source, targets: hps.PistonTargets, *,
+def flash_frame(path: str, source, targets: units.FlashReference, *,
                 piston_material: str, ambient_material: str, halfwidth_um: float,
                 t_start_s: float, npoints: int = 1024) -> dict:
     """One FLASH dump: LOS line-outs and a 2-D slice, in the same ion units.
@@ -326,7 +332,8 @@ def flash_frame(path: str, source, targets: hps.PistonTargets, *,
                                    halfwidth_um=halfwidth_um,
                                    mask_field=("flash", ambient_material))
 
-    d_i_um = targets.d_i_m * 1e6
+    upstream = targets.upstream
+    d_i_um = upstream.ion_skin_depth.to_value(u.um)
     x_um = lineout["x"].to("um").value
     piston_frac = np.asarray(lineout["piston_frac"], dtype=float)
     ne_cm3 = lineout["ne"].to("cm**-3").value
@@ -334,20 +341,23 @@ def flash_frame(path: str, source, targets: hps.PistonTargets, *,
     # FLASH's target mass fraction masking the electron density -- see measure_dump() in
     # flash_piston_profile.py for why this and not Zbar * rho*X/(A m_u).
     n_piston = piston_frac * ne_cm3
-    n_amb_cm3 = targets.n_amb_per_m3 * 1e-6
+    n_amb_cm3 = upstream.electron_density.to_value(u.cm**-3)
 
     los_lo, los_hi, tr_lo, tr_hi = sliced["extent"]
     return {
-        "t_gyro": (lineout["t_s"] - t_start_s) / targets.gyroperiod_s,
+        "t_gyro": (lineout["t_s"] - t_start_s) / upstream.gyroperiod.to_value(u.s),
         "z_di": x_um / d_i_um,
         "piston_profile": n_piston / n_amb_cm3,
         "ambient_profile": (1.0 - piston_frac) * ne_cm3 / n_amb_cm3,
-        "b_profile": lineout["B_mag"].to("gauss").value * 1e-4 / targets.b_amb_tesla,
-        "te_profile": lineout["Te"].to("eV").value / targets.te_amb_ev,
+        "b_profile": (lineout["B_mag"].to("tesla").value
+                      / upstream.magnetic_field.to_value(u.T)),
+        "te_profile": (lineout["Te"].to("eV").value
+                       / upstream.electron_temperature.to_value(u.eV)),
         # v.n_hat along the LOS, so no projection is needed; normalised by the fitted
-        # front speed that the deck's v_piston_c is the bridge image of, which is what
+        # front speed that the deck's piston_speed is the bridge image of, which is what
         # makes this row comparable to the WarpX one.
-        "velocity_profile": (lineout["v_para"].to("m/s").value / targets.v_front_ms),
+        "velocity_profile": (lineout["v_para"].to("m/s").value
+                             / targets.piston_front_speed.to_value(u.m / u.s)),
         "density_map": sliced["img"] / n_amb_cm3,
         "ambient_map": ambient_slice["img"] / n_amb_cm3,
         "extent_di": (los_lo / d_i_um, los_hi / d_i_um,
@@ -564,9 +574,10 @@ def main() -> None:
     args = parse_args()
     plot_style.apply(args.publication)
 
-    spec, scaling = load_scaling(args.config)
-    targets = scaling.targets
-    assert targets is not None
+    spec, scales = load_scales(args.config)
+    targets = scales.flash
+    if targets is None:
+        raise SystemExit(f"{args.config} has no flash: block — nothing to compare against")
 
     flash_cfg_path = args.flash_config
     if not os.path.isabs(flash_cfg_path):
@@ -581,7 +592,7 @@ def main() -> None:
     # figure over the time it did cover.
     warpx_paths = warpx_plotfiles(args.config, args.diag_dir)
     print(f"WarpX  : {len(warpx_paths)} plotfiles")
-    warpx_frames_all = read_warpx_frames(warpx_paths, scaling)
+    warpx_frames_all = read_warpx_frames(warpx_paths, scales)
     warpx_gyro = np.array([f["t_gyro"] for f in warpx_frames_all])
 
     # Velocity needs raw particles, and every phase dump has to be read here -- before the
@@ -590,7 +601,7 @@ def main() -> None:
     phase_paths = warpx_plotfiles(args.config, args.diag_dir, prefix="phase")
     if phase_paths:
         print(f"         {len(phase_paths)} phase dumps for the velocity row")
-        velocity_frames = read_warpx_velocity(phase_paths, scaling,
+        velocity_frames = read_warpx_velocity(phase_paths, scales,
                                               warpx_frames_all[0]["z_di"])
     else:
         print("         WARNING: no phase* dumps found -- the velocity row will be empty. "
@@ -606,11 +617,12 @@ def main() -> None:
     in_window = np.flatnonzero((flash_times >= t_lo_ns * 1e-9)
                                & (flash_times <= t_hi_ns * 1e-9))
     flash_paths = [all_flash[i] for i in in_window]
-    flash_gyro = (flash_times[in_window] - t_lo_ns * 1e-9) / targets.gyroperiod_s
+    flash_gyro = ((flash_times[in_window] - t_lo_ns * 1e-9)
+                  / targets.upstream.gyroperiod.to_value(u.s))
     print(f"FLASH  : {len(flash_paths)} dumps in {t_lo_ns}-{t_hi_ns} ns "
           f"(0-{flash_gyro.max():.4f} T_ci)")
     print(f"         WarpX covers 0-{warpx_gyro.max():.4f} T_ci of the "
-          f"{scaling.t_run_gyro:.4f} T_ci target")
+          f"{scales.run_gyroperiods:.4f} T_ci target")
 
     warpx_fronts = np.array([f["front_di"] for f in warpx_frames_all])
 

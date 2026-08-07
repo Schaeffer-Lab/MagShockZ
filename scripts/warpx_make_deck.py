@@ -90,12 +90,7 @@ def report(config: dict, scales: units.DeckScales) -> str:
                  f"{cost['macroparticles'] / 1e6:.0f}M macroparticles")
 
     if flash is not None:
-        target = flash.invariants()
-        lines += ["", f"{'invariant':<14}{'FLASH':>12}{'deck':>12}{'rel':>10}"]
-        for name, value in scales.invariants().items():
-            expected = target[name]
-            rel = abs(value / expected - 1.0) if expected else 0.0
-            lines.append(f"{name:<14}{expected:>12.5g}{value:>12.5g}{rel:>10.1e}")
+        lines += ["", units.invariant_table(scales)]
     return "\n".join(lines)
 
 

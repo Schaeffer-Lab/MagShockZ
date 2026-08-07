@@ -36,7 +36,7 @@ Run in the `analysis` conda env (yt + unyt).
 """
 
 import argparse
-import dataclasses
+
 import os
 import sys
 
@@ -44,13 +44,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import astropy.units as u
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 from magshockz.common import analysis_utils
 from magshockz.common import flash_source
 from magshockz.common import flash_utils as fu
-from magshockz.common import heater_piston_scaling as hps
+from magshockz.analysis.warpx import flash as wf
+from magshockz.init.warpx import units
 from magshockz.common import piston_profile as pp
 from magshockz.common import plot_style
 from magshockz.common import yaml_edit
@@ -284,9 +286,9 @@ def check_against_flash_par(unperturbed: dict, expected: dict | None) -> list[st
 
 
 def build_targets(per_dump: list, trajectory: pp.FrontTrajectory, *,
-                  a_amb: float, a_piston: float, z_piston: float,
-                  source: str, upstream: dict | None = None) -> hps.PistonTargets:
-    """Window-averaged :class:`PistonTargets` in SI, ready for the run spec.
+                  a_amb: float, r_spot_um: float,
+                  source: str, upstream: dict | None = None) -> wf.MeasuredPiston:
+    """Window-averaged :class:`MeasuredPiston` at FLASH's own EOS ionization state.
 
     The ambient state is averaged over ONLY the dumps whose upstream is still pristine.
     Once the diamagnetic cavity has swallowed the whole line-out there is no ambient left
@@ -316,57 +318,22 @@ def build_targets(per_dump: list, trajectory: pp.FrontTrajectory, *,
                 f"extend the config's line_of_sight end_point.")
         return float(finite.mean())
 
-    return hps.PistonTargets(
-        n_amb_per_m3=1e6 * window_mean(upstream_dumps, "amb_ne_cm3"),
-        b_amb_tesla=1e-4 * window_mean(upstream_dumps, "amb_B_gauss"),
-        te_amb_ev=window_mean(upstream_dumps, "amb_Te_eV"),
-        ti_amb_ev=window_mean(upstream_dumps, "amb_Ti_eV"),
-        n_piston_drive_per_m3=1e6 * window_mean(per_dump, "n_piston_drive_cm3"),
-        v_front_ms=1e-2 * abs(trajectory.speed),
-        l_piston_m=1e-2 * window_mean(per_dump, "scale_length_cm"),
-        r_spot_m=np.nan,          # filled in by the caller from the config
-        t_window_s=float(per_dump[-1]["t_s"] - per_dump[0]["t_s"]),
-        a_amb=a_amb,
-        z_amb=window_mean(upstream_dumps, "amb_zbar"),
-        a_piston=a_piston,
-        z_piston=z_piston,
+    return wf.MeasuredPiston(
+        upstream=units.Upstream(
+            ion=wf.eos_ion(a_amb, window_mean(upstream_dumps, "amb_zbar")),
+            electron_density=1e6 * window_mean(upstream_dumps, "amb_ne_cm3") * u.m**-3,
+            magnetic_field=1e-4 * window_mean(upstream_dumps, "amb_B_gauss") * u.T,
+            electron_temperature=window_mean(upstream_dumps, "amb_Te_eV") * u.eV,
+            ion_temperature=window_mean(upstream_dumps, "amb_Ti_eV") * u.eV,
+        ),
+        piston_electron_density=(1e6 * window_mean(per_dump, "n_piston_drive_cm3")
+                                 * u.m**-3),
+        front_speed=1e-2 * abs(trajectory.speed) * u.m / u.s,
+        piston_scale_length=1e-2 * window_mean(per_dump, "scale_length_cm") * u.m,
+        spot_radius=r_spot_um * u.um,
+        window=float(per_dump[-1]["t_s"] - per_dump[0]["t_s"]) * u.s,
         source=source,
     )
-
-
-def yaml_block(targets: hps.PistonTargets, source: flash_source.FlashSource,
-               per_dump: list, trajectory: pp.FrontTrajectory) -> str:
-    """The ``flash_target:`` block to paste into the heater run spec.
-
-    Rendered with a dot in every mantissa and a sign on every exponent, because PyYAML
-    is YAML 1.1 and would otherwise load these as strings (see CLAUDE.md).
-    """
-    t_lo_ns = per_dump[0]["t_s"] * 1e9
-    t_hi_ns = per_dump[-1]["t_s"] * 1e9
-    return "\n".join([
-        "flash_target:",
-        f"  source: {targets.source}, front fit rms "
-        f"{trajectory.residual_rms / CM_PER_UM:.1f} um",
-        f"  dataset: {source.flash_dir}",
-        "  line_of_sight:",
-        f"    start_point: {list(source.line_start)}",
-        f"    end_point:   {list(source.line_end)}",
-        f"  t_window_ns: [{t_lo_ns:.3f}, {t_hi_ns:.3f}]",
-        "",
-        f"  n_amb_per_m3: {targets.n_amb_per_m3:.4e}",
-        f"  b_amb_tesla: {targets.b_amb_tesla:.6g}",
-        f"  te_amb_ev: {targets.te_amb_ev:.6g}",
-        f"  ti_amb_ev: {targets.ti_amb_ev:.6g}",
-        f"  n_piston_drive_per_m3: {targets.n_piston_drive_per_m3:.4e}",
-        f"  v_front_ms: {targets.v_front_ms:.4e}",
-        f"  l_piston_m: {targets.l_piston_m:.4e}",
-        f"  r_spot_m: {targets.r_spot_m:.4e}",
-        "",
-        f"  a_amb: {targets.a_amb:.6g}",
-        f"  z_amb: {targets.z_amb:.6g}",
-        f"  a_piston: {targets.a_piston:.6g}",
-        f"  z_piston: {targets.z_piston:.6g}",
-    ])
 
 
 def flash_block(per_dump: list, trajectory: pp.FrontTrajectory,
@@ -444,9 +411,10 @@ def upstream_comparison(unperturbed: dict, per_dump: list) -> list[str]:
     return lines
 
 
-def summary(targets: hps.PistonTargets, per_dump: list,
+def summary(targets: wf.MeasuredPiston, per_dump: list,
             trajectory: pp.FrontTrajectory) -> str:
     """Per-dump table plus the derived dimensionless state."""
+    up = targets.upstream
     n_upstream = sum(1 for d in per_dump if d["has_upstream"])
     n_resolved = sum(1 for d in per_dump if d["edge_resolved"])
     lines = [
@@ -482,24 +450,26 @@ def summary(targets: hps.PistonTargets, per_dump: list,
         f"Dumps with a resolved piston edge: {n_resolved}/{len(per_dump)}",
         "",
         "Ambient averaged over the upstream-bearing dumps; derived dimensionless state",
-        f"  n_e = {targets.n_amb_per_m3:.3e} m^-3   n_i = "
-        f"{targets.n_i_amb_per_m3:.3e} m^-3   Zbar = {targets.z_amb:.2f}",
-        f"  |B| = {targets.b_amb_tesla:.2f} T   T_e = {targets.te_amb_ev:.1f} eV   "
-        f"T_i = {targets.ti_amb_ev:.1f} eV",
-        f"  v_A = {targets.v_alfven_ms / 1e3:.1f} km/s   c_s = "
-        f"{targets.c_s_ms / 1e3:.1f} km/s   v_fast = "
-        f"{targets.v_fast_ms / 1e3:.1f} km/s",
-        f"  d_i = {targets.d_i_m * 1e6:.1f} um   T_ci = "
-        f"{targets.gyroperiod_s * 1e9:.3f} ns   window = "
-        f"{targets.t_window_gyro:.3f} T_ci",
+        f"  n_e = {up.electron_density.to_value('m-3'):.3e} m^-3   n_i = "
+        f"{up.ion_density.to_value('m-3'):.3e} m^-3   "
+        f"Zbar = {up.ion.charge_number:.2f}",
+        f"  |B| = {up.magnetic_field.to_value('T'):.2f} T   "
+        f"T_e = {up.electron_temperature.to_value('eV'):.1f} eV   "
+        f"T_i = {up.ion_temperature.to_value('eV'):.1f} eV",
+        f"  v_A = {up.alfven_speed.to_value('km/s'):.1f} km/s   "
+        f"c_s = {up.sound_speed.to_value('km/s'):.1f} km/s   "
+        f"v_fast = {up.fast_speed.to_value('km/s'):.1f} km/s",
+        f"  d_i = {up.ion_skin_depth.to_value('um'):.1f} um   "
+        f"T_ci = {up.gyroperiod.to_value('ns'):.3f} ns   "
+        f"window = {targets.window_gyroperiods:.3f} T_ci",
         "",
         f"  M_A  = {targets.mach_alfven:.3f}    M_ms = {targets.mach_magnetosonic:.3f}"
-        f"   ({'SUPER' if targets.mach_magnetosonic > 2.76 else 'sub'}-critical; "
-        f"the ion-reflection threshold is 2.76)",
-        f"  beta_e = {targets.beta_e:.3f}   beta_i = {targets.beta_i:.3f}",
+        f"   ({'SUPER' if targets.is_supercritical else 'sub'}-critical; "
+        f"the ion-reflection threshold is {wf.ION_REFLECTION_MACH})",
+        f"  beta_e = {float(up.beta_e):.3f}   beta_i = {float(up.beta_i):.3f}",
         f"  n_piston/n_amb = {targets.contrast:.2f}   "
-        f"L_piston/d_i = {targets.l_piston_di:.3f}   "
-        f"r_spot/d_i = {targets.r_spot_di:.3f}",
+        f"L_piston/d_i = {targets.scale_length_over_di:.3f}   "
+        f"r_spot/d_i = {targets.spot_radius_over_di:.3f}",
     ]
     if n_resolved < len(per_dump):
         lines += [
@@ -522,7 +492,7 @@ def summary(targets: hps.PistonTargets, per_dump: list,
     return "\n".join(lines)
 
 
-def plot(per_dump: list, targets: hps.PistonTargets, trajectory: pp.FrontTrajectory,
+def plot(per_dump: list, targets: wf.MeasuredPiston, trajectory: pp.FrontTrajectory,
          n_profiles: int, out_path: str) -> None:
     """Four panels: piston profiles, their collapse, the trajectory, the ambient."""
     fig, axes = plt.subplots(2, 2, figsize=(14, 9))
@@ -606,7 +576,7 @@ def plot(per_dump: list, targets: hps.PistonTargets, trajectory: pp.FrontTraject
         f"FLASH piston along the LOS — window-averaged "
         f"$M_A$ = {targets.mach_alfven:.2f}, "
         f"$M_{{ms}}$ = {targets.mach_magnetosonic:.2f}, "
-        f"$\\beta_e$ = {targets.beta_e:.2f}, "
+        f"$\\beta_e$ = {float(targets.upstream.beta_e):.2f}, "
         f"$n_\\mathrm{{piston}}/n_\\mathrm{{amb}}$ = {targets.contrast:.1f}",
         fontsize=13)
     fig.tight_layout()
@@ -678,18 +648,16 @@ def main() -> None:
         np.array([d["t_s"] for d in per_dump]),
         np.array([d["x_front_cm"] for d in per_dump]))
 
-    targets = build_targets(
-        per_dump, trajectory,
-        a_amb=float(cfg.get("a_amb", 26.98)), a_piston=a_piston,
-        z_piston=float(cfg.get("z_piston", 14.0)),
-        source=(f"scripts/flash_piston_profile.py, piston over {len(per_dump)} dumps, "
-                f"upstream = {args.upstream}"),
-        upstream=unperturbed)
     # The transverse piston scale is the laser spot, which no line-out along the
     # expansion axis can see; it comes from the FLASH runtime parameters
     # (flash.par ed_gaussianRadiusMajor_1 = 500e-4 cm for this dataset).
     r_spot_um = float(cfg.get("laser_spot_radius_um", 500.0))
-    targets = dataclasses.replace(targets, r_spot_m=r_spot_um * 1e-6)
+    targets = build_targets(
+        per_dump, trajectory,
+        a_amb=float(cfg.get("a_amb", 26.98)), r_spot_um=r_spot_um,
+        source=(f"scripts/flash_piston_profile.py, piston over {len(per_dump)} dumps, "
+                f"upstream = {args.upstream}"),
+        upstream=unperturbed)
 
     text = summary(targets, per_dump, trajectory)
     if unperturbed is not None:
@@ -708,8 +676,7 @@ def main() -> None:
 
     txt_path = os.path.join(out_dir, "flash_piston_profile.txt")
     with open(txt_path, "w") as handle:
-        handle.write(text + "\n\n" + block + "\n\n"
-                     + yaml_block(targets, source, per_dump, trajectory) + "\n")
+        handle.write(text + "\n\n" + block + "\n")
 
     png_path = os.path.join(out_dir, "flash_piston_profile.png")
     plot(per_dump, targets, trajectory, args.n_profiles, png_path)
@@ -741,7 +708,7 @@ def main() -> None:
         front_t0_s=np.asarray(trajectory.t0),
         front_residual_rms_cm=np.asarray(trajectory.residual_rms),
         **{f"target_{key}": np.asarray(value)
-           for key, value in dataclasses.asdict(targets).items()},
+           for key, value in targets.invariants().items()},
         **{f"invariant_{key.replace('/', '_over_')}": np.asarray(value)
            for key, value in targets.invariants().items()},
         config_path=np.asarray(os.path.abspath(args.config)),
