@@ -35,6 +35,13 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 *.pyo
+*.egg-info/
+.coverage
+.pytest_cache/
+
+# LibreOffice lock files #
+##########################
+.~lock.*#
 
 # Node.js #
 ############
