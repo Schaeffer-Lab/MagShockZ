@@ -62,6 +62,7 @@ import numpy as np
 import unyt as u
 import yt
 from matplotlib.colors import LogNorm
+from scipy.ndimage import map_coordinates
 
 yt.set_log_level(50)   # suppress yt chatter
 
@@ -333,59 +334,86 @@ class RegionsTuner:
             if "x_downstream_start_cm" in per else self.x_shock_um - 200.0
 
     def _load_slice(self, snap_file, line_start, line_end, slice_axis, halfwidth_um):
-        """Build a 2D density slice through the LOS, oriented so the LOS axis is
-        horizontal (= 'distance along LOS', shared with the line-out panels).
+        """2D density slice around the LOS, resampled into the LOS's own coordinates.
 
-        Returns a dict: ``img`` [transverse, los] in cm⁻³, ``extent`` (LOS-distance
-        µm horizontal, transverse µm vertical) for ``imshow``, and ``los_tr_um``
-        (the LOS's transverse position, for the guide line).
+        The horizontal axis is **distance along the ray** and the vertical is
+        perpendicular offset from it, so the image shares its abscissa with the
+        line-out panels and the shock/downstream markers fall on the density jump
+        they were placed from.
+
+        This has to resample rather than crop an axis-aligned slice.  Taking the
+        Cartesian coordinate along the ray's dominant axis as the horizontal — which
+        is what an axis-aligned frame buffer gives — compresses the axis by cos(theta)
+        against the line-outs' path length: 15% at 30 deg and 41% at 45 deg, so the
+        markers would sit well off the feature.  An off-axis ray is also a diagonal
+        across such a slice, not a horizontal line.
+
+        Returns ``img`` [perpendicular, along-LOS] in cm^-3, ``extent`` in µm for
+        imshow, and ``los_tr_um`` = 0 (the ray is the horizontal axis by construction).
         """
         start = np.asarray(line_start, dtype=float)   # cm
         end   = np.asarray(line_end,   dtype=float)
-        los_axis = int(np.argmax(np.abs(end - start)))      # 1 (y) for this run
+        direction = end - start
+        length = float(np.linalg.norm(direction))
+        if length <= 0.0:
+            raise ValueError("line_start and line_end coincide")
 
+        # The slice plane must CONTAIN the ray, i.e. the ray must not move along the
+        # plane's normal.  Prefer the requested axis; fall back to one that qualifies.
         ax_idx = {"x": 0, "y": 1, "z": 2}[slice_axis]
-        if ax_idx == los_axis:                              # slice must contain the LOS
-            ax_idx = next(a for a in (2, 1, 0) if a != los_axis)
-        slice_coord = float(start[ax_idx])                  # plane passes through the LOS
+        if abs(direction[ax_idx]) > 1.0e-9 * length:
+            candidates = [a for a in (2, 1, 0) if abs(direction[a]) <= 1.0e-9 * length]
+            if not candidates:
+                raise ValueError(
+                    "the LOS lies in no coordinate plane (it moves along all three "
+                    "axes), so no 2D slice can contain it")
+            ax_idx = candidates[0]
+        slice_coord = float(start[ax_idx])
 
         ds = yt.load_for_osiris(snap_file)
         ax_h = ds.coordinates.x_axis[ax_idx]   # in-plane horizontal data-axis index
         ax_v = ds.coordinates.y_axis[ax_idx]   # in-plane vertical   data-axis index
-        tr_axis = ax_h if ax_v == los_axis else ax_v        # the transverse in-plane axis
+
+        # In-plane unit vectors: along the ray, and perpendicular to it.
+        e_s = np.array([direction[ax_h], direction[ax_v]]) / length
+        e_n = np.array([-e_s[1], e_s[0]])
 
         hw_cm = ((halfwidth_um or 0.0) * u.um).to("cm").value
-        def _span(a):  # (width_cm, center_cm) for in-plane axis a
-            if a == los_axis:
-                return abs(end[a] - start[a]), 0.5 * (start[a] + end[a])
-            if hw_cm > 0:
-                return 2.0 * hw_cm, start[a]
-            le = float(ds.domain_left_edge[a].to("cm")); re = float(ds.domain_right_edge[a].to("cm"))
-            return re - le, 0.5 * (le + re)
+        if hw_cm <= 0.0:
+            hw_cm = 0.15 * length
 
-        wh, ch = _span(ax_h)
-        wv, cv = _span(ax_v)
+        # Sample the plane over the ray's bounding box, then interpolate onto (s, n).
+        origin = np.array([start[ax_h], start[ax_v]])
+        corners = np.array([origin + s * e_s + n * e_n
+                            for s in (0.0, length) for n in (-hw_cm, hw_cm)])
+        box_lo, box_hi = corners.min(axis=0), corners.max(axis=0)
+        for k, a in enumerate((ax_h, ax_v)):
+            box_lo[k] = max(box_lo[k], float(ds.domain_left_edge[a].to("cm")))
+            box_hi[k] = min(box_hi[k], float(ds.domain_right_edge[a].to("cm")))
+
+        res = 768
         center = [slice_coord, slice_coord, slice_coord]
-        center[ax_h], center[ax_v] = ch, cv
-        res_h = 512 if ax_h == los_axis else 256
-        res_v = 512 if ax_v == los_axis else 256
-
+        center[ax_h] = 0.5 * (box_lo[0] + box_hi[0])
+        center[ax_v] = 0.5 * (box_lo[1] + box_hi[1])
         frb = ds.slice(ax_idx, slice_coord).to_frb(
-            width=((wh, "cm"), (wv, "cm")), resolution=(res_h, res_v), center=center)
-        img = np.array(frb[("gas", "El_number_density")])   # shape (res_v, res_h) = [ax_v, ax_h]
-        b = [float(v.to("cm")) for v in frb.bounds]         # (h_lo,h_hi,v_lo,v_hi) cm
+            width=((box_hi[0] - box_lo[0], "cm"), (box_hi[1] - box_lo[1], "cm")),
+            resolution=(res, res), center=center)
+        img = np.array(frb[("gas", "El_number_density")])   # [ax_v, ax_h]
+        b = [float(v.to("cm")) for v in frb.bounds]         # (h_lo, h_hi, v_lo, v_hi)
 
-        if ax_h == los_axis:                                # LOS already horizontal
-            disp, (los_lo, los_hi), (tr_lo, tr_hi) = img, (b[0], b[1]), (b[2], b[3])
-        else:                                               # LOS is vertical -> transpose
-            disp, (los_lo, los_hi), (tr_lo, tr_hi) = img.T, (b[2], b[3]), (b[0], b[1])
+        n_along, n_perp = 640, 256
+        s_grid = np.linspace(0.0, length, n_along)
+        n_grid = np.linspace(-hw_cm, hw_cm, n_perp)
+        S, N = np.meshgrid(s_grid, n_grid)
+        p_h = origin[0] + S * e_s[0] + N * e_n[0]
+        p_v = origin[1] + S * e_s[1] + N * e_n[1]
+        col = (p_h - b[0]) / (b[1] - b[0]) * (img.shape[1] - 1)
+        row = (p_v - b[2]) / (b[3] - b[2]) * (img.shape[0] - 1)
+        disp = map_coordinates(img, [row, col], order=1, mode="nearest")
 
-        los0 = start[los_axis]                              # lineout x is distance from start
-        edges_cm = np.array([los_lo - los0, los_hi - los0, tr_lo, tr_hi]) * u.cm
-        extent = list(edges_cm.to("um").value)
-        return dict(img=disp, extent=extent,
-                    los_tr_um=(float(start[tr_axis]) * u.cm).to("um").value,
-                    tr_label=f"transverse {'xyz'[tr_axis]} [$\\mu$m]")
+        extent = list((np.array([0.0, length, -hw_cm, hw_cm]) * u.cm).to("um").value)
+        return dict(img=disp, extent=extent, los_tr_um=0.0,
+                    tr_label=r"perpendicular offset [$\mu$m]")
 
     def render(self):
         if self.slice is not None:
