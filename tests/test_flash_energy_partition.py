@@ -462,3 +462,72 @@ def test_heating_summary_names_both_species_and_the_baseline():
     text = fep.heating_summary(_heating())
     assert "electrons" in text and "ions" in text
     assert "2.000" in text          # the T2/T1 it was handed
+
+
+def test_heating_summary_converts_energy_density_to_the_unit_it_prints():
+    """The printed number must be in the printed unit, not merely labelled with it.
+
+    heating_partition is unit-agnostic, so a caller working in eV and cm^-3 (which
+    flash_rh_prediction.py does) gets du_th back in eV/cm^3. Formatting that with a
+    bare float() while labelling it erg/cm^3 overstates it by 1/1.602e-12.
+    """
+    result = fep.heating_partition(
+        Te_up=10.0 * unyt.eV, Ti_up=10.0 * unyt.eV,
+        Te_dn=100.0 * unyt.eV, Ti_dn=100.0 * unyt.eV,
+        ne_up=1.0e18 * unyt.cm**-3, ni_up=1.0e18 * unyt.cm**-3,
+        ne_dn=4.0e18 * unyt.cm**-3, ni_dn=4.0e18 * unyt.cm**-3,
+        T_factor=2.0)
+
+    du_e = result["du_th_e"]
+    assert du_e.units.dimensions == (unyt.eV / unyt.cm**3).units.dimensions
+    expected_erg = float(du_e.to("erg/cm**3"))
+    assert fep._in_units(du_e, "erg/cm**3") == pytest.approx(expected_erg)
+
+    text = fep.heating_summary(result)
+    assert "erg/cm" in text
+    # the eV/cm^3 magnitude must NOT be what gets printed under an erg/cm^3 header
+    assert f"{float(du_e):.4g}" not in text
+    assert f"{expected_erg:.4g}" in text
+
+
+def test_heating_summary_accepts_bare_floats_unchanged():
+    """A caller that passes plain floats gets them back verbatim, not converted."""
+    result = fep.heating_partition(
+        Te_up=10.0, Ti_up=10.0, Te_dn=100.0, Ti_dn=100.0,
+        ne_up=1.0, ni_up=1.0, ne_dn=4.0, ni_dn=4.0, T_factor=2.0)
+    assert fep._in_units(result["du_th_e"], "erg/cm**3") == pytest.approx(
+        float(result["du_th_e"]))
+
+
+def test_ionizing_shock_reports_a_sub_unity_ratio_not_a_wild_negative_fraction():
+    """A shock whose measured T falls short of adiabatic must read as meas/adiab < 1.
+
+    FLASH's shocks here are ionizing (Zbar roughly doubles across the front), so the
+    downstream temperature lands far BELOW the adiabatic RH baseline. The signed
+    `anomalous_frac` divides that deficit by the much smaller total heating and
+    produces an unreadable -568%, so the table reports the ratio instead.
+    """
+    result = fep.heating_partition(
+        Te_up=14.7, Ti_up=14.6, Te_dn=199.2, Ti_dn=225.5,
+        ne_up=3.78e18, ni_up=7.50e17, ne_dn=2.51e19, ni_dn=2.14e18,
+        T_factor=85.1)
+
+    for key in ("electron", "ion"):
+        ratio = result[key]["T_dn_over_adiabatic"]
+        assert 0.0 < ratio < 1.0, f"{key} should be sub-adiabatic, got {ratio}"
+        assert result[key]["anomalous"] < 0.0     # the deficit, signed
+
+    text = fep.heating_summary(result)
+    assert "meas/adiab" in text
+    assert "ionizing" in text
+    assert "%" not in text.split("meas/adiab")[1].split("thermal energy")[0]
+
+
+def test_ratio_exceeds_one_for_a_genuinely_super_adiabatic_shock():
+    """The same column reads > 1 when there IS heating above the adiabatic baseline."""
+    result = fep.heating_partition(
+        Te_up=10.0, Ti_up=10.0, Te_dn=60.0, Ti_dn=60.0,
+        ne_up=1.0e18, ni_up=1.0e18, ne_dn=4.0e18, ni_dn=4.0e18,
+        T_factor=2.0)
+    assert result["electron"]["T_dn_over_adiabatic"] == pytest.approx(3.0)
+    assert result["electron"]["anomalous"] > 0.0

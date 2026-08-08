@@ -85,6 +85,34 @@ def main():
                         help="Shock velocity [cm/s] for the ram pressure subtraction. "
                              "Default: read the fitted v_shock from the flash_overview "
                              ".npz (shock rest frame).  Pass 0 to force the lab frame.")
+    parser.add_argument("--downstream-edge", choices=("contact", "config"),
+                        default="contact", dest="downstream_edge",
+                        help="Where the downstream band's inner edge comes from; "
+                             "see flash_rh_prediction.py. Both scripts resolve "
+                             "their bands through shock.resolve_bands, so keep "
+                             "these flags in step between them.")
+    parser.add_argument("--contact-gap-um", type=float, default=50.0,
+                        dest="contact_gap_um",
+                        help="Standoff [µm] between the piston contact and the "
+                             "downstream band (default 50).")
+    parser.add_argument("--jump-band-um", type=float, default=100.0,
+                        dest="jump_band_um",
+                        help="Width [µm] of the thin band just behind the front "
+                             "used for the Rankine-Hugoniot checks (default 100). "
+                             "RH is a LOCAL jump condition, so it must be tested "
+                             "against a band much narrower than the shocked layer "
+                             "-- momentum-flux continuity on this data runs 1.00 "
+                             "over 50 µm and 0.51 over 940 µm. Heating and the e/i "
+                             "partition still use the full layer band. 0 makes the "
+                             "two bands identical.")
+    parser.add_argument("--upstream-gap-um", type=float, default=200.0,
+                        dest="upstream_gap_um",
+                        help="Start the upstream average this far [µm] ahead of "
+                             "the front (default 200).")
+    parser.add_argument("--upstream-width-um", type=float, default=600.0,
+                        dest="upstream_width_um",
+                        help="Width [µm] of the upstream average (default 600); "
+                             "0 means to the end of the ray.")
     parser.add_argument("--window-um", type=float, default=300.0, dest="window_um",
                         help="Half-width [µm] of the zoom window around the shock front "
                              "in the profile plot (default 300 µm).")
@@ -119,7 +147,23 @@ def main():
     x_shock_cm  = args.x_shock_cm
     x_ds_start  = args.x_downstream_start_cm
     v_shock_npz = None
+
+    # Hand-placed front first, exactly as flash_rh_prediction.py resolves it. Falling
+    # straight through to the overview .npz would silently use the config TRAJECTORY
+    # line instead of the placed front, so the two scripts would describe different
+    # shocks even with the band logic shared.
     if x_shock_cm is None:
+        per_dump = flash_source.los_params(cfg, "flash_dump_params", source.label)
+        placed = per_dump.get(args.snapshot_idx % len(all_files))
+        if placed:
+            x_shock_cm = float(placed.get("x_shock_cm", np.nan))
+            if x_ds_start is None:
+                x_ds_start = placed.get("x_downstream_start_cm")
+                x_ds_start = None if x_ds_start is None else float(x_ds_start)
+            print(f"  front from flash_dump_params: "
+                  f"{x_shock_cm * 1.0e4:.0f} µm")
+
+    if x_shock_cm is None or not np.isfinite(x_shock_cm):
         npz_files = sorted(
             f for f in os.listdir(out_dir)
             if f.startswith("flash_overview_") and f.endswith(".npz")
@@ -147,8 +191,9 @@ def main():
             "Shock position not available.  Run flash_overview.py first, or pass "
             "--x-shock-cm explicitly."
         )
-    if x_ds_start is None:
-        raise ValueError("Pass --x-downstream-start-cm explicitly.")
+    if x_ds_start is None and args.downstream_edge == "config":
+        raise ValueError("Pass --x-downstream-start-cm explicitly, "
+                         "or use --downstream-edge contact.")
 
     # Frame for the ram term.  Explicit --v-shock-cms wins; else the fitted
     # v_shock from the overview (shock rest frame); else lab frame.
@@ -170,11 +215,36 @@ def main():
     # Lineout
     # ------------------------------------------------------------------
     print("\nLoading lineout …", flush=True)
-    lo = fu.flash_lineout(snap_file, line_start, line_end)
+    piston_material = str(cfg.get("piston_material", "targ"))
+    lo = fu.flash_lineout(snap_file, line_start, line_end,
+                          extra_fields={piston_material:
+                                        ("flash", piston_material)})
 
     x_cm   = lo["x"].to("cm").value
     x_um   = lo["x"].to("um").value
     t_ns   = (lo["t_s"] * u.s).to("ns").value
+
+    # Same resolver flash_rh_prediction.py uses, so the two scripts measure this
+    # shock over the SAME regions — they reported compressions differing by 3x when
+    # each placed its own bands.
+    UM_PER_CM = 1.0e4
+    bands = shock.resolve_bands(
+        x_cm, np.asarray(lo[piston_material]), x_shock_cm,
+        upstream_gap=args.upstream_gap_um / UM_PER_CM,
+        upstream_width=args.upstream_width_um / UM_PER_CM,
+        contact_gap=args.contact_gap_um / UM_PER_CM,
+        jump_width=args.jump_band_um / UM_PER_CM,
+        x_downstream_config=x_ds_start, edge=args.downstream_edge)
+    if bands.note:
+        print(f"  ! {bands.note}")
+    if bands.x_downstream != x_ds_start:
+        print(f"  x_downstream : {x_ds_start * UM_PER_CM:.0f} (config) -> "
+              f"{bands.x_downstream * UM_PER_CM:.0f} µm  "
+              f"(contact {bands.x_contact * UM_PER_CM:.0f} + "
+              f"{args.contact_gap_um:.0f} µm)")
+        x_ds_start = bands.x_downstream
+    print(f"  upstream band: [{bands.x_upstream_lo * UM_PER_CM:.0f}, "
+          f"{bands.x_upstream_hi * UM_PER_CM:.0f}] µm")
 
     # ------------------------------------------------------------------
     # Momentum-flux (pressure) channels  (unyt arrays in dyn/cm²)
@@ -190,20 +260,26 @@ def main():
         B_mag    = lo["B_mag"],
         B_para   = lo["B_para"],
     )
-    result = fep.partition_by_region(momflux, x_cm, x_shock_cm, x_ds_start)
+    # Two bands, two questions: the channel partition describes the whole shocked
+    # layer (what the experiment would diagnose), while the continuity check is a
+    # LOCAL jump condition and is therefore taken over the thin band at the front.
+    result = fep.partition_by_region(momflux, x_cm, x_shock_cm, x_ds_start,
+                                     x_upstream_end=bands.x_upstream_hi)
+    result_jump = fep.partition_by_region(momflux, x_cm, x_shock_cm, bands.x_jump,
+                                          x_upstream_end=bands.x_upstream_hi)
     labels = [LABELS[c] for c in CHANNELS]
 
     print("\n--- Momentum-flux (pressure) partition (CONSERVED: dn/up ≈ 1) ---")
     print(fep.partition_summary(result, channels=CHANNELS, labels=labels, unit="dyn/cm²"))
-    cont = fep.continuity_check(result)
+    cont = fep.continuity_check(result_jump)
     print(fep.continuity_summary(cont))
 
     # ------------------------------------------------------------------
     # Compression vs Rankine--Hugoniot (oblique MHD theory, shared with OSIRIS)
     # ------------------------------------------------------------------
     gamma = args.gamma if args.gamma is not None else float(cfg.get("gamma", 5.0 / 3.0))
-    up_mask = x_cm > x_shock_cm
-    dn_mask = (x_cm >= x_ds_start) & (x_cm <= x_shock_cm)
+    up_mask = bands.upstream_mask(x_cm)
+    dn_mask = bands.downstream_mask(x_cm)
 
     def _reg(field, units, mask):
         return float(np.nanmean(lo[field].to(units).value[mask]))
@@ -218,7 +294,9 @@ def main():
 
     v_para_up = _reg("v_para", "cm/s", up_mask)
     v_inflow = abs(v_shock_cms - v_para_up)        # shock-frame normal inflow [cm/s]
-    check = fep.compression_check(_prims(up_mask), _prims(dn_mask), v_inflow, gamma=gamma)
+    jump_mask = bands.jump_mask(x_cm)
+    check = fep.compression_check(_prims(up_mask), _prims(jump_mask),
+                                  v_inflow, gamma=gamma)
     print("\n--- Compression vs Rankine--Hugoniot ---")
     print(fep.compression_summary(check))
 

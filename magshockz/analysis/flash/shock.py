@@ -8,7 +8,274 @@ models call for different markers, plus a robust linear trajectory fit.
 Dependency-light (numpy only) so it is unit-testable without the OSIRIS/yt stacks.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
+
+
+def detect_front_outermost(x, rho, threshold: float = 1.5,
+                           n_far: int = 150) -> float:
+    """Outermost position where the density still exceeds ``threshold`` x ambient.
+
+    The gradient detectors above find the steepest jump, which stops describing the
+    blast once the piston cavity opens up behind it: the steepest drop in the profile
+    then sits at the cavity wall near the origin rather than at the front, and the
+    tracked position collapses inward.  Marching in from the far field instead is
+    monotone in the thing we actually want -- how far the disturbance has reached --
+    and so stays locked on the front for the whole run.
+
+    Parameters
+    ----------
+    x :
+        Position along the line of sight, increasing away from the target.
+    rho :
+        Mass density on the same grid, in any unit; only its ratio is used.
+    threshold :
+        Compression, relative to the far-field ambient, that counts as disturbed.
+    n_far :
+        How many trailing samples define the far-field ambient (their median).
+
+    Returns
+    -------
+    float
+        Position of the front in ``x``'s unit, or nan when nothing on the ray
+        exceeds the threshold.
+    """
+    x = np.asarray(x, dtype=float)
+    rho = np.asarray(rho, dtype=float)
+    ambient = np.nanmedian(rho[-n_far:])
+    if not np.isfinite(ambient) or ambient <= 0.0:
+        return float("nan")
+    disturbed = np.flatnonzero(rho > threshold * ambient)
+    return float(x[disturbed.max()]) if disturbed.size else float("nan")
+
+
+def contact_position(x, mass_fraction, threshold: float = 1.0e-3) -> float:
+    """Outermost position at which piston material is still present.
+
+    This is the inner edge the downstream band has to respect.  The band is meant to
+    hold shocked *ambient*, and past the contact the ray is in piston material -- a
+    different element with a different charge state and equation of state -- so a
+    band that reaches across it averages two distinct plasmas into one "downstream"
+    state and reports a compression that belongs to neither.
+
+    Parameters
+    ----------
+    x :
+        Position along the line of sight, increasing away from the target.
+    mass_fraction :
+        The piston material's mass fraction on the same grid (FLASH's ``targ``).
+    threshold :
+        Mass fraction above which the material counts as present.  Well below any
+        real contamination, since FLASH's advected fractions have small numerical
+        tails on the ambient side of the contact.
+
+    Returns
+    -------
+    float
+        Position of the contact in ``x``'s unit, or nan when no piston material
+        reaches this ray at all.
+    """
+    x = np.asarray(x, dtype=float)
+    fraction = np.asarray(mass_fraction, dtype=float)
+    present = np.flatnonzero(np.isfinite(fraction) & (fraction > threshold))
+    return float(x[present.max()]) if present.size else float("nan")
+
+
+@dataclass(frozen=True)
+class ShockBands:
+    """The two windows a shock measurement is averaged over, and where they came from.
+
+    Every position is in the same unit as the ``x`` handed to :func:`resolve_bands`
+    (cm throughout the FLASH scripts).  This exists so that the scripts measuring the
+    *same* shock cannot disagree about *where* it is: resolving the bands in one place
+    is what keeps ``flash_rh_prediction`` and ``flash_pressure_partition`` reporting
+    the same compression, which they did not when each did it inline.
+
+    ``note`` is empty when both bands resolved as asked, and otherwise says which
+    fallback was taken -- a band that quietly relocated is the kind of thing that
+    turns into a wrong number in a table nobody re-derives.
+
+    There are TWO downstream bands because two different questions are being asked
+    of the same shock, and they do not want the same region:
+
+    * the **jump band** (``x_jump`` to the front) is thin, because the
+      Rankine--Hugoniot conditions are a *local* statement at the discontinuity.
+      Tested over a band much wider than the front they fail by construction --
+      measured here as momentum-flux continuity degrading from 1.00 at 50 µm to
+      0.51 at 940 µm -- since the inner edge holds material shocked ns earlier,
+      when the shock was faster and the upstream denser.
+    * the **layer band** (``x_downstream`` to the front) is the whole shocked
+      layer, because that is the plasma an experiment would diagnose, and so it
+      is the right region for downstream heating, Zbar and the e/i partition.
+    """
+
+    x_shock: float
+    x_downstream: float
+    x_jump: float
+    x_upstream_lo: float
+    x_upstream_hi: float
+    x_contact: float
+    downstream_edge: str
+    note: str = ""
+
+    def upstream_mask(self, x) -> np.ndarray:
+        """Boolean mask selecting the upstream window out of ``x``."""
+        x = np.asarray(x, dtype=float)
+        return (x >= self.x_upstream_lo) & (x <= self.x_upstream_hi)
+
+    def downstream_mask(self, x) -> np.ndarray:
+        """Boolean mask selecting the full shocked layer out of ``x``."""
+        x = np.asarray(x, dtype=float)
+        return (x >= self.x_downstream) & (x <= self.x_shock)
+
+    def jump_mask(self, x) -> np.ndarray:
+        """Boolean mask selecting the thin band just behind the front."""
+        x = np.asarray(x, dtype=float)
+        return (x >= self.x_jump) & (x <= self.x_shock)
+
+
+def resolve_bands(x, piston_fraction, x_shock: float, *,
+                  upstream_gap: float, upstream_width: float,
+                  contact_gap: float, jump_width: float = 0.0,
+                  x_downstream_config: float = None,
+                  edge: str = "contact") -> ShockBands:
+    """Place the upstream and downstream averaging windows around ``x_shock``.
+
+    Upstream is a window starting ``upstream_gap`` ahead of the front and
+    ``upstream_width`` wide, not everything beyond it: the state that sets the Mach
+    numbers is the gas the shock is about to hit, and averaging to the end of the ray
+    mixes in far field the blast has not reached.  ``upstream_width <= 0`` restores
+    the to-the-end-of-the-ray behaviour.
+
+    Downstream runs from the front back to ``contact_gap`` short of the outermost
+    piston material (``edge="contact"``), so the band is as wide as the shocked
+    ambient actually is rather than a fixed offset; ``edge="config"`` uses
+    ``x_downstream_config`` verbatim.  The contact edge falls back to the configured
+    value -- recording why in ``note`` -- when no piston material reaches the ray, or
+    when the contact has caught up with the front.
+
+    All lengths share ``x``'s unit.
+
+    Raises
+    ------
+    ValueError
+        If no downstream edge can be established, or the upstream window starts
+        past the end of the ray.
+    """
+    x = np.asarray(x, dtype=float)
+    contact = (float("nan") if piston_fraction is None
+               else contact_position(x, piston_fraction))
+
+    note = ""
+    x_downstream = x_downstream_config
+    if edge == "contact":
+        if not np.isfinite(contact):
+            note = "no piston material on this ray; kept the configured downstream edge"
+        elif contact + contact_gap >= x_shock:
+            note = (f"piston contact ({contact:.6g}) has reached the front "
+                    f"({x_shock:.6g}); kept the configured downstream edge")
+        else:
+            x_downstream = contact + contact_gap
+
+    if x_downstream is None or not np.isfinite(x_downstream):
+        raise ValueError(
+            "no downstream edge: the contact could not be located and no "
+            "x_downstream_start was configured or passed.")
+    if x_downstream >= x_shock:
+        raise ValueError(
+            f"downstream edge {x_downstream:.6g} is at or past the front "
+            f"{x_shock:.6g}; the band would be empty.")
+
+    x_upstream_lo = x_shock + upstream_gap
+    if x_upstream_lo > x.max():
+        raise ValueError(
+            f"the upstream window starts at {x_upstream_lo:.6g}, past the end of the "
+            f"ray ({x.max():.6g}). Shorten the gap or extend the line of sight.")
+    x_upstream_hi = (x.max() if upstream_width <= 0.0
+                     else min(x_upstream_lo + upstream_width, x.max()))
+
+    # The jump band never reaches past the layer band's inner edge: outside the
+    # shocked layer there is nothing for a jump condition to be measured against.
+    x_jump = (max(x_shock - jump_width, x_downstream) if jump_width > 0.0
+              else x_downstream)
+
+    return ShockBands(x_shock=float(x_shock), x_downstream=float(x_downstream),
+                      x_jump=float(x_jump),
+                      x_upstream_lo=float(x_upstream_lo),
+                      x_upstream_hi=float(x_upstream_hi),
+                      x_contact=float(contact), downstream_edge=edge, note=note)
+
+
+@dataclass(frozen=True)
+class FrontFit:
+    """A shock trajectory fitted locally around one time, linear and quadratic.
+
+    Times are in ns, positions in µm, so a slope is µm/ns -- which is km/s exactly,
+    with no conversion factor.  ``acceleration`` is therefore km/s per ns.
+
+    ``v_linear`` and ``v_quadratic`` agree to machine precision whenever the window
+    is symmetric about ``t`` and evenly sampled: the curvature term is even about
+    the centre and the linear basis is odd, so the two are orthogonal over such a
+    window and the quadratic term cannot bias the fitted slope.  They separate only
+    at the ends of a run, where the available window goes lopsided.  The quadratic
+    still earns its place through the other two fields: ``acceleration`` is the
+    deceleration of the blast, and ``rms_quadratic`` is an honest noise estimate
+    because it no longer counts real curvature as scatter -- so a track whose
+    ``rms_quadratic`` stays large is mis-tracking, not merely curved.
+    """
+
+    t: float
+    v_linear: float
+    v_quadratic: float
+    acceleration: float
+    rms_linear: float
+    rms_quadratic: float
+    n_points: int
+
+
+def local_front_fit(t, x, target: float, half_width: float = 1.0) -> FrontFit:
+    """Fit the front track ``x(t)`` over ``target`` +/- ``half_width``.
+
+    Parameters
+    ----------
+    t, x :
+        The front track: times [ns] and positions [µm], any order, nans ignored.
+    target :
+        Time [ns] the fit is centred on and the speed is quoted at.
+    half_width :
+        Half-width [ns] of the fitting window.  Keep it narrow enough that the
+        trajectory is locally smooth; 1 ns is 9 dumps at this run's 0.25 ns cadence.
+
+    Returns
+    -------
+    FrontFit
+        Quadratic fields are nan when the window holds fewer than 3 points; every
+        field is nan when it holds fewer than 2.
+    """
+    t = np.asarray(t, dtype=float)
+    x = np.asarray(x, dtype=float)
+    window = np.isfinite(t) & np.isfinite(x) & (np.abs(t - target) <= half_width + 1e-9)
+    tw, xw = t[window], x[window]
+
+    nan = float("nan")
+    if tw.size < 2:
+        return FrontFit(target, nan, nan, nan, nan, nan, int(tw.size))
+
+    def slope_and_rms(deg):
+        coeffs = np.polyfit(tw, xw, deg)
+        residual = xw - np.polyval(coeffs, tw)
+        return (float(np.polyval(np.polyder(coeffs), target)),
+                float(np.sqrt(np.mean(residual**2))),
+                coeffs)
+
+    v_linear, rms_linear, _ = slope_and_rms(1)
+    if tw.size < 3:
+        return FrontFit(target, v_linear, nan, nan, rms_linear, nan, int(tw.size))
+
+    v_quadratic, rms_quadratic, quad = slope_and_rms(2)
+    return FrontFit(target, v_linear, v_quadratic, float(2.0 * quad[0]),
+                    rms_linear, rms_quadratic, int(tw.size))
 
 
 def detect_front_edge(x, profile, x_pred, half_window,

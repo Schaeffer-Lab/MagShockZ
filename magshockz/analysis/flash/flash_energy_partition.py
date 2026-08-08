@@ -142,6 +142,7 @@ def partition_by_region(
     x:      np.ndarray,
     x_shock: float,
     x_downstream_start: float,
+    x_upstream_end: float | None = None,
 ) -> dict:
     """Average each energy channel over upstream and downstream windows.
 
@@ -149,8 +150,13 @@ def partition_by_region(
     ----------
     energy              : dict from energy_densities()
     x                   : spatial coordinate [cm], same grid as energy arrays
-    x_shock             : shock position [cm]; upstream is x > x_shock
+    x_shock             : shock position [cm]; upstream starts just beyond it
     x_downstream_start  : left edge of downstream region [cm]
+    x_upstream_end      : right edge of the upstream window [cm].  ``None`` (the
+                          default, kept for callers that predate it) averages to
+                          the end of the ray, which mixes in far-field the shock
+                          has not reached; pass the value from
+                          ``shock.resolve_bands`` to bound it.
 
     Returns
     -------
@@ -159,7 +165,8 @@ def partition_by_region(
     Plus a "fractions" sub-dict giving each channel as a fraction of the
     total for that region.
     """
-    upstream   = x > x_shock
+    upstream   = x > x_shock if x_upstream_end is None else (
+        (x > x_shock) & (x <= x_upstream_end))
     downstream = (x >= x_downstream_start) & (x <= x_shock)
 
     if not upstream.any() or not downstream.any():
@@ -395,8 +402,13 @@ def heating_partition(*, Te_up, Ti_up, Te_dn, Ti_dn,
     -------
     dict
         ``electron`` / ``ion`` : the :func:`rankine_hugoniot.anomalous_heating`
-        split for that species, plus ``T_up``, ``T_dn`` and the measured ratio
-        ``T_dn/T_up``.
+        split for that species, plus ``T_up``, ``T_dn``, the measured ratio
+        ``T_dn/T_up``, and ``T_dn_over_adiabatic`` = measured / adiabatic.  That
+        last one is below 1 for an ionizing or radiative shock, where energy the
+        adiabatic baseline has to put into temperature goes into ionization
+        instead — the regime this FLASH data is in (Zbar roughly doubles across
+        the front), and the reason the signed ``anomalous`` excess reads as a
+        large negative there.
         ``u_th_e_up`` / ``u_th_e_dn`` / ``u_th_i_up`` / ``u_th_i_dn`` : thermal
         energy densities (3/2) n kT.
         ``du_th_e`` / ``du_th_i`` : downstream minus upstream, i.e. the thermal
@@ -407,9 +419,11 @@ def heating_partition(*, Te_up, Ti_up, Te_dn, Ti_dn,
     electron = rh.anomalous_heating(float(Te_dn), float(Te_up), T_factor)
     ion = rh.anomalous_heating(float(Ti_dn), float(Ti_up), T_factor)
     electron.update(T_up=float(Te_up), T_dn=float(Te_dn),
-                    T_ratio_measured=_ratio(float(Te_dn), float(Te_up)))
+                    T_ratio_measured=_ratio(float(Te_dn), float(Te_up)),
+                    T_dn_over_adiabatic=_ratio(float(Te_dn), electron["adiabatic"]))
     ion.update(T_up=float(Ti_up), T_dn=float(Ti_dn),
-               T_ratio_measured=_ratio(float(Ti_dn), float(Ti_up)))
+               T_ratio_measured=_ratio(float(Ti_dn), float(Ti_up)),
+               T_dn_over_adiabatic=_ratio(float(Ti_dn), ion["adiabatic"]))
 
     u_th_e_up = 1.5 * ne_up * Te_up
     u_th_e_dn = 1.5 * ne_dn * Te_dn
@@ -436,8 +450,21 @@ def _ratio(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator else float("nan")
 
 
+def _in_units(value, unit: str) -> float:
+    """``value`` as a bare float in ``unit``.
+
+    :func:`heating_partition` is unit-agnostic — whatever the caller passes in comes
+    back out — so a caller working in eV and cm^-3 gets energy densities in eV/cm^3.
+    Converting here (rather than calling ``float`` and trusting the label) is what
+    keeps the printed unit and the printed number the same quantity.  A caller that
+    passed bare floats gets them back unchanged, and must label them itself.
+    """
+    convert = getattr(value, "to", None)
+    return float(value) if convert is None else float(convert(unit))
+
+
 def heating_summary(result: dict, t_unit: str = "eV",
-                    u_unit: str = "erg/cm³") -> str:
+                    u_unit: str = "erg/cm**3") -> str:
     """Return a formatted table from :func:`heating_partition` output."""
     sep = "-" * 72
     lines = [
@@ -446,24 +473,26 @@ def heating_summary(result: dict, t_unit: str = "eV",
         f"(T2/T1 = {result['T_factor']:.3f})",
         sep,
         f"  {'species':<10}{'T_up':>11}{'T_dn meas':>12}{'T_dn adiab':>12}"
-        f"{'excess':>11}{'excess/tot':>12}",
+        f"{'meas/adiab':>13}",
     ]
     for name, key in (("electrons", "electron"), ("ions", "ion")):
         s = result[key]
         lines.append(
             f"  {name:<10}{s['T_up']:>11.3g}{s['T_dn']:>12.3g}"
-            f"{s['adiabatic']:>12.3g}{s['anomalous']:>11.3g}"
-            f"{s['anomalous_frac']:>11.1%} ")
+            f"{s['adiabatic']:>12.3g}{s['T_dn_over_adiabatic']:>13.2f}")
     lines += [
         f"  (temperatures in {t_unit}; MHD applies ONE T2/T1 to both species, so the",
-        "   excess is what FLASH's 3T transport did, not a kinetic measurement)",
+        "   departure is what FLASH's 3T transport did, not a kinetic measurement.",
+        "   meas/adiab < 1 means an ionizing or radiative shock: adiabatic RH has no",
+        "   sink for that energy, so it over-predicts the downstream temperature.)",
         sep,
-        f"  thermal energy density gained across the front [{u_unit}]",
-        f"    electrons  {float(result['du_th_e']):>12.4g}   "
+        f"  thermal energy density gained across the front "
+        f"[{u_unit.replace('**3', chr(0xB3))}]",
+        f"    electrons  {_in_units(result['du_th_e'], u_unit):>12.4g}   "
         f"({result['f_e']:.1%} of the total)",
-        f"    ions       {float(result['du_th_i']):>12.4g}   "
+        f"    ions       {_in_units(result['du_th_i'], u_unit):>12.4g}   "
         f"({result['f_i']:.1%} of the total)",
-        f"    total      {float(result['du_th_total']):>12.4g}",
+        f"    total      {_in_units(result['du_th_total'], u_unit):>12.4g}",
         sep,
     ]
     return "\n".join(lines)

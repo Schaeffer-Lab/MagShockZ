@@ -244,6 +244,14 @@ def main():
                              "(believed) linear: used for the constant-velocity "
                              "trajectory fit and the windowed mass-continuity median "
                              "(default 2 5).")
+    parser.add_argument("--vshock-halfwidth-ns", type=float, default=1.0,
+                        dest="vshock_halfwidth_ns", metavar="HALF",
+                        help="Half-width [ns] of the LOCAL window used for the "
+                             "instantaneous shock speed at each placed dump "
+                             "(default 1.0 = 9 dumps at 0.25 ns cadence). Narrow "
+                             "enough that the trajectory is locally smooth; the "
+                             "blast decelerates over the run, so a single global "
+                             "speed misstates the Mach numbers at the window edges.")
     parser.add_argument("--output-dir", default=None, dest="output_dir")
     parser.add_argument("--nprocs", type=int, default=None,
                         help="Number of worker processes for loading dumps "
@@ -458,6 +466,36 @@ def main():
         print(f"  mass-continuity median v_shock = {(mc_med_win_cms * u.cm / u.s).to('km/s').value:.1f} km/s   "
               f"({mc_in_win.sum()} dumps)")
 
+    # ------------------------------------------------------------------
+    # Instantaneous shock speed: a LOCAL fit to the front track at each placed dump.
+    # The window fit above assumes ONE constant speed, but the blast decelerates
+    # across the analysis window, so the speed belonging in a dump's Mach numbers is
+    # the slope of x_front(t) there.  Both the naive line and the quadratic are
+    # reported: over a symmetric, evenly sampled window they give the same slope by
+    # construction (see shock.FrontFit), so a gap between them means the window ran
+    # off the end of the run — while the quadratic's residual, which no longer counts
+    # real curvature as scatter, is the honest tracking-quality flag.
+    # ------------------------------------------------------------------
+    front_track_um = np.array([
+        shock.detect_front_outermost(np.asarray(lo["x"].to("um")),
+                                     np.asarray(lo["rho"].to("g/cm**3")))
+        for lo in lineouts])
+    fit_rows = [i for i, hf in enumerate(hand_fit) if hf] or [snap_idx]
+    fits = [shock.local_front_fit(time_ns, front_track_um, float(time_ns[i]),
+                                  half_width=args.vshock_halfwidth_ns)
+            for i in fit_rows]
+
+    print(f"\n--- Instantaneous shock speed "
+          f"(local ±{args.vshock_halfwidth_ns:.2f} ns fit to the front track) ---")
+    print(f"  {'dump':>5}{'t[ns]':>7}{'v_lin':>8}{'v_quad':>8}{'accel':>9}"
+          f"{'rms_lin':>9}{'rms_quad':>10}{'n':>4}")
+    for row, f in zip(fit_rows, fits):
+        print(f"  {loaded_indices[row]:>5}{f.t:>7.2f}{f.v_linear:>8.0f}"
+              f"{f.v_quadratic:>8.0f}{f.acceleration:>9.1f}{f.rms_linear:>9.0f}"
+              f"{f.rms_quadratic:>10.0f}{f.n_points:>4}")
+    print("  (v [km/s]; accel [km/s per ns]; rms [µm]. v_lin == v_quad on a centred "
+          "window;\n   a large rms_quad means the track is wrong, not merely curved.)")
+
     # Shock front line (config trajectory) in µm units for the streak plots.
     x_um_pred   = (x_pred_cm * u.cm).to("um").value
     config_line = (time_ns, x_um_pred,
@@ -657,6 +695,16 @@ def main():
         mc_rho_up       = mc["rho_up"],
         mc_rho_dn       = mc["rho_dn"],
         mc_x_front_cm   = mc["x_front"],
+        # continuous front track + the local (instantaneous) fits taken from it
+        front_track_um          = front_track_um,
+        fit_dump_indices        = np.asarray([loaded_indices[r] for r in fit_rows]),
+        fit_t_ns                = np.asarray([f.t for f in fits]),
+        fit_v_linear_kms        = np.asarray([f.v_linear for f in fits]),
+        fit_v_quadratic_kms     = np.asarray([f.v_quadratic for f in fits]),
+        fit_acceleration_kms_ns = np.asarray([f.acceleration for f in fits]),
+        fit_rms_linear_um       = np.asarray([f.rms_linear for f in fits]),
+        fit_rms_quadratic_um    = np.asarray([f.rms_quadratic for f in fits]),
+        fit_halfwidth_ns        = np.asarray(args.vshock_halfwidth_ns),
         # hand-fit trajectory + windowed mass-continuity shock speed
         vshock_window_ns        = np.asarray([lo_ns, hi_ns]),
         v_traj_cms              = np.asarray(v_traj_cms),

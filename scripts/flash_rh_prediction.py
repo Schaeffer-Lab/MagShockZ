@@ -142,6 +142,41 @@ def main():
                              "to read off the effective index.")
     parser.add_argument("--window-um", type=float, default=400.0, dest="window_um",
                         help="Half-width [µm] of the zoom window around the front (default 400).")
+    parser.add_argument("--jump-band-um", type=float, default=100.0,
+                        dest="jump_band_um",
+                        help="Width [µm] of the thin band just behind the front "
+                             "used for the Rankine-Hugoniot checks (default 100). "
+                             "RH is a LOCAL jump condition, so it must be tested "
+                             "against a band much narrower than the shocked layer "
+                             "-- momentum-flux continuity on this data runs 1.00 "
+                             "over 50 µm and 0.51 over 940 µm. Heating and the e/i "
+                             "partition still use the full layer band. 0 makes the "
+                             "two bands identical.")
+    parser.add_argument("--upstream-gap-um", type=float, default=200.0,
+                        dest="upstream_gap_um",
+                        help="Start the upstream average this far [µm] ahead of the "
+                             "front, clearing its precursor/ramp (default 200).")
+    parser.add_argument("--downstream-edge", choices=("contact", "config"),
+                        default="contact", dest="downstream_edge",
+                        help="Where the downstream band's inner edge comes from. "
+                             "'contact' (default) walks in from the front to the "
+                             "outermost piston material and stops --contact-gap-um "
+                             "short of it, so the band is as wide as the shocked "
+                             "AMBIENT actually is; 'config' uses the hand-placed "
+                             "x_downstream_start_cm verbatim.")
+    parser.add_argument("--contact-gap-um", type=float, default=50.0,
+                        dest="contact_gap_um",
+                        help="Standoff [µm] to leave between the piston contact and "
+                             "the downstream band, so the mixing layer at the contact "
+                             "stays out of the average (default 50).")
+    parser.add_argument("--upstream-width-um", type=float, default=600.0,
+                        dest="upstream_width_um",
+                        help="Width [µm] of the upstream average (default 1000). The "
+                             "shock runs into the gas immediately ahead of it, so the "
+                             "average is a window, not the whole remaining ray: "
+                             "averaging to the domain edge mixes in far-field the "
+                             "shock has not reached, and on some rays a laser-channel "
+                             "column. 0 means 'to the end of the ray' (the old behaviour).")
     parser.add_argument("--output-dir", default=None, dest="output_dir")
     flash_source.add_los_arg(parser)
     plot_style.add_publication_arg(parser)
@@ -216,9 +251,11 @@ def main():
     # ye/sumy are FLASH's electron bookkeeping fields; their ratio is the local mean
     # charge Zbar, which flash.par cannot supply (it states ms_chamZ = 13, the ATOMIC
     # number, while the EOS returns ~3.7 here) and which sets n_ion, beta_e and d_i.
+    piston_material = str(cfg.get("piston_material", "targ"))
     lo = fu.flash_lineout(snap_file, line_start, line_end,
                           extra_fields={"ye": ("flash", "ye"),
-                                        "sumy": ("flash", "sumy")})
+                                        "sumy": ("flash", "sumy"),
+                                        piston_material: ("flash", piston_material)})
     zbar = np.divide(np.asarray(lo["ye"]), np.asarray(lo["sumy"]),
                      out=np.zeros_like(np.asarray(lo["ye"])),
                      where=np.asarray(lo["sumy"]) > 0.0)
@@ -234,15 +271,44 @@ def main():
     v_sf   = np.abs(lo["v_para"] - v_shock).to("cm/s")   # shock-frame normal speed
 
     # ------------------------------------------------------------------
-    # Region averages (upstream = ambient ahead, x > x_shock)
+    # Region averages.  Upstream is a WINDOW starting a gap ahead of the front,
+    # not everything beyond it: the state that sets the Mach numbers is the gas the
+    # shock is about to hit.  Averaging to the end of the ray mixes in far-field
+    # ambient the blast has not reached (it rarefies ~10% over this run) and, on a ray
+    # that happens to cross one, a laser-channel column — a +40% n_e bias on los15.
     # ------------------------------------------------------------------
-    up = x > x_shock
-    dn = (x >= x_ds) & (x <= x_shock)
-    if not up.any() or not dn.any():
-        raise ValueError("Empty upstream or downstream region — check the bounds.")
+    # Both averaging windows are placed by ONE shared resolver, so this script and
+    # flash_pressure_partition cannot end up measuring the same shock over different
+    # regions (they did, and reported compressions differing by 3x).
+    x_cm = np.asarray(x.to("cm"))
+    UM_PER_CM = 1.0e4
+    bands = shock.resolve_bands(
+        x_cm, np.asarray(lo[piston_material]), float(x_shock.to("cm")),
+        upstream_gap=args.upstream_gap_um / UM_PER_CM,
+        upstream_width=args.upstream_width_um / UM_PER_CM,
+        contact_gap=args.contact_gap_um / UM_PER_CM,
+        jump_width=args.jump_band_um / UM_PER_CM,
+        x_downstream_config=float(x_ds.to("cm")), edge=args.downstream_edge)
+    if bands.note:
+        print(f"  ! {bands.note}")
+    if bands.x_downstream != float(x_ds.to("cm")):
+        was = (bands.x_shock - float(x_ds.to("cm"))) * UM_PER_CM
+        now = (bands.x_shock - bands.x_downstream) * UM_PER_CM
+        print(f"  x_downstream : {float(x_ds.to('um')):.0f} (config) -> "
+              f"{bands.x_downstream * UM_PER_CM:.0f} µm  "
+              f"(contact {bands.x_contact * UM_PER_CM:.0f} + "
+              f"{args.contact_gap_um:.0f} µm); band {was:.0f} -> {now:.0f} µm wide")
+    x_ds = bands.x_downstream * unyt.cm
+    x_contact = bands.x_contact * unyt.cm
+    up = bands.upstream_mask(x_cm)
+    dn = bands.downstream_mask(x_cm)      # full shocked layer: heating, Zbar, e/i split
+    jump_band = bands.jump_mask(x_cm)     # thin slice at the front: the RH jump test
 
     def mean_up(arr):
         return np.nanmean(arr[up])
+
+    def mean_jump(arr):
+        return np.nanmean(arr[jump_band])
 
     def mean_dn(arr):
         return np.nanmean(arr[dn])
@@ -300,8 +366,13 @@ def main():
     # Measured mass compression, and the adiabatic index that would reproduce it.
     # Mass — not electron — density, because Zbar changes across an ionizing front and
     # n_e/n_e1 then overstates the compression the RH relations are about.
-    rho_dn_meas = mean_dn(lo["rho"])
+    # The compression is a JUMP condition, so it is measured against the thin band at
+    # the front. Over the full layer it reads low by up to 2x, because the layer's
+    # inner edge was shocked ns earlier under different upstream conditions.
+    rho_dn_meas = mean_jump(lo["rho"])
+    rho_dn_layer = mean_dn(lo["rho"])
     r_measured = float((rho_dn_meas / rho_up).to("dimensionless"))
+    r_layer = float((rho_dn_layer / rho_up).to("dimensionless"))
     gamma_eff = ps.effective_gamma(
         r_measured,
         dict(ne=ne_up, Te=Te_up, n_ion=ni_up, Ti=Ti_up, B_perp=Bperp_up,
@@ -309,28 +380,51 @@ def main():
     zbar_dn = float(np.nanmean(zbar[dn]))
 
     # Measured downstream means for the head-to-head.
-    ne_dn_meas    = mean_dn(lo["ne"])
-    Bperp_dn_meas = mean_dn(B_perp)
+    ne_dn_meas    = mean_jump(lo["ne"])
+    Bperp_dn_meas = mean_jump(B_perp)
     P_dn_meas     = mean_dn(P_th)
     vsf_dn_meas   = mean_dn(v_sf)
-    Te_dn_meas    = mean_dn(lo["Te"])
-    Ti_dn_meas    = mean_dn(lo["Ti"])
+    Te_dn_meas    = mean_jump(lo["Te"])
+    Ti_dn_meas    = mean_jump(lo["Ti"])
 
     # ------------------------------------------------------------------
     # Report
     # ------------------------------------------------------------------
     # Ion-scale lengths and times, from the upstream state the shock actually runs
     # into.  d_i and T_ci are what the PIC comparison is eventually normalised to.
+    # plasmapy carries the units and the definitions; convert at its boundary and come
+    # straight back to unyt, per the FLASH convention in CLAUDE.md.
+    from astropy import units as apu
+    from astropy.constants import e as elementary_charge
+    from plasmapy.formulary import gyrofrequency, inertial_length
+    from plasmapy.particles import CustomParticle
+
     ion_mass = (rho_up / ni_up).to("g")
-    omega_ci = (unyt.qp * Bmag_up / (ion_mass * unyt.c)).to("1/s") * zbar_up
-    d_i = (unyt.c / np.sqrt(4.0 * np.pi * ni_up * (zbar_up * unyt.qp)**2
-                            / ion_mass)).to("um")
+    ion = CustomParticle(mass=float(ion_mass.to("g").value) * apu.g,
+                         charge=zbar_up * elementary_charge.si)
+    B_up_apu = float(Bmag_up.to("gauss").value) * apu.G
+    ni_up_apu = float(ni_up.to("cm**-3").value) * apu.cm**-3
+
+    # gyrofrequency returns the ANGULAR frequency, so the period is 2*pi/omega.
+    omega_ci = float(gyrofrequency(B_up_apu, ion).to(apu.rad / apu.s).value) / unyt.s
+    d_i = float(inertial_length(ni_up_apu, ion).to(apu.um).value) * unyt.um
     T_ci = (2.0 * np.pi / omega_ci).to("ns")
 
     beta_e = float((8.0 * np.pi * ne_up * Te_up / Bmag_up**2).to("dimensionless"))
     beta_i = float((8.0 * np.pi * ni_up * Ti_up / Bmag_up**2).to("dimensionless"))
 
     print("\n--- Upstream state (region average) ---")
+    print(f"  window = [{x[up].min().to('um'):.0f}, {x[up].max().to('um'):.0f}] "
+          f"({int(up.sum())} points, {args.upstream_gap_um:.0f} µm ahead of the front)")
+    # Is this window still pristine ambient?  A ray whose upstream has been processed
+    # by the laser channel gives a valid shock solution against a preheated upstream —
+    # which is a real result, not an error, but it must not be read as the experiment's
+    # ambient.  The t=0 fill is the yardstick when the config records it.
+    rho_0 = (cfg.get("unperturbed_background") or {}).get("rho_g_cm3")
+    if rho_0:
+        ratio = float(rho_up.to("g/cm**3").value) / float(rho_0)
+        verdict = "pristine" if abs(ratio - 1.0) < 0.15 else "PROCESSED — not ambient"
+        print(f"  rho/rho_0 = {ratio:.3f}  ({verdict}; t=0 fill {rho_0:.3e} g/cm^3)")
     print(f"  n_e   = {ne_up.to('cm**-3'):.3e}   n_ion = {ni_up.to('cm**-3'):.3e}   "
           f"Zbar = {zbar_up:.2f}")
     print(f"  T_e   = {Te_up.to('eV'):.1f}   T_i = {Ti_up.to('eV'):.1f}")
@@ -352,7 +446,11 @@ def main():
     print(f"  r = rho2/rho1 = {r:.3f}   p2/p1 = {p_ratio:.3f}   T2/T1 = {T_ratio:.3f}")
     print(f"  ceiling at this gamma: r_max = {(gamma + 1) / (gamma - 1):.2f}")
     print(f"\n--- Compression measured vs predicted ---")
-    print(f"  r measured (mass) = {r_measured:.3f}   vs predicted {r:.3f}")
+    print(f"  r measured (mass) = {r_measured:.3f}   vs predicted {r:.3f}"
+          f"   [jump band {(bands.x_shock - bands.x_jump) * UM_PER_CM:.0f} µm]")
+    print(f"  r over the full shocked layer = {r_layer:.3f}   "
+          f"[{(bands.x_shock - bands.x_downstream) * UM_PER_CM:.0f} µm] — not an RH test, the layer\n"
+          f"    holds material shocked earlier; quoted for the heating below")
     print(f"  Zbar {zbar_up:.2f} -> {zbar_dn:.2f} across the front")
     if np.isfinite(gamma_eff):
         print(f"  effective gamma reproducing the measurement = {gamma_eff:.3f}  "
@@ -417,13 +515,22 @@ def main():
     x_um       = x.to("um").value
     x_shock_um = float(x_shock.to("um"))
     x_ds_um    = float(x_ds.to("um"))
+    x_up_lo_um = float(x[up].min().to("um"))
+    x_up_hi_um = float(x[up].max().to("um"))
+    x_contact_um = float(x_contact.to("um")) if np.isfinite(x_contact) else float("nan")
 
     fig, axes = plt.subplots(2, 3, figsize=(19, 9), sharex=True)
     for ax, (prof, u_val, pred_val, meas_val, ylabel, color, log) in zip(
             axes.flat, panels):
         ax.plot(x_um, prof, color=color, lw=1.6, label="FLASH lineout")
-        # upstream mean (drawn over the upstream region, to the right of front)
-        ax.hlines(float(u_val), x_shock_um, x_um.max(), color="0.45", ls="-", lw=1.4,
+        # Both averaging bands are shaded, because every number in the table is an
+        # average over one of them: a band that has drifted onto the wrong plasma
+        # should be visible in the figure rather than only in the printed verdict.
+        ax.axvspan(x_ds_um, x_shock_um, color="tab:blue", alpha=0.12, lw=0,
+                   label="downstream band")
+        ax.axvspan(x_up_lo_um, x_up_hi_um, color="0.75", alpha=0.30, lw=0,
+                   label="upstream band")
+        ax.hlines(float(u_val), x_up_lo_um, x_up_hi_um, color="0.45", ls="-", lw=1.4,
                   label="upstream mean")
         # theory-predicted downstream value (over the downstream region)
         ax.hlines(float(pred_val), x_ds_um, x_shock_um, color="k", ls="--", lw=2.0,
@@ -433,6 +540,9 @@ def main():
                   label="measured dn")
         ax.axvline(x_shock_um, color="k", lw=1.0, alpha=0.6)
         ax.axvline(x_ds_um,    color="0.6", lw=1.0, alpha=0.6)
+        if np.isfinite(x_contact_um):
+            ax.axvline(x_contact_um, color="tab:red", lw=1.2, ls="-.", alpha=0.8,
+                       label="piston contact")
         if log:
             ax.set_yscale("log")
         ax.set_ylabel(ylabel)
@@ -442,8 +552,11 @@ def main():
     axes[0, 0].legend(loc="best", fontsize=8)
 
     # Zoom around the front (upstream to the right, downstream to the left).
-    lo_x = max(x_um.min(), x_shock_um - args.window_um)
-    hi_x = min(x_um.max(), x_shock_um + args.window_um)
+    # Keep BOTH averaging regions in frame even when they reach past --window-um: every
+    # number in the table comes from one of them, so a reader must be able to see the
+    # profile each was taken over.
+    lo_x = max(x_um.min(), min(x_shock_um - args.window_um, x_ds_um - 100.0))
+    hi_x = min(x_um.max(), max(x_shock_um + args.window_um, x_up_hi_um + 100.0))
     axes[0, 0].set_xlim(lo_x, hi_x)
 
     fig.suptitle(
@@ -485,8 +598,16 @@ def main():
         # upstream plasma state and the ion scales it sets
         los_label=np.asarray(source.label),
         dump_index=np.asarray(idx),
+        x_upstream_lo_um=np.asarray(float(x[up].min().to("um"))),
+        x_upstream_hi_um=np.asarray(float(x[up].max().to("um"))),
+        x_contact_um=np.asarray(x_contact_um),
+        downstream_edge=np.asarray(args.downstream_edge),
+        rho_up_over_rho_0=np.asarray(
+            float(rho_up.to("g/cm**3").value) / float(rho_0) if rho_0 else np.nan),
         zbar_up=np.asarray(zbar_up), zbar_dn=np.asarray(zbar_dn),
         r_measured=np.asarray(r_measured), gamma_eff=np.asarray(gamma_eff),
+        r_layer=np.asarray(r_layer),
+        x_jump_um=np.asarray(bands.x_jump * UM_PER_CM),
         rho_dn_meas=np.asarray(float(rho_dn_meas.to("g/cm**3"))),
         ni_up=np.asarray(float(ni_up.to("cm**-3"))),
         rho_up=np.asarray(float(rho_up.to("g/cm**3"))),
@@ -503,6 +624,8 @@ def main():
         heat_Ti_adiabatic=np.asarray(heating["ion"]["adiabatic"]),
         heat_Ti_excess=np.asarray(heating["ion"]["anomalous"]),
         heat_Ti_excess_frac=np.asarray(heating["ion"]["anomalous_frac"]),
+        heat_Te_over_adiabatic=np.asarray(heating["electron"]["T_dn_over_adiabatic"]),
+        heat_Ti_over_adiabatic=np.asarray(heating["ion"]["T_dn_over_adiabatic"]),
         du_th_e=np.asarray(float(heating["du_th_e"])),
         du_th_i=np.asarray(float(heating["du_th_i"])),
         f_e=np.asarray(heating["f_e"]), f_i=np.asarray(heating["f_i"]),

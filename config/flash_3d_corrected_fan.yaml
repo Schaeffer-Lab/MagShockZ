@@ -98,7 +98,43 @@ flash:
 # Per-ray, per-dump front and downstream-region edges [cm], written by
 # flash_tune_shock.py --mode regions.
 flash_dump_params:
-  los00: {}
-  los15: {}
-  los30: {}
-  los45: {}
+  los00:
+    20:
+      x_shock_cm: 0.42315  # set by tune_shock
+      x_downstream_start_cm: 0.40315  # set by tune_shock
+    36:
+      x_shock_cm: 0.75  # set by tune_shock
+      x_downstream_start_cm: 0.706612  # set by tune_shock
+    48:
+      x_shock_cm: 0.95  # set by tune_shock
+      x_downstream_start_cm: 0.934411  # set by tune_shock
+  los15:
+    20:
+      x_shock_cm: 0.6309  # set by tune_shock
+      x_downstream_start_cm: 0.39  # set by tune_shock
+    36:
+      x_shock_cm: 1.0246  # set by tune_shock
+      x_downstream_start_cm: 0.68  # set by tune_shock
+    48:
+      x_shock_cm: 1.1955  # set by tune_shock
+      x_downstream_start_cm: 0.85  # set by tune_shock
+  los30:
+    20:
+      x_shock_cm: 0.338087  # set by tune_shock
+      x_downstream_start_cm: 0.318087  # set by tune_shock
+    36:
+      x_shock_cm: 0.53  # set by tune_shock
+      x_downstream_start_cm: 0.494007  # set by tune_shock
+    48:
+      x_shock_cm: 0.646065  # set by tune_shock
+      x_downstream_start_cm: 0.626065  # set by tune_shock
+  los45:
+    20:
+      x_shock_cm: 0.315  # set by tune_shock
+      x_downstream_start_cm: 0.292078  # set by tune_shock
+    36:
+      x_shock_cm: 0.494  # set by tune_shock
+      x_downstream_start_cm: 0.450806  # set by tune_shock
+    48:
+      x_shock_cm: 0.589958  # set by tune_shock
+      x_downstream_start_cm: 0.569958  # set by tune_shock
