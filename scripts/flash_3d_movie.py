@@ -28,6 +28,20 @@ Usage
     # new run: prime the grid cache (the slow half), then tune a PRESETS entry for free
     # (--width/--campos/--focus/--ycrop override the preset for a one-off test frame)
     python scripts/flash_3d_movie.py --config ...yaml --fields ne bz --grids-only
+
+Lines of sight
+--------------
+A config with a ``lines_of_sight:`` mapping can have its rays drawn on the data, which
+is how the lineout analysis shows *which* lineouts it takes:
+
+    # the geometry figure: a z=0 slice per dump with every ray drawn and labelled.
+    # Reads the AMR dump directly, so it is cheap and runs on a login node.
+    python scripts/flash_3d_movie.py --config config/flash_3d_corrected_fan.yaml \\
+        --slice-los --single-frame 36 --preset trantham2026-07 --pub
+
+    # the same rays inside the volume render (compute node; needs the grid cache)
+    python scripts/flash_3d_movie.py --config config/flash_3d_corrected_fan.yaml \\
+        --annotate-los --single-frame 36 --preset trantham2026-07 --pub
 """
 
 import argparse
@@ -52,12 +66,20 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 from magshockz.common import analysis_utils
 from magshockz.common import flash_source
+from magshockz.common import plot_style
 
 # NB: intentionally NOT importing flash_utils — its module-level yt.enable_plugins()
 # would register the OSIRIS derived fields globally and break the uniform-grid scene
 # (see the note above). find_plot_files is inlined below instead.
 
 K_TO_EV = 8.617333262e-5  # Kelvin -> eV (k_B/e)
+
+# One colour per line of sight, in config order. Chosen to stay legible both on the
+# dark volume render and on a light-background SlicePlot colormap.
+LOS_COLORS = [(0.20, 1.00, 1.00), (1.00, 0.85, 0.10),
+              (0.40, 1.00, 0.40), (1.00, 0.45, 0.85),
+              (1.00, 1.00, 1.00), (1.00, 0.55, 0.20)]
+LABEL_FRAC = 0.88  # where along a ray its label sits, as a fraction of its length
 
 
 def find_plot_files(data_dir):
@@ -342,6 +364,84 @@ def save_frame(sc, fname, title, t_ns):
     sc.save_annotated(fname, sigma_clip=3.0, text_annotate=txt)
 
 
+# ---------------------------------------------------------------------------
+# Lines of sight: which rays the lineout analysis takes, drawn on the data
+# ---------------------------------------------------------------------------
+def los_rays(cfg, config_path):
+    """[(label, start, end)] for every line of sight the config defines, in order.
+
+    Endpoints are plain (x, y, z) tuples in cm, matching FlashSource's convention.
+    """
+    return [(s.label or "los", tuple(s.line_start), tuple(s.line_end))
+            for s in flash_source.resolve_all(cfg, config_path)]
+
+
+def add_los_lines(sc, uds, rays, width=2):
+    """Draw each ray into a volume-rendered scene as a coloured line segment.
+
+    The scene's domain is the y-cropped grid from :func:`load_uds`, so a ray whose
+    start lies inside the cropped slab would be clipped; every ray in the fan starts
+    clear of it. Returns the scene for chaining.
+    """
+    from yt.visualization.volume_rendering.api import LineSource
+
+    positions, colors = [], []
+    for i, (_, start, end) in enumerate(rays):
+        positions.append([list(start), list(end)])
+        colors.append(list(LOS_COLORS[i % len(LOS_COLORS)]) + [1.0])
+    sc.add_source(LineSource(uds.arr(np.array(positions, dtype="float64"), "cm"),
+                             np.array(colors, dtype="float64")))
+    return sc
+
+
+def slice_los_figure(path, rays, out_path, *, field="ne", width=None,
+                     center=None, publication=False):
+    """Save a z=0 slice of `field` with every ray drawn and labelled on top.
+
+    This is the figure that answers "which lineouts are being taken": the rays are
+    drawn against the density structure they cut, in the plane perpendicular to B.
+    Unlike the volume render it reads the AMR dump directly (a slice is cheap), so it
+    runs on a login node and needs no cached grid.
+    """
+    spec = FIELDS[field]
+    ds = yt.load(path)
+    t_ns = float(ds.current_time.to("ns"))
+
+    # origin="native": label the axes in absolute simulation coordinates. yt's default
+    # ("center-window") offsets them by the window centre, which would silently shift
+    # every ray endpoint the reader tries to check against the config.
+    kw = dict(origin="native")
+    if center is not None:
+        kw["center"] = center
+    p = yt.SlicePlot(ds, "z", spec["yt"], **kw)
+    if width is not None:
+        p.set_width((width, "cm"))
+    p.set_unit(spec["yt"], spec["disp_unit"])
+    p.set_cmap(spec["yt"], "magma")
+    if spec["tf"]["kind"] == "emissive":
+        p.set_zlim(spec["yt"], *spec["tf"]["bounds"])
+    p.set_font({"size": 26 if publication else 16})
+
+    for i, (label, start, end) in enumerate(rays):
+        color = LOS_COLORS[i % len(LOS_COLORS)]
+        p.annotate_line(start, end, coord_system="data",
+                        color=color, linewidth=2.5, alpha=0.95)
+        # Label inboard of the endpoint: a label sitting exactly on a ray that ends at
+        # the domain edge is clipped by the axes (los45 does).
+        tag = [s + LABEL_FRAC * (e - s) for s, e in zip(start, end)]
+        p.annotate_text(tag, label, coord_system="data",
+                        text_args=dict(color=color, ha="center",
+                                       fontsize=22 if publication else 12),
+                        inset_box_args=dict(boxstyle="round", facecolor="black",
+                                            alpha=0.6, edgecolor="none"))
+    p.annotate_title(f"{spec['title']} — t = {t_ns:.2f} ns")
+    p.save(out_path)
+    ds.index.clear_all_data()
+    del ds
+    gc.collect()
+    return t_ns
+
+
 def encode(frame_dir, out_mp4, fps):
     """Assemble frame_*.png in frame_dir into out_mp4 at fps (H.264, yuv420p)."""
     cmd = ["ffmpeg", "-y", "-framerate", str(fps),
@@ -396,20 +496,46 @@ def main():
                         "half); skip rendering and encoding. Use this to prime the "
                         "cache for a new run, then re-run to render once the camera "
                         "and transfer functions are tuned.")
+    p.add_argument("--single-frame", type=int, default=None, dest="single_frame",
+                   metavar="IDX",
+                   help="Render only plot-file index IDX (implies --no-encode). "
+                        "Shorthand for --t-start IDX --t-stop IDX.")
+    p.add_argument("--annotate-los", action="store_true", dest="annotate_los",
+                   help="Draw the --config's lines of sight into the volume render as "
+                        "coloured segments (requires --config).")
+    p.add_argument("--slice-los", action="store_true", dest="slice_los",
+                   help="Also save a cheap z=0 SlicePlot per dump with every line of "
+                        "sight drawn and labelled — the figure that shows which "
+                        "lineouts the analysis takes (requires --config).")
+    plot_style.add_publication_arg(p)
     args = p.parse_args()
+    plot_style.apply(args.publication)
+
+    if (args.annotate_los or args.slice_los) and not args.config:
+        p.error("--annotate-los/--slice-los need --config to read 'lines_of_sight:'.")
+    if args.single_frame is not None:
+        args.t_start, args.t_stop, args.stride = args.single_frame, args.single_frame, 1
+        args.no_encode = True
 
     # camera: explicit CLI flag wins, else the preset's tuned value
     cam = PRESETS[args.preset]["camera"]
     specs = resolve_fields(args.preset)
+    # Remember which framing flags the user actually gave: the preset's width/focus tune
+    # a 3D camera and are the wrong window for a 2D slice, which wants the whole domain.
+    explicit_cam = {k for k in ("width", "campos", "focus", "ycrop")
+                    if getattr(args, k) is not None}
     for k in ("width", "campos", "focus", "ycrop"):
         if getattr(args, k) is None:
             setattr(args, k, cam[k])
 
+    rays = []
     if args.data_dir:
         flash_dir = os.path.abspath(os.path.expanduser(args.data_dir))
     else:
         cfg = analysis_utils.load_config(args.config)
         flash_dir = flash_source.resolve(cfg, args.config).flash_dir
+        if args.annotate_los or args.slice_los:
+            rays = los_rays(cfg, args.config)
 
     all_files = find_plot_files(flash_dir)
     stop = len(all_files) if args.t_stop is None else min(args.t_stop + 1, len(all_files))
@@ -434,6 +560,28 @@ def main():
     print(f"Output    : {out_dir}", flush=True)
 
     view = (args.img_res, args.width, args.campos, args.focus)
+
+    # --slice-los is a MODE, not a decoration: it reads the AMR dumps directly and
+    # returns, so asking for the geometry figure can never kick off hours of 3D
+    # sampling by accident. Use --annotate-los for the rays inside the volume render.
+    if args.slice_los:
+        los_dir = os.path.join(out_dir, "los")
+        os.makedirs(los_dir, exist_ok=True)
+        field = args.fields[0]
+        for n, i in enumerate(indices):
+            path = os.path.join(los_dir, f"flash_los_slice_{field}_{i:04d}.png")
+            if not args.force and os.path.exists(path):
+                print(f"[{n + 1:3d}/{len(indices)}] slice exists — skip", flush=True)
+                continue
+            t_ns = slice_los_figure(
+                all_files[i], rays, path, field=field,
+                width=args.width if "width" in explicit_cam else None,
+                center=([args.focus[0], args.focus[1], 0.0]
+                        if "focus" in explicit_cam else None),
+                publication=args.publication)
+            print(f"[{n + 1:3d}/{len(indices)}] t={t_ns:.2f} ns -> {path}", flush=True)
+        print(f"\nLines of sight: {', '.join(label for label, _, _ in rays)}")
+        return
 
     for n, i in enumerate(indices):
         base = os.path.basename(all_files[i])
@@ -465,8 +613,10 @@ def main():
 
         uds = load_uds(data, bbox, args.ycrop)
         for f in need:
-            save_frame(build_scene(uds, f, view, specs[f]),
-                       frame_paths[f], specs[f]["title"], t_ns)
+            sc = build_scene(uds, f, view, specs[f])
+            if rays:
+                add_los_lines(sc, uds, rays)
+            save_frame(sc, frame_paths[f], specs[f]["title"], t_ns)
 
     if args.grids_only:
         print(f"\n--grids-only: grids cached in {grids_dir}; nothing rendered.")
