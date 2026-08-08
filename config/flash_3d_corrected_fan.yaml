@@ -49,9 +49,22 @@ flash_data_dir: /pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected
 # Endpoints [cm] = r * (sin(theta), cos(theta), 0), r_start = 0.07, r_end = 1.40
 # (1.20 for los45). All lie in z = 0, hence all perpendicular to B.
 lines_of_sight:
+  # SHIFTED +500 µm in x, and parallel to the axis rather than radial. By 9-12 ns the
+  # on-axis structure is a mushroom cap whose nose has drifted to x ~ +750 µm, so a
+  # ray at x = 0 crosses the front obliquely and the Rankine-Hugoniot conditions --
+  # which assume the ray lies along the shock normal -- stop applying. Measured
+  # momentum-flux continuity along parallel rays at 12 ns:
+  #     x =    0 µm   dn/up = 1.60      x = +500 µm   dn/up = 1.08
+  #     x = +250 µm   dn/up = 1.24      x = +750 µm   dn/up = 1.01
+  # +500 is the compromise: near enough to the axis that the ray still samples the
+  # laser channel (which is what makes this the "channel" case), far enough that the
+  # front is close to normal. The nose also runs faster than the flank -- v_shock is
+  # 629 km/s on axis against 682 km/s here -- so the speed is a property of the ray.
+  # Offset in z was checked and is flat (front 9454-9519 µm over z = -500..+750), so
+  # the obliquity is in x only.
   los00:
-    start_point: [0.000000, 0.070000, 0.0]
-    end_point:   [0.000000, 1.400000, 0.0]
+    start_point: [0.050000, 0.070000, 0.0]
+    end_point:   [0.050000, 1.400000, 0.0]
   los15:
     start_point: [0.018117, 0.067615, 0.0]
     end_point:   [0.362347, 1.352296, 0.0]
@@ -100,13 +113,13 @@ flash:
 flash_dump_params:
   los00:
     20:
-      x_shock_cm: 0.42315  # set by tune_shock
+      x_shock_cm: 0.422975  # set by tune_shock
       x_downstream_start_cm: 0.40315  # set by tune_shock
     36:
-      x_shock_cm: 0.75  # set by tune_shock
+      x_shock_cm: 0.772531  # set by tune_shock
       x_downstream_start_cm: 0.706612  # set by tune_shock
     48:
-      x_shock_cm: 0.95  # set by tune_shock
+      x_shock_cm: 0.994739  # set by tune_shock
       x_downstream_start_cm: 0.934411  # set by tune_shock
   los15:
     20:
