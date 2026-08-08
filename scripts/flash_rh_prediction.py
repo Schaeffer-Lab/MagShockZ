@@ -142,6 +142,14 @@ def main():
                              "to read off the effective index.")
     parser.add_argument("--window-um", type=float, default=400.0, dest="window_um",
                         help="Half-width [µm] of the zoom window around the front (default 400).")
+    parser.add_argument("--snap-front-um", type=float, default=60.0,
+                        dest="snap_front_um",
+                        help="Search half-width [µm] for snapping the placed "
+                             "front onto the steepest density drop (default 60; "
+                             "0 disables). A front placed a few cells outside the "
+                             "jump fills part of the thin RH band with upstream "
+                             "and drags every downstream mean toward ambient. The "
+                             "shift is reported.")
     parser.add_argument("--jump-band-um", type=float, default=100.0,
                         dest="jump_band_um",
                         help="Width [µm] of the thin band just behind the front "
@@ -282,6 +290,19 @@ def main():
     # regions (they did, and reported compressions differing by 3x).
     x_cm = np.asarray(x.to("cm"))
     UM_PER_CM = 1.0e4
+    # A front placed by eye can sit a few cells outside the density jump, which fills
+    # part of the thin RH band with upstream. Snap it onto the gradient and say by how
+    # much, so the correction is visible rather than silent.
+    if args.snap_front_um > 0.0:
+        snapped = shock.snap_front_to_jump(
+            x_cm, np.asarray(lo["rho"].to("g/cm**3")), float(x_shock.to("cm")),
+            args.snap_front_um / 1.0e4)
+        shift_um = (snapped - float(x_shock.to("cm"))) * 1.0e4
+        if abs(shift_um) > 1.0:
+            print(f"  front snapped {shift_um:+.0f} µm to the density jump "
+                  f"({float(x_shock.to("cm")) * 1.0e4:.0f} -> {snapped * 1.0e4:.0f} µm)")
+        x_shock = snapped * unyt.cm
+
     bands = shock.resolve_bands(
         x_cm, np.asarray(lo[piston_material]), float(x_shock.to("cm")),
         upstream_gap=args.upstream_gap_um / UM_PER_CM,
@@ -352,6 +373,23 @@ def main():
         print("\n!! No compressive perpendicular shock for these upstream numbers "
               f"(M_s={mach_s:.2f}, M_A={mach_a:.2f}). Predictions will be NaN.")
 
+    zbar_dn = float(np.nanmean(zbar[dn]))
+    zbar_dn_jump = float(np.nanmean(zbar[jump_band]))
+
+    # DIAGNOSTIC ONLY — the prediction plotted and used as the heating baseline is
+    # the unmodified single-fluid T2/T1 = (p2/p1)/(rho2/rho1) above.
+    #
+    # That form is T proportional to p/rho, which holds only at fixed mean molecular
+    # weight, and the weight is not fixed here: the shock ionizes and Zbar roughly
+    # doubles across the front.  With p = (rho/m_ion)(1 + Zbar) kT the jump would
+    # carry an extra (1+Zbar_1)/(1+Zbar_2) -- the same pressure shared among about
+    # twice as many particles per unit mass.  It is reported rather than applied
+    # because it is only half the story: r and p_ratio still come from an energy
+    # equation with no ionization sink, so neither number is a consistent ionizing
+    # shock solution.  The size of this factor is the useful part.
+    mu_ratio = (1.0 + zbar_up) / (1.0 + zbar_dn_jump)
+    T_ratio_ionized = T_ratio * mu_ratio
+
     # Predicted downstream values — apply the jump ratios to the unyt upstream
     # state, so the predictions keep their units too.
     pred = ps.predict_downstream(
@@ -377,7 +415,11 @@ def main():
         r_measured,
         dict(ne=ne_up, Te=Te_up, n_ion=ni_up, Ti=Ti_up, B_perp=Bperp_up,
              B_para=Bpara_up, rho=rho_up, v_shock=v_shock, v_para=vpara_up))
-    zbar_dn = float(np.nanmean(zbar[dn]))
+    # Heating, Zbar and the e/i partition describe the whole shocked LAYER — the
+    # plasma an experiment would diagnose — so they take their temperatures from the
+    # same band their densities come from.
+    Te_dn_layer = mean_dn(lo["Te"])
+    Ti_dn_layer = mean_dn(lo["Ti"])
 
     # Measured downstream means for the head-to-head.
     ne_dn_meas    = mean_jump(lo["ne"])
@@ -444,6 +486,9 @@ def main():
           f"ion-reflection threshold is 2.76)")
     print(f"\n--- Perpendicular MHD prediction (gamma = {gamma:.4f}) ---")
     print(f"  r = rho2/rho1 = {r:.3f}   p2/p1 = {p_ratio:.3f}   T2/T1 = {T_ratio:.3f}")
+    print(f"  T2/T1 corrected for ionization = {T_ratio_ionized:.3f}   "
+          f"(Zbar {zbar_up:.2f} -> {zbar_dn_jump:.2f} shares the pressure among "
+          f"{1.0 / mu_ratio:.2f}x more particles per unit mass)")
     print(f"  ceiling at this gamma: r_max = {(gamma + 1) / (gamma - 1):.2f}")
     print(f"\n--- Compression measured vs predicted ---")
     print(f"  r measured (mass) = {r_measured:.3f}   vs predicted {r:.3f}"
@@ -484,7 +529,7 @@ def main():
     # ------------------------------------------------------------------
     heating = fep.heating_partition(
         Te_up=Te_up.to("eV"), Ti_up=Ti_up.to("eV"),
-        Te_dn=Te_dn_meas.to("eV"), Ti_dn=Ti_dn_meas.to("eV"),
+        Te_dn=Te_dn_layer.to("eV"), Ti_dn=Ti_dn_layer.to("eV"),
         ne_up=ne_up.to("cm**-3"), ni_up=ni_up.to("cm**-3"),
         ne_dn=mean_dn(lo["ne"]).to("cm**-3"), ni_dn=mean_dn(lo["n_ion"]).to("cm**-3"),
         T_factor=T_ratio)
@@ -519,7 +564,8 @@ def main():
     x_up_hi_um = float(x[up].max().to("um"))
     x_contact_um = float(x_contact.to("um")) if np.isfinite(x_contact) else float("nan")
 
-    fig, axes = plt.subplots(2, 3, figsize=(19, 9), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=plot_style.figsize(19, 9),
+                             sharex=True, layout="constrained")
     for ax, (prof, u_val, pred_val, meas_val, ylabel, color, log) in zip(
             axes.flat, panels):
         ax.plot(x_um, prof, color=color, lw=1.6, label="FLASH lineout")
@@ -567,7 +613,6 @@ def main():
         f"$\\gamma$ = {gamma:.3f}   →   $r$ = {r:.2f}",
         fontsize=12,
     )
-    fig.tight_layout()
     fig_path = os.path.join(
         out_dir, f"flash_rh_prediction_{os.path.basename(snap_file)}.png")
     fig.savefig(fig_path, dpi=150, bbox_inches="tight")
@@ -595,6 +640,8 @@ def main():
         mach_s=np.asarray(mach_s), mach_a=np.asarray(mach_a),
         mach_ms=np.asarray(mach_ms),
         r=np.asarray(r), p_ratio=np.asarray(p_ratio), T_ratio=np.asarray(T_ratio),
+        T_ratio_ionized=np.asarray(T_ratio_ionized),
+        mu_ratio=np.asarray(mu_ratio), zbar_dn_jump=np.asarray(zbar_dn_jump),
         # upstream plasma state and the ion scales it sets
         los_label=np.asarray(source.label),
         dump_index=np.asarray(idx),

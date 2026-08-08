@@ -82,7 +82,10 @@ results/**
 input_files/
 
 # ...but keep the figures inside results/ (must come after the *.png/*.mp4 and
-# results/** ignores above so these re-includes win)
+# results/** ignores above so these re-includes win).  *.md is here for the same
+# reason as the figures: a written-up result is a deliverable, not a regenerable
+# intermediate, and it would otherwise be dropped silently.
 !results/**/
 !results/**/*.png
 !results/**/*.mp4
+!results/**/*.md

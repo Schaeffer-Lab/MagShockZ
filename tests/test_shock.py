@@ -417,3 +417,45 @@ def test_zero_jump_width_collapses_the_jump_band_onto_the_layer_band():
                             x_downstream_config=0.58)
     assert b.x_jump == pytest.approx(b.x_downstream)
     assert (b.jump_mask(x) == b.downstream_mask(x)).all()
+
+
+# ---------------------------------------------------------------------------
+# snap_front_to_jump
+# ---------------------------------------------------------------------------
+
+def test_snap_moves_a_front_placed_outside_the_jump_onto_it():
+    """A front 20 um outside the jump fills a fifth of a 100 um band with upstream."""
+    x = np.linspace(0.0, 1000.0, 1001)          # 1 um grid
+    rho = np.where(x < 600.0, 4.0, 1.0)         # jump at 600, downstream at smaller x
+    assert shock.snap_front_to_jump(x, rho, x_front=620.0, search=60.0) == \
+        pytest.approx(600.0, abs=2.0)
+
+
+def test_snap_leaves_a_correctly_placed_front_alone():
+    x = np.linspace(0.0, 1000.0, 1001)
+    rho = np.where(x < 600.0, 4.0, 1.0)
+    assert shock.snap_front_to_jump(x, rho, x_front=600.0, search=60.0) == \
+        pytest.approx(600.0, abs=2.0)
+
+
+def test_snap_cannot_relocate_beyond_its_search_window():
+    """It corrects a placement; it never goes hunting for a different feature."""
+    x = np.linspace(0.0, 1000.0, 1001)
+    rho = np.where(x < 200.0, 8.0, 1.0)          # the real jump is far away, at 200
+    snapped = shock.snap_front_to_jump(x, rho, x_front=600.0, search=30.0)
+    assert abs(snapped - 600.0) <= 30.0
+
+
+def test_snap_picks_the_drop_not_the_rise():
+    """Density rises into the shocked layer and falls at the front; only one is it."""
+    x = np.linspace(0.0, 1000.0, 1001)
+    rho = np.ones_like(x)
+    rho[(x >= 500.0) & (x < 600.0)] = 4.0        # rise at 500, drop at 600
+    assert shock.snap_front_to_jump(x, rho, x_front=590.0, search=120.0) == \
+        pytest.approx(600.0, abs=2.0)
+
+
+def test_snap_is_a_no_op_on_a_window_with_too_few_samples():
+    x = np.array([0.0, 500.0, 1000.0])
+    rho = np.array([4.0, 4.0, 1.0])
+    assert shock.snap_front_to_jump(x, rho, x_front=500.0, search=1.0) == 500.0

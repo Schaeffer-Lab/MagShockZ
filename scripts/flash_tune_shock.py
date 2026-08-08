@@ -192,7 +192,7 @@ class TrajectoryTuner:
         return np.array(t), np.array(x)
 
     def render(self):
-        fig, axes = plt.subplots(2, 1, figsize=(13, 9), sharex=True)
+        fig, axes = plt.subplots(2, 1, figsize=plot_style.figsize(13, 9), sharex=True)
         x_line = self._front_um()
         t_fit, x_fit = self._fit_fronts()
         leg = (f"trial  v={(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s  "
@@ -418,11 +418,11 @@ class RegionsTuner:
     def render(self):
         if self.slice is not None:
             fig, (axs, axn, axT) = plt.subplots(
-                3, 1, figsize=(13, 12), sharex=True,
+                3, 1, figsize=plot_style.figsize(13, 12), sharex=True,
                 gridspec_kw=dict(height_ratios=[1.1, 1, 1]))
             self._slice_panel(axs)
         else:
-            fig, (axn, axT) = plt.subplots(2, 1, figsize=(13, 9), sharex=True,
+            fig, (axn, axT) = plt.subplots(2, 1, figsize=plot_style.figsize(13, 9), sharex=True,
                                            gridspec_kw=dict(height_ratios=[1, 1]))
         ne = np.asarray(self.lo["ne"].to("cm**-3"))
         B  = np.asarray(self.lo["B_mag"].to("G"))

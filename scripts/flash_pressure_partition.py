@@ -95,6 +95,14 @@ def main():
                         dest="contact_gap_um",
                         help="Standoff [µm] between the piston contact and the "
                              "downstream band (default 50).")
+    parser.add_argument("--snap-front-um", type=float, default=60.0,
+                        dest="snap_front_um",
+                        help="Search half-width [µm] for snapping the placed "
+                             "front onto the steepest density drop (default 60; "
+                             "0 disables). A front placed a few cells outside the "
+                             "jump fills part of the thin RH band with upstream "
+                             "and drags every downstream mean toward ambient. The "
+                             "shift is reported.")
     parser.add_argument("--jump-band-um", type=float, default=100.0,
                         dest="jump_band_um",
                         help="Width [µm] of the thin band just behind the front "
@@ -228,6 +236,19 @@ def main():
     # shock over the SAME regions — they reported compressions differing by 3x when
     # each placed its own bands.
     UM_PER_CM = 1.0e4
+    # A front placed by eye can sit a few cells outside the density jump, which fills
+    # part of the thin RH band with upstream. Snap it onto the gradient and say by how
+    # much, so the correction is visible rather than silent.
+    if args.snap_front_um > 0.0:
+        snapped = shock.snap_front_to_jump(
+            x_cm, np.asarray(lo["rho"].to("g/cm**3")), x_shock_cm,
+            args.snap_front_um / 1.0e4)
+        shift_um = (snapped - x_shock_cm) * 1.0e4
+        if abs(shift_um) > 1.0:
+            print(f"  front snapped {shift_um:+.0f} µm to the density jump "
+                  f"({x_shock_cm * 1.0e4:.0f} -> {snapped * 1.0e4:.0f} µm)")
+        x_shock_cm = snapped
+
     bands = shock.resolve_bands(
         x_cm, np.asarray(lo[piston_material]), x_shock_cm,
         upstream_gap=args.upstream_gap_um / UM_PER_CM,
@@ -303,7 +324,8 @@ def main():
     # ------------------------------------------------------------------
     # Figure — pressure profiles (stacked, shock rest frame) + continuity bars
     # ------------------------------------------------------------------
-    fig, (axA, axB) = plt.subplots(1, 2, figsize=(14, 5),
+    fig, (axA, axB) = plt.subplots(1, 2, figsize=plot_style.figsize(15, 6.5),
+                                   layout="constrained",
                                    gridspec_kw={"width_ratios": [2, 1]})
 
     # Panel A: stacked-area momentum flux vs distance from the front
@@ -356,7 +378,6 @@ def main():
     axB.legend(fontsize=9)
     axB.grid(axis="y", alpha=0.3)
 
-    fig.tight_layout()
     fig_path = os.path.join(out_dir, f"flash_pressure_partition_{os.path.basename(snap_file)}.png")
     fig.savefig(fig_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

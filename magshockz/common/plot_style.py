@@ -62,6 +62,26 @@ _PUB_RC = {
 }
 
 
+# Publication text is roughly 1.6x screen text, but the figure keeps its inches, so a
+# layout that fitted on screen collides with itself on a slide -- suptitles running
+# into axes titles, y-labels into neighbouring panels.  Scaling the canvas with the
+# type keeps the ratio of text to axes the same as the screen version that was tuned.
+_PUB_FIGSIZE_SCALE = 1.35
+
+# Perceptually uniform, prints legibly in greyscale, and reads well on a projector.
+# One map across the FLASH figures so panels can be compared at a glance.
+SEQUENTIAL_CMAP = "plasma"
+
+
+def figsize(width: float, height: float) -> tuple:
+    """Figure size in inches, enlarged when publication mode is on.
+
+    Call AFTER :func:`apply`, which records the publication state.
+    """
+    scale = _PUB_FIGSIZE_SCALE if _PUBLICATION else 1.0
+    return (width * scale, height * scale)
+
+
 def add_publication_arg(parser):
     """Add the shared ``--publication`` flag to an argparse parser; returns it."""
     parser.add_argument(

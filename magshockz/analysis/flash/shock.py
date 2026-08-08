@@ -82,6 +82,43 @@ def contact_position(x, mass_fraction, threshold: float = 1.0e-3) -> float:
     return float(x[present.max()]) if present.size else float("nan")
 
 
+def snap_front_to_jump(x, rho, x_front: float, search: float) -> float:
+    """Move ``x_front`` onto the steepest density drop within ``+/- search``.
+
+    A front placed by eye lands within a few cells of the jump, which is fine for a
+    wide band and not fine for a thin one: the Rankine--Hugoniot band is ~100 µm here,
+    so a front sitting 20 µm outside the jump fills a fifth of it with upstream and
+    drags every "downstream" mean toward the ambient.  Snapping to the gradient costs
+    nothing when the placement was already right.
+
+    Downstream lies at smaller ``x``, so the front is the steepest *negative*
+    gradient (density falling as the ray leaves the shocked layer).
+
+    Parameters
+    ----------
+    x, rho :
+        Position along the line of sight and mass density on the same grid.
+    x_front :
+        The placed front position, in ``x``'s unit.
+    search :
+        Half-width of the window searched around ``x_front``.  Keep it small --
+        a few cells -- so this corrects a placement, never relocates it.
+
+    Returns
+    -------
+    float
+        The snapped position, or ``x_front`` unchanged when the window holds
+        fewer than three samples.
+    """
+    x = np.asarray(x, dtype=float)
+    rho = np.asarray(rho, dtype=float)
+    window = np.flatnonzero(np.abs(x - x_front) <= search)
+    if window.size < 3:
+        return float(x_front)
+    gradient = np.gradient(rho[window], x[window])
+    return float(x[window][int(np.argmin(gradient))])
+
+
 @dataclass(frozen=True)
 class ShockBands:
     """The two windows a shock measurement is averaged over, and where they came from.

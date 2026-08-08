@@ -508,18 +508,19 @@ def main():
     # ------------------------------------------------------------------
     # Figure 1 — streaks
     # ------------------------------------------------------------------
-    fig1, axes = plt.subplots(2, 2, figsize=(16, 10))
+    fig1, axes = plt.subplots(2, 2, figsize=plot_style.figsize(16, 10),
+                              layout="constrained")
     plot_streak(axes[0, 0], time_ns, x_um, ne_streak,
-                label=r"$n_e$ [cm$^{-3}$]", cmap="magma", log=True,
+                label=r"$n_e$ [cm$^{-3}$]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
                 shock_lines=shock_lines)
     plot_streak(axes[0, 1], time_ns, x_um, B_streak,
-                label=r"$|B|$ [G]", cmap="viridis", log=False,
+                label=r"$|B|$ [G]", cmap=plot_style.SEQUENTIAL_CMAP, log=False,
                 shock_lines=shock_lines)
     plot_streak(axes[1, 0], time_ns, x_um, Te_streak,
-                label=r"$T_e$ [eV]", cmap="inferno", log=True,
+                label=r"$T_e$ [eV]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
                 shock_lines=shock_lines)
     plot_streak(axes[1, 1], time_ns, x_um, Ti_streak,
-                label=r"$T_i$ [eV]", cmap="inferno", log=True,
+                label=r"$T_i$ [eV]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
                 shock_lines=shock_lines)
 
     fig1.suptitle(
@@ -528,7 +529,6 @@ def main():
         f"v_shock = {v_shock_kms:.1f} km/s   M_A = {float(mach['M_A']):.2f}   M_s = {float(mach['M_s']):.2f}",
         fontsize=12,
     )
-    fig1.tight_layout()
     streak_path = os.path.join(out_dir, f"flash_overview_streaks_{tag}.png")
     fig1.savefig(streak_path, dpi=150, bbox_inches="tight")
     plt.close(fig1)
@@ -537,7 +537,8 @@ def main():
     # ------------------------------------------------------------------
     # Figure 1b — mass-continuity shock speed vs time (acceleration check)
     # ------------------------------------------------------------------
-    figv, (axv, axin) = plt.subplots(1, 2, figsize=(15, 5.5))
+    figv, (axv, axin) = plt.subplots(1, 2, figsize=plot_style.figsize(15, 6.5),
+                                     layout="constrained")
     t_fin   = time_ns[mc_finite]
     vsh_fin = (mc["v_sh"][mc_finite] * u.cm / u.s).to("km/s").value
     v_shock_est_kms = (v_shock_est * u.cm / u.s).to("km/s").value
@@ -584,7 +585,6 @@ def main():
     axin.set_title("Mass-continuity inputs (region averages)")
 
     figv.suptitle(f"Mass-continuity shock speed — {os.path.basename(flash_dir)}", fontsize=12)
-    figv.tight_layout()
     vsh_path = os.path.join(out_dir, f"flash_overview_vshock_masscontinuity_{tag}.png")
     figv.savefig(vsh_path, dpi=150, bbox_inches="tight")
     plt.close(figv)
@@ -607,7 +607,8 @@ def main():
         )
         save_yt_slice(snap_file, args.slice_axis, ("gas", "El_number_density"),
                       slice_edens_path,
-                      f"Electron density — {os.path.basename(snap_file)}", "viridis")
+                      f"Electron density — {os.path.basename(snap_file)}",
+                      plot_style.SEQUENTIAL_CMAP)
         print(f"Saved → {slice_edens_path}")
     except Exception as e:
         print(f"  Warning: could not save density slice: {e}")
@@ -617,13 +618,15 @@ def main():
             out_dir, f"flash_slice_tion_{os.path.basename(snap_file)}.png"
         )
         save_yt_slice(snap_file, args.slice_axis, ("flash", "tion"), slice_tion_path,
-                      f"Ion temperature — {os.path.basename(snap_file)}", "hot")
+                      f"Ion temperature — {os.path.basename(snap_file)}",
+                      plot_style.SEQUENTIAL_CMAP)
         print(f"Saved → {slice_tion_path}")
     except Exception as e:
         print(f"  Warning: could not save Ti slice: {e}")
 
     # Lineout figure (2 panels)
-    fig2, ax2 = plt.subplots(1, 2, figsize=(14, 5))
+    fig2, ax2 = plt.subplots(1, 2, figsize=plot_style.figsize(15, 6.5),
+                             layout="constrained")
 
     # Panel [0]: nₑ + |B| line-out
     axp = ax2[0]
@@ -662,7 +665,6 @@ def main():
         f"FLASH lineouts — {os.path.basename(snap_file)}  (t = {snap_t_ns:.2f} ns)",
         fontsize=13,
     )
-    fig2.tight_layout()
     lineout_path = os.path.join(out_dir, f"flash_overview_lineouts_{os.path.basename(snap_file)}.png")
     fig2.savefig(lineout_path, dpi=150, bbox_inches="tight")
     plt.close(fig2)
