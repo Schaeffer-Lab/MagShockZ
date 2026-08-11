@@ -130,11 +130,13 @@ my_constants.B0      = vA*sqrt(mu0*(namb/z_amb)*(mi_amb+z_amb*m_e))   \
 # out-of-plane field ({scales.magnetic_field.to_value(u.T) * 1e4:.1f} G)
 
 # --- geometry, in the ion units the invariants are stated in -------------------
-my_constants.slab    = {scales.slab_halfwidth_di:.6f}*di    # piston slab half-thickness along z
-my_constants.rslab   = {scales.slab_radius_di:.8f}*di  # slab is a finite PATCH, not a sheet
-my_constants.rspot   = {scales.spot_radius_di:.8f}*di  # heating spot -> r_spot/d_i, MATCHED
 my_constants.xhalf   = {scales.transverse_halfwidth_di * scales.di_over_de:.6f}*de
 my_constants.zhalf   = {scales.domain_halfwidth_di * scales.di_over_de:.6f}*de
+my_constants.slab    = {scales.slab_halfwidth_di:.6f}*di    # piston slab half-thickness along z
+# rslab is defined AFTER xhalf because a full-width target sets it to xhalf.
+my_constants.rslab   = {_rslab(scales)}
+my_constants.rspot   = {_rspot(scales)}
+my_constants.rinj    = {_rinj(scales)}
 
 # --- temperatures as theta = kT/(m c^2), which is exactly WarpX's u_std^2 -------
 # The ambient thetas are written as the pressure balance they came from, so the two
@@ -224,14 +226,46 @@ def _species_block(name: str, *, identity: list[str], density: str, theta: str,
     ])
 
 
-def _species_section(ppc_each_dim: tuple[int, int]) -> str:
-    """All four species, split piston/ambient by the finite slab patch.
+def _rslab(scales: units.DeckScales) -> str:
+    """The target's transverse half-extent: its radius, or the whole box for a surface."""
+    if scales.slab_spans_domain:
+        return "xhalf                # target spans the box: an edgeless surface"
+    return f"{scales.slab_radius_di:.8f}*di  # target is a finite PATCH, not a surface"
 
-    The slab is a PATCH of radius ``rslab``, not a sheet spanning the domain: FLASH's
-    piston is a plume ablated from a finite spot, and a slab uniform in x would expand
-    as a quasi-planar foil with no way to decompress radially.
+
+def _rspot(scales: units.DeckScales) -> str:
+    """The heating spot radius.  ZERO means uniform -- ParticleHeater's own convention."""
+    if scales.spot_radius_di > 0.0:
+        return f"{scales.spot_radius_di:.8f}*di  # heated spot -> r_spot/d_i, MATCHED"
+    return "0.                   # 0 = no spot: ParticleHeater heats uniformly in x"
+
+
+def _rinj(scales: units.DeckScales) -> str:
+    """Where ``TargetInjector`` replenishes: the illuminated spot, if there is one.
+
+    Ablation happens only where the laser is, so the un-illuminated target is left as
+    inert cold plasma held by its own inertia rather than pinned at ``nt`` by continuous
+    injection.  With no spot the whole target is being heated, so the whole target is
+    what gets replenished -- which is also what makes this identical to ``rslab`` for
+    every deck rendered before the target and the spot became independent.
     """
-    inside = "(abs(z)<slab)*(abs(x)<rslab)"
+    if scales.spot_radius_di > 0.0:
+        return "rspot                # ablation only where the laser is"
+    return "rslab                # heated uniformly, so replenished uniformly"
+
+
+def _species_section(ppc_each_dim: tuple[int, int],
+                     scales: units.DeckScales) -> str:
+    """All four species, split piston/ambient by the target's occupied region.
+
+    A finite ``rslab`` makes the target a disc that can decompress radially in its own
+    right.  A target spanning the box drops the transverse factor entirely: its periodic
+    images join up into a continuous surface, so the plume ablated from ``rspot`` is
+    confined laterally by un-illuminated target the way FLASH's is, and expands
+    anisotropically instead of as a free radially-symmetric plume.
+    """
+    inside = ("(abs(z)<slab)" if scales.slab_spans_domain
+              else "(abs(z)<slab)*(abs(x)<rslab)")
     return "\n\n".join([
         f"particles.species_names = {' '.join(SPECIES_NAMES)}",
 
@@ -335,6 +369,10 @@ def _injector_block(config: dict[str, Any]) -> str:
     material: the contrast would hold while the drive died, which is neither the FLASH
     behaviour nor a clean ballistic coast.
 
+    The footprint is ``rinj``, not ``rslab``: on a target wider than the laser spot, only
+    the illuminated column is being ablated, and topping the rest up would pin it at
+    ``nt`` as a rigid wall instead of leaving it inertially confined.
+
     ``density`` is the ELECTRON density.  The injector derives the neutralizing ion rate
     from the charge ratio ``-q_e/(Z q_e) = 1/Z`` itself, so the charge state is stated
     once, on the species.
@@ -345,8 +383,8 @@ target_injector.species              = piston_electrons
 target_injector.neutralizing_species = piston_ions
 target_injector.intervals            = {_intervals(int(injector['intervals']), None)}
 target_injector.tau                  = {float(injector['tau_over_wpe_inv']):.6g}/wpe
-target_injector.lo                   = -rslab -slab
-target_injector.hi                   = rslab slab
+target_injector.lo                   = -rinj -slab
+target_injector.hi                   = rinj slab
 target_injector.density              = nt
 target_injector.reference_density    = n0
 target_injector.ppc_reference        = {int(injector['ppc_reference'])}
@@ -386,11 +424,22 @@ diag1.intervals      = {plotfile}
 diag1.diag_type      = Full
 diag1.fields_to_plot = Ex Ey Ez Bx By Bz jx jy jz rho {' '.join(
         f'rho_{name} T_{name}' for name in SPECIES_NAMES)}
-# T_<species> assumes equipartition, which the heated piston electrons only marginally
-# satisfy; <u^2> is the exact quantity the operator's own CI test checks, so carry both.
+# T_<species> is the true thermal temperature -- DepositTotalNGPTemperature subtracts the
+# per-cell mean velocity before summing the squares -- but it assumes equipartition, which
+# the heated piston electrons only marginally satisfy. <u^2> is the exact quantity the
+# operator's own CI test checks, so carry both.
+#
+# ux/uy/uz are the per-species BULK velocity (weighted means of u = gamma*v, in m/s).
+# Without them there is no way to get one species' flow: the deck writes only the TOTAL
+# current, and four species with two charge signs cannot be unpicked from it -- nor can
+# usq, a second moment, give back a direction. They are what the piston-speed and
+# compression measurements read.
 diag1.particle_fields_species = {' '.join(SPECIES_NAMES)}
-diag1.particle_fields_to_plot = usq
+diag1.particle_fields_to_plot = usq ux uy uz
 diag1.particle_fields.usq(x,y,z,ux,uy,uz) = "ux*ux+uy*uy+uz*uz"
+diag1.particle_fields.ux(x,y,z,ux,uy,uz) = "ux"
+diag1.particle_fields.uy(x,y,z,ux,uy,uz) = "uy"
+diag1.particle_fields.uz(x,y,z,ux,uy,uz) = "uz"
 # NO RAW PARTICLES in diag1. At ~{macroparticles / 1e6:.0f}M macroparticles a Full diagnostic
 # writes ~4.4 GB of particle data per dump against 0.27 GB of the grid fields the analysis
 # reads -- {dumps} dumps of that is ~{4.6 * dumps / 1000:.1f} TB, and the I/O throttles the run
@@ -436,6 +485,10 @@ def _header_block(config: dict[str, Any], scales: units.DeckScales, *,
             expected = target[name]
             off = "" if not expected or abs(value / expected - 1.0) < 3e-3 else "  <-- OFF"
             rows.append(f"#   {name:<12} {expected:>12.5g} {value:>12.5g}{off}")
+        # Recorded, not scored: the deck's target spans its box, so its width is a
+        # resolution/cost choice and scoring it would call a box size a physics miss.
+        rows.append(f"#   {'r_target/d_i':<12} {flash.target_halfwidth_over_di:>12.5g} "
+                    f"{scales.slab_radius_di:>12.5g}   (provenance)")
 
     warnings = "\n".join(f"#   {w}" for w in scales.warnings) or "#   (none)"
     drive = ("the whole run" if stop_step is None
@@ -451,6 +504,9 @@ def _header_block(config: dict[str, Any], scales: units.DeckScales, *,
 # by ParticleHeater + TargetInjector (the Fox et al. 2018 laser-ablation surrogate):
 # the injector tops a dense cold slab up towards nt, the heater drives momentum-space
 # diffusion in its electrons, and the slab expands as a kinetically smooth piston.
+# The TARGET and the HEATED SPOT are separate: heating a target no wider than the spot
+# gives a free plume with nothing to push against, and so an expansion far more
+# radially symmetric than FLASH's.
 # Boundaries are periodic, so the slab is symmetric and TWO fronts propagate in +-z;
 # the run must stop before either wraps.
 #
@@ -501,7 +557,7 @@ def render(config: dict[str, Any], scales: units.DeckScales, *,
         _time_and_grid_block(config, scales, max_step=max_step),
         _boundary_block(),
         _field_block(config),
-        _species_section(ppc_each_dim),
+        _species_section(ppc_each_dim, scales),
         _heater_block(config, scales, stop_step=stop_step, no_heater=no_heater),
         _injector_block(config),
         _diagnostics_block(config, max_step=max_step, smoke=smoke,
@@ -622,6 +678,12 @@ def key_params(text: str) -> dict[str, Any]:
 #: ``amr.restart`` and ``max_step`` are appended by the sbatch, not the generator.
 IGNORED_ON_VERIFY = ("amr.restart",)
 
+#: Constants the WarpX build defines itself.  They appear in ``warpx_used_inputs`` without
+#: ever having been written by the generator, so a raw key diff reports four spurious
+#: differences on every ``--verify``.
+WARPX_BUILTIN_CONSTANTS = frozenset(
+    {"hbar", "kb", "m_p", "m_u", "q_e", "m_e", "clight", "epsilon0", "mu0", "pi"})
+
 
 def verify(deck_text: str, reference_text: str, *,
            rtol: float = VERIFY_RTOL) -> list[str]:
@@ -635,9 +697,18 @@ def verify(deck_text: str, reference_text: str, *,
     for key in sorted(set(theirs) | set(ours)):
         if key in IGNORED_ON_VERIFY:
             continue
+        constant = key[len("const:"):] if key.startswith("const:") else None
         if key not in theirs:
+            # WarpX echoes only the my_constants it actually resolved, so one that is
+            # absent was never read and cannot have affected the run. A full-width target
+            # renders `rslab` for documentation and then never references it -- the deck
+            # says something true, and there is nothing for WarpX to disagree with.
+            if constant is not None:
+                continue
             problems.append(f"{key}: missing from the deck (spec has {ours[key]!r})")
         elif key not in ours:
+            if constant in WARPX_BUILTIN_CONSTANTS:
+                continue
             problems.append(f"{key}: in the deck ({theirs[key]!r}) but not the spec")
         elif not _close(theirs[key], ours[key], rtol):
             note = ("  (the sbatch appends max_step via HEATER_EXTRA_ARGS)"

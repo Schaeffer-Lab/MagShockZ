@@ -72,10 +72,13 @@ RELATIVISTIC_VTH_MAX = 0.3
 
 BLOCKING_DEFAULT = 8
 
-#: Cost reference: the 944 x 4720, 25 ppc/species, 4-species, 99326-step run measured at
-#: 4 nodes x 6 h. Node-hours scale linearly in (macroparticles x steps).
-_COST_REF_WORK = (944.0 * 4720.0) * 25.0 * 4.0 * 99326.0
-_COST_REF_NODE_HOURS = 4.0 * 6.0
+#: Cost reference: job 56437657 -- 1336 x 5232, 25 ppc/species, 4 species, 105511 steps,
+#: TIMED at 40.6 min on 16 GPU nodes. Node-hours scale linearly in (macroparticles x
+#: steps). The previous reference was a 4-node WALL-CLOCK ALLOCATION rather than a
+#: measured runtime, so it overstated this deck by 3.7x -- enough to make validate()
+#: refuse a run that finishes in a third of its slot.
+_COST_REF_WORK = (1336.0 * 5232.0) * 25.0 * 4.0 * 105511.0
+_COST_REF_NODE_HOURS = 16.0 * (40.6 / 60.0)
 
 ALUMINIUM_6 = Particle("Al 6+")
 SILICON_14 = Particle("Si 14+")
@@ -225,6 +228,10 @@ class FlashReference:
     piston_front_speed: u.Quantity
     spot_radius: u.Quantity
     window: u.Quantity
+    #: Transverse half-extent of FLASH's ablator (``flash.par``'s ``xmin``/``xmax``).
+    #: Provenance for the deck's target width, NOT a matched invariant: the deck's target
+    #: spans its box, so this would promote a resolution/cost choice into a physics claim.
+    target_halfwidth: u.Quantity | None = None
     source: str = ""
 
     @property
@@ -244,6 +251,13 @@ class FlashReference:
     @property
     def spot_radius_over_di(self) -> float:
         return float((self.spot_radius / self.upstream.ion_skin_depth).decompose())
+
+    @property
+    def target_halfwidth_over_di(self) -> float:
+        """FLASH's ablator half-width in ``d_i``, or nan when the spec does not state it."""
+        if self.target_halfwidth is None:
+            return math.nan
+        return float((self.target_halfwidth / self.upstream.ion_skin_depth).decompose())
 
     @property
     def window_gyroperiods(self) -> float:
@@ -288,7 +302,17 @@ class DeckScales:
 
     cell_size_de: float
     slab_halfwidth_di: float
+    #: Transverse half-extent of the TARGET, and of the HEATED spot within it.  They are
+    #: independent, and the three regimes that matter are all just choices of the pair:
+    #: a finite patch heated edge to edge (``r_slab == r_spot``, the old ``patch``), a
+    #: transversely uniform sheet heated everywhere (``slab_spans_domain`` with
+    #: ``spot_radius_di == 0``, the old ``slab``), and a full-width target ablated over
+    #: one spot (``slab_spans_domain`` with a finite spot) -- FLASH's actual geometry,
+    #: where the un-illuminated target confines the plume laterally.
     slab_radius_di: float
+    #: Whether the target spans the whole transverse extent, so the deck writes ``rslab``
+    #: as ``xhalf`` and its periodic images make it a continuous, edgeless surface.
+    slab_spans_domain: bool
     spot_radius_di: float
     domain_halfwidth_di: float
     transverse_halfwidth_di: float
@@ -355,7 +379,9 @@ class DeckScales:
             "beta_e": self.upstream.beta_e,
             "beta_i": self.upstream.beta_i,
             "contrast": self.contrast,
-            "r_spot/d_i": self.spot_radius_di,
+            # Heating the whole target uniformly leaves no spot, so there is no radius to
+            # match -- that is what spot_radius_di = 0 means to ParticleHeater too.
+            "r_spot/d_i": self.spot_radius_di if self.spot_radius_di > 0.0 else math.nan,
             "rho_i/d_i": self.upstream.ion_gyroradius_over_skin_depth,
             "t_run/T_ci": self.run_gyroperiods,
         }
@@ -456,6 +482,10 @@ def invariant_table(scales: DeckScales) -> str:
         lines.append(f"{name:<14}{expected:>12.5g}{value:>12.5g}{rel:>10.1e}")
 
     flash_upstream = scales.flash.upstream
+    lines += ["", "provenance (recorded, not matched)"]
+    lines.append(f"{'r_target/d_i':<14}{scales.flash.target_halfwidth_over_di:>12.5g}"
+                 f"{scales.slab_radius_di:>12.5g}")
+
     broken = [
         ("m_i/(Z m_e)", mass_per_charge(flash_upstream.ion),
          mass_per_charge(scales.upstream.ion)),
@@ -575,6 +605,7 @@ def derive(
     contrast: float,
     piston_initial_temperature: u.Quantity,
     calibration: HeaterCalibration,
+    heater_theta: float | None = None,
     cell_size_de: float,
     slab_halfwidth_di: float,
     slab_radius_di: float | None = None,
@@ -604,6 +635,13 @@ def derive(
        delivers it comes from the empirical :mod:`~warpx.calibration` fit, since the
        operator has no setpoint feedback and no closure predicts its response.
     5. Geometry is stated in ``d_i`` and converted with ``d_i/d_e = sqrt(m/Ze)``.
+
+    ``slab_radius_di`` and ``spot_radius_di`` are the target's and the heated spot's
+    transverse half-extents, and they are independent.  ``slab_radius_di = None`` gives a
+    target spanning the whole transverse extent -- FLASH's ablator fills its box, and the
+    periodic images then make it a continuous surface with no target edge.
+    ``spot_radius_di = None`` takes FLASH's laser spot; ``0`` heats uniformly, which is
+    ``ParticleHeater``'s own convention for "no spot".
     """
     if reference_density <= 0 * reference_density.unit:
         raise ValueError(f"reference_density must be positive, got {reference_density!r}")
@@ -636,9 +674,21 @@ def derive(
         ion_temperature=ambient_ion_temperature,
     )
 
-    piston_speed = flash.mach_alfven * alfven_speed
     piston_mass_per_charge = mass_per_charge(piston_ion)
-    heater_theta = calibration.heater_theta(piston_speed, piston_mass_per_charge)
+    if heater_theta is None:
+        # The default direction: FLASH sets the REQUIRED speed, the fit inverts to a
+        # setpoint.
+        piston_speed = flash.mach_alfven * alfven_speed
+        heater_theta = calibration.heater_theta(piston_speed, piston_mass_per_charge)
+    else:
+        # A pinned setpoint runs the chain FORWARDS instead: the fit now only predicts
+        # what this theta will deliver, and the domain is sized for that speed rather
+        # than for the one FLASH wants. This is the scan mode -- it deliberately does
+        # NOT match M_A, which is the whole point of a scan that measures the response.
+        heater_theta = float(heater_theta)
+        if heater_theta <= 0.0:
+            raise ValueError(f"heater_theta must be positive, got {heater_theta!r}")
+        piston_speed = calibration.piston_speed(heater_theta, piston_mass_per_charge)
     heater_temperature = heater_theta * ELECTRON_REST_ENERGY
 
     extrapolation = calibration.extrapolation_warning(
@@ -678,19 +728,42 @@ def derive(
 
     if spot_radius_di is None:
         spot_radius_di = flash.spot_radius_over_di
-    # The target slab is a finite PATCH, not a sheet spanning the domain: FLASH's piston
-    # is a plume ablated from a 500 um spot, so a slab uniform in x would expand as a
-    # quasi-planar foil and could not decompress radially.
-    if slab_radius_di is None:
-        slab_radius_di = spot_radius_di
+    if spot_radius_di < 0.0:
+        raise ValueError(f"spot_radius_di must be >= 0, got {spot_radius_di!r}")
 
+    # A target spanning the domain has no width of its own to size the box from, so the
+    # spot sets the default instead.
+    slab_spans_domain = slab_radius_di is None
     if transverse_halfwidth_di is None:
-        transverse_halfwidth_di = max(4.0 * slab_radius_di, 4.0)
-    elif transverse_halfwidth_di < 2.0 * slab_radius_di:
+        sizing_radius = spot_radius_di if slab_spans_domain else slab_radius_di
+        transverse_halfwidth_di = max(4.0 * sizing_radius, 4.0)
+    elif not slab_spans_domain and transverse_halfwidth_di < 2.0 * slab_radius_di:
         warnings.append(
             f"transverse_halfwidth_di = {transverse_halfwidth_di:.1f} is under 2 slab "
             f"radii ({2 * slab_radius_di:.1f} d_i): the periodic images of the piston "
             f"patch overlap it, so the expansion is not radially free.")
+    if slab_spans_domain:
+        slab_radius_di = transverse_halfwidth_di
+
+    # The ablated plume does not only travel along z -- it expands radially too, and the
+    # transverse boundary is periodic, so once its edge reaches it the plume is
+    # interacting with its own image. Job 56437657 hit exactly this: piston density at
+    # the transverse boundary went from ~0 at 0.10 T_ci to 0.36 n_amb at 0.19, and the
+    # front measurement jumped. The reach is measured from the SPOT, since that is where
+    # the plume originates; a full-width target confines it further, so this is a bound
+    # twice over -- radial expansion is also slower than the axial front. A uniformly
+    # heated sheet (spot_radius_di = 0) has no radial structure at all and cannot wrap.
+    if spot_radius_di > 0.0:
+        radial_reach = spot_radius_di + travel_di
+        if radial_reach > transverse_halfwidth_di:
+            wrap_gyro = run_gyro * (transverse_halfwidth_di - spot_radius_di) / travel_di
+            warnings.append(
+                f"the plume can reach {radial_reach:.1f} d_i radially over "
+                f"{run_gyro:.3f} T_ci but the transverse half-width is only "
+                f"{transverse_halfwidth_di:.1f} d_i -- it meets its own periodic image "
+                f"from about {wrap_gyro:.3f} T_ci onward, after which the front "
+                f"measurement is contaminated. Widen it, or set geometry.spot_radius_di: "
+                f"0 to heat uniformly and drop radial expansion entirely.")
 
     scales = DeckScales(
         reference_density=reference_density,
@@ -704,6 +777,7 @@ def derive(
         cell_size_de=cell_size_de,
         slab_halfwidth_di=slab_halfwidth_di,
         slab_radius_di=slab_radius_di,
+        slab_spans_domain=slab_spans_domain,
         spot_radius_di=spot_radius_di,
         domain_halfwidth_di=domain_halfwidth_di,
         transverse_halfwidth_di=transverse_halfwidth_di,

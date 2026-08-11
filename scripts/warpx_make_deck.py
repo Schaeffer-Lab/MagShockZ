@@ -68,9 +68,13 @@ def report(config: dict, scales: units.DeckScales) -> str:
         f"v_th,e {scales.heater_thermal_speed_over_c:.3f} c",
         f"grid         {scales.n_cells_x} x {scales.n_cells_z}   "
         f"steps {scales.max_step}   lDe/dx {scales.debye_per_cell:.4f}",
-        f"geometry     slab {scales.slab_halfwidth_di:.3g} x r{scales.slab_radius_di:.3g} d_i, "
-        f"spot r{scales.spot_radius_di:.3g}, box "
-        f"+-{scales.transverse_halfwidth_di:.4g} x +-{scales.domain_halfwidth_di:.4g} d_i",
+        f"geometry     target {scales.slab_halfwidth_di:.3g} d_i thick x "
+        + ("+-xhalf (spans the box)" if scales.slab_spans_domain
+           else f"r{scales.slab_radius_di:.3g} patch")
+        + (f", heated over r{scales.spot_radius_di:.3g} d_i"
+           if scales.spot_radius_di > 0.0 else ", heated UNIFORMLY (no spot)")
+        + f", box +-{scales.transverse_halfwidth_di:.4g} x "
+          f"+-{scales.domain_halfwidth_di:.4g} d_i",
     ]
     # theta is an amplitude, not a servo setpoint, so state the kick it resolves to.
     drive = units.heater_drive(
@@ -160,8 +164,13 @@ def main() -> None:
         raise SystemExit(compare_against(
             os.path.join(deck_dir, deck_name), production, "check"))
     if args.verify:
-        raise SystemExit(compare_against(
-            os.path.join(deck_dir, "diags", "warpx_used_inputs"), production, "verify"))
+        # WarpX writes warpx_used_inputs into its CWD, which the sbatch sets to the RUN
+        # directory -- not into diags/. Look there first and keep the old path as a
+        # fallback, since archived runs have it wherever they were launched from.
+        candidates = [os.path.join(deck_dir, "warpx_used_inputs"),
+                      os.path.join(deck_dir, "diags", "warpx_used_inputs")]
+        echo = next((p for p in candidates if os.path.isfile(p)), candidates[0])
+        raise SystemExit(compare_against(echo, production, "verify"))
 
     os.makedirs(deck_dir, exist_ok=True)
     written = []

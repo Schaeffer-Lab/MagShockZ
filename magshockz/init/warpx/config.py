@@ -65,6 +65,16 @@ def load(path: str | Path) -> dict[str, Any]:
             f"sizing and the run-length budget all follow from it. A walled variant "
             f"needs its own schema and renderer.")
 
+    # geometry.piston_shape used to couple the target's radius to the heated spot's, so a
+    # spec still carrying it means something different now: slab_radius_di: null was the
+    # laser spot and is now the whole box. Raise rather than silently re-geometry a run.
+    if "piston_shape" in config["geometry"]:
+        raise ValueError(
+            f"{path}: geometry.piston_shape no longer exists -- the target radius and the "
+            f"heated spot radius are independent primaries now. Write "
+            f"'slab_radius_di: <r>' for the old 'patch' (null = a target spanning the "
+            f"box) and 'spot_radius_di: 0' for the old 'slab' (null = FLASH's spot).")
+
     ppc = config["numerics"]["ppc_each_dim"]
     if not (len(ppc) == 2 and all(isinstance(n, int) and n > 0 for n in ppc)):
         raise ValueError(f"{path}: numerics.ppc_each_dim must be two positive ints")
@@ -100,13 +110,24 @@ def flash_reference(config: dict[str, Any]) -> units.FlashReference:
                                  * piston_ion.charge_number * u.m**-3),
         piston_front_speed=float(piston["front_speed_km_s"]) * u.km / u.s,
         spot_radius=float(piston["spot_radius_um"]) * u.um,
+        target_halfwidth=(None if piston.get("target_halfwidth_um") is None
+                          else float(piston["target_halfwidth_um"]) * u.um),
         window=(float(window[1]) - float(window[0])) * u.ns,
         source=str(block.get("source", "")),
     )
 
 
 def calibration(config: dict[str, Any]) -> HeaterCalibration:
-    """The ``calibration:`` block, fitted."""
+    """The ``calibration:`` block, fitted over the runs that share this deck's Z.
+
+    Z is a separate axis from the fit's grouping variable ``S = theta/(m/Ze)``: the
+    heater's rate carries the BARE ``m_i/m_e``, which is Z times ``m/(Z m_e)``, so runs
+    at different charge states do not lie on one curve.  Fitting them together is not
+    conservative, it is wrong -- mixing the two Z = 1 runs with the Z = 14 ones flattened
+    the exponent from 0.43 to 0.32 and moved the predicted setpoint by 40%.  All the
+    points stay in the spec; only the matching ones are fitted.  If fewer than two match,
+    everything is fitted and :func:`validate` says so.
+    """
     points = tuple(
         CalibrationPoint(
             run_id=str(entry["run_id"]),
@@ -118,7 +139,10 @@ def calibration(config: dict[str, Any]) -> HeaterCalibration:
         )
         for entry in config["calibration"]
     )
-    return fit(points)
+    charge = round(
+        units.as_particle(config["flash"]["piston"]["species"]).charge_number)
+    matching = tuple(p for p in points if p.charge_number == charge)
+    return fit(matching if len(matching) >= 2 else points)
 
 
 def scales(config: dict[str, Any], *, smoke: bool = False) -> units.DeckScales:
@@ -138,9 +162,11 @@ def scales(config: dict[str, Any], *, smoke: bool = False) -> units.DeckScales:
         piston_initial_temperature=(
             float(config["plasma"]["piston"]["initial_temperature_ev"]) * u.eV),
         calibration=calibration(config),
+        heater_theta=_optional(config["operators"]["heater"], "theta"),
         cell_size_de=float(geometry["cell_size_de"]),
         slab_halfwidth_di=float(geometry["slab_halfwidth_di"]),
         slab_radius_di=_optional(geometry, "slab_radius_di"),
+        spot_radius_di=_optional(geometry, "spot_radius_di"),
         domain_halfwidth_di=_optional(geometry, "domain_halfwidth_di"),
         transverse_halfwidth_di=_optional(geometry, "transverse_halfwidth_di"),
         run_gyroperiods=_optional(geometry, "run_gyroperiods"),
@@ -162,9 +188,13 @@ def scales(config: dict[str, Any], *, smoke: bool = False) -> units.DeckScales:
         piston_initial_temperature=(
             float(config["plasma"]["piston"]["initial_temperature_ev"]) * u.eV),
         calibration=calibration(config),
+        heater_theta=_optional(config["operators"]["heater"], "theta"),
         cell_size_de=float(geometry["cell_size_de"]),
         slab_halfwidth_di=float(geometry["slab_halfwidth_di"]),
-        slab_radius_di=derived.slab_radius_di,
+        # A target spanning the domain must keep spanning the SHRUNKEN one, so the smoke
+        # deck stays the same geometry instead of becoming a patch in a smaller box.
+        slab_radius_di=None if derived.slab_spans_domain else derived.slab_radius_di,
+        spot_radius_di=derived.spot_radius_di,
         domain_halfwidth_di=derived.domain_halfwidth_di * scale,
         transverse_halfwidth_di=derived.transverse_halfwidth_di * scale,
         run_gyroperiods=_optional(geometry, "run_gyroperiods"),
@@ -297,6 +327,11 @@ def freeze(config: dict[str, Any], derived: units.DeckScales) -> dict[str, Any]:
         "ion_skin_depth_m": float(derived.ion_skin_depth.to_value(u.m)),
         "gyroperiod_s": float(derived.gyroperiod.to_value(u.s)),
         "timestep_s": float(derived.timestep.to_value(u.s)),
+        "slab_radius_di": derived.slab_radius_di,
+        "slab_spans_domain": derived.slab_spans_domain,
+        "spot_radius_di": derived.spot_radius_di,
+        "target_halfwidth_over_di_flash": (
+            flash.target_halfwidth_over_di if flash is not None else float("nan")),
         "n_cells": [derived.n_cells_x, derived.n_cells_z],
         "max_step": derived.max_step,
         "debye_per_cell": derived.debye_per_cell,

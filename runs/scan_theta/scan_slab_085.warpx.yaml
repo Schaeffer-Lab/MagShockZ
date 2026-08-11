@@ -1,0 +1,101 @@
+# Heater theta scan -- generated, not hand-edited. Every key matches
+# runs/magshockz_2d_heater.warpx.yaml except:
+#   operators.heater.theta   pinned, so M_A is NOT matched -- that is the point
+#   geometry.run_gyroperiods short, so the domain shrinks with it
+#   geometry.spot_radius_di  0: heated uniformly across a target that spans the
+#                            box, so there is no radial expansion, the piston
+#                            never meets its own periodic image, and the normal
+#                            front speed stays clean for the whole run
+# Purpose: measure v_piston(theta) at Z = 14, where the calibration has one point.
+schema: heater_pic_2d
+meta:
+  run_id: scan_slab_085
+  deck: inputs_2d_heater
+  description: theta scan, transversely uniform piston, theta = 0.085 (Z = 14)
+flash:
+  dataset: /pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected
+  source: scripts/flash_piston_profile.py over 36 dumps, front fit rms 114 um
+  window_ns:
+  - 3.001
+  - 11.752
+  ambient:
+    species: Al 6+
+    ion_density_per_m3: 8.2851e+23
+    magnetic_field_tesla: 7.00013
+    electron_temperature_ev: 9.82893
+    ion_temperature_ev: 9.82893
+  piston:
+    species: Si 14+
+    ion_density_per_m3: 1.4898e+24
+    front_speed_km_s: 768.5
+    spot_radius_um: 500.0
+reference:
+  density_per_m3: 1.0e+18
+  ambient_mass_per_charge: 50.0
+plasma:
+  piston:
+    initial_temperature_ev: 511.0
+geometry:
+  slab_halfwidth_di: 2.0
+  slab_radius_di: null   # spans the transverse extent
+  spot_radius_di: 0.0    # heated uniformly: no spot, so no radial expansion
+  transverse_halfwidth_di: 11.3
+  domain_halfwidth_di: null
+  cell_size_de: 0.12
+  run_gyroperiods: 0.06
+  boundary: periodic
+numerics:
+  particle_shape: 3
+  cfl: 0.75
+  ppc_each_dim:
+  - 5
+  - 5
+  max_grid_size: 256
+  blocking_factor: 8
+operators:
+  drive_stop_gyroperiods: null
+  heater:
+    intervals: 20
+    super_gaussian_order: 2
+    theta: 0.085
+  injector:
+    intervals: 20
+    tau_over_wpe_inv: 10.0
+    ppc_reference: 100
+calibration:
+- run_id: magshockz_2d_heater_v1
+  heater_theta: 0.04
+  piston_mass_per_charge: 100.0
+  piston_speed_over_c: 0.0202
+  achieved_theta: 0.02859
+- run_id: magshockz_2d_heater_v2
+  heater_theta: 0.088227
+  piston_mass_per_charge: 100.0
+  piston_speed_over_c: 0.035284
+  achieved_theta: 0.07067
+- run_id: magshockz_2d_heater_v3
+  heater_theta: 0.017511
+  piston_mass_per_charge: 22.301555
+  piston_speed_over_c: 0.01519
+  achieved_theta: 0.01035
+  charge_number: 14
+diagnostics:
+  plotfile_intervals: 1500
+  reduced_intervals: 20
+  phase_space_intervals: 1000000
+  phase_space_fraction: 0.02
+  checkpoint_intervals: 1000000
+runtime:
+  exe: /pscratch/sd/d/dschnei/warpx/build_pm_gpu_2d/bin/warpx.2d
+  nodes: 4
+  walltime: 06:00:00
+  account: m5032_g
+  qos: regular
+smoke:
+  domain_scale: 0.25
+  ppc_each_dim:
+  - 2
+  - 2
+  max_step: 200
+  plotfile_intervals: 50
+  reduced_intervals: 10

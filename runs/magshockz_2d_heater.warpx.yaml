@@ -34,7 +34,12 @@ flash:
     species: Si 14+                 # FLASH's EOS reaches Zbar 13.97 here, so this is free
     ion_density_per_m3: 1.4898e+24  # just behind the front, not the stagnated peak
     front_speed_km_s: 768.5
-    spot_radius_um: 500.0           # flash.par laser spot
+    spot_radius_um: 500.0           # flash.par ed_gaussianRadiusMajor_1
+    target_halfwidth_um: 8500.0     # flash.par xmin/xmax: the ablator fills its box.
+                                    # PROVENANCE for the deck's target width, not a
+                                    # matched invariant -- the deck's target spans ITS
+                                    # box, so scoring it would call a cost choice a
+                                    # physics miss. 39.4 d_i against the deck's 35.
 
 # The one free physics knob. Sets d_i/d_e = sqrt(m/Ze) and hence the cost, which
 # scales as (m/Ze)^2: 25 -> 10 node-hours, 50 -> 40, 100 -> 161.
@@ -47,10 +52,21 @@ plasma:
     initial_temperature_ev: 511.0   # cold load; the heater does the heating
 
 geometry:
-  slab_halfwidth_di: 2.0            # piston reservoir thickness along z
-  slab_radius_di: null              # null -> the laser spot radius; a finite patch,
-                                    # so the plume can decompress radially as FLASH's does
-  transverse_halfwidth_di: 11.3     # matches FLASH's transverse extent
+  slab_halfwidth_di: 2.0            # target thickness along z
+  slab_radius_di: null              # null -> the target spans the transverse extent, so
+                                    # its periodic images join into an edgeless SURFACE.
+                                    # FLASH's ablator does the same (+-8500 um = 39.4 d_i,
+                                    # 17x its laser spot). Heating the whole target
+                                    # instead -- which is what r_slab = r_spot did -- gave
+                                    # a free plume with nothing to push against, and so an
+                                    # expansion far more radially symmetric than FLASH's.
+  spot_radius_di: null              # null -> the laser spot. The heated column is 6.6% of
+                                    # the transverse extent, so the un-illuminated target
+                                    # confines the plume laterally.
+  transverse_halfwidth_di: 35.0     # bounds the plume for the whole window: it reaches
+                                    # r_spot + travel = 33.2 d_i even with no lateral
+                                    # confinement at all, and job 56437657 met its own
+                                    # periodic image from ~0.12 T_ci at 11.3
   domain_halfwidth_di: null         # null -> sized from the front travel, both directions
   cell_size_de: 0.12                # set by the Debye criterion; gives lambda_De/dx 0.037
   run_gyroperiods: null             # null -> the FLASH window above
@@ -68,6 +84,10 @@ operators:
   heater:
     intervals: 20
     super_gaussian_order: 2         # exp(-(r^2/rH^2)^(K/2)); 2 = Gaussian
+    theta: null                     # null -> invert the calibration fit for FLASH's M_A.
+                                    # Pinning it instead runs the chain forwards: the fit
+                                    # only predicts the speed, and M_A is NOT matched.
+                                    # That is scan mode -- see runs/scan_theta/.
   injector:
     intervals: 20
     tau_over_wpe_inv: 10.0
@@ -76,6 +96,22 @@ operators:
 # Completed runs, fitted to predict the heater setpoint for the required piston speed.
 # The operator has no setpoint feedback, so this map is measured, not modelled.
 # achieved_theta is (2/3)<KE>/(m_e c^2) for the piston electrons at the last EP.txt row.
+#
+# EVERY Z = 14 SPEED BELOW IS MEASURED THE SAME WAY, and that is what makes them one
+# curve: the piston front is where the banded piston electron density crosses 1.0x the
+# deck's initial ambient, fitted over 0.03-0.06 T_ci. That criterion is not a taste --
+# it is `flash_piston_profile.py --front-level-frac 1.0`, the same one behind the
+# 768.5 km/s that DEFINES flash.piston.front_speed_km_s and hence M_A = 23.71, so the
+# systematic cancels between the target and the measurement. Reproduce any of them with:
+#   python scripts/warpx_heater_compare.py --config runs/scan_theta/<run>.warpx.yaml \
+#       --fit-window 0.03 0.06
+#
+# The front definition is worth ~30%, so it cannot be left implicit. The plume carries a
+# suprathermal population streaming ahead of its dense body, and hand-marking THAT edge
+# instead gives 0.031/0.038/0.045 -- which would set theta = 0.0385 and land the bulk
+# piston at M_A = 17.3, 27% low. It is also not a reproducible rule (the implied density
+# level varies 2.5x across these three runs and 6x within one). FLASH is ideal MHD and has
+# no kinetic precursor at all, so that population has no counterpart to be matched to.
 calibration:
   - run_id: magshockz_2d_heater_v1
     heater_theta: 0.04
@@ -87,13 +123,42 @@ calibration:
     piston_mass_per_charge: 100.0
     piston_speed_over_c: 0.035284
     achieved_theta: 0.07067
+  # Z = 14 points. Only these are fitted for a Z = 14 deck -- see config.calibration.
+  # These are the SURFACE-TARGET runs (jobs 56584945/56584946/56586637). The earlier
+  # patch-geometry points at the same thetas were dropped rather than kept alongside:
+  # their recorded speeds came from a transverse average that is not reproducible from
+  # committed code, and re-measuring those same runs consistently gives 0.02241/0.02676/
+  # 0.03262 -- within 2.5% of the surface numbers below, so nothing is lost by dropping
+  # them. Confinement changes the plume's SHAPE, not its axial speed.
+  #
+  # achieved_theta is deliberately absent. It is a species mean, and on a surface target
+  # ~93% of piston_electrons is un-illuminated cold target, so it reads 16-19% of setpoint
+  # against the Z = 1 runs' 71-80% purely from that dilution. Recording it here would
+  # invite exactly the comparison it cannot support.
+  - run_id: scan_surface_035
+    heater_theta: 0.035
+    piston_mass_per_charge: 22.301555
+    piston_speed_over_c: 0.02296
+    charge_number: 14
+  - run_id: scan_surface_055
+    heater_theta: 0.055
+    piston_mass_per_charge: 22.301555
+    piston_speed_over_c: 0.02701
+    charge_number: 14
+  - run_id: scan_surface_085
+    heater_theta: 0.085
+    piston_mass_per_charge: 22.301555
+    piston_speed_over_c: 0.03213
+    charge_number: 14
 
 diagnostics:
   plotfile_intervals: 1500          # ~70 dumps; rescale whenever max_step moves
   reduced_intervals: 20
   phase_space_intervals: 12000      # ~9 dumps of raw particles, sparsely
   phase_space_fraction: 0.02
-  checkpoint_intervals: 15000
+  checkpoint_intervals: 60000       # ~102 GB each at 2160M particles, and the run fits
+                                    # in a third of its slot -- one mid-run insurance
+                                    # checkpoint plus the final one is enough
 
 runtime:
   exe: /pscratch/sd/d/dschnei/warpx/build_pm_gpu_2d/bin/warpx.2d

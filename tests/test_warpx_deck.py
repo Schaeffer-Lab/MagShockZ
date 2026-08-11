@@ -99,24 +99,45 @@ class TestChargeStates:
         assert params["heater.mass_ratio"] != pytest.approx(mass_per_charge, rel=1e-3)
 
 
-class TestTheFiniteSlabPatch:
-    """FLASH's piston is a plume from a finite spot, not an infinite sheet."""
+class TestTheSurfaceTargetAndItsSpot:
+    """FLASH ablates a 500 um spot off an ablator that fills its box.
 
-    def test_the_slab_is_bounded_in_x_as_well_as_z(self, rendered):
-        text = rendered
-        assert 'density_function(x,y,z) = "nt*(abs(z)<slab)*(abs(x)<rslab)"' in text
+    The target and the heated spot are independent, and the whole point of the geometry
+    is that the second is much smaller than the first: un-illuminated target either side
+    of the spot is what confines the plume laterally, so the expansion is not the
+    radially symmetric one a free patch gives.
+    """
 
-    def test_the_injector_refills_only_the_patch(self, rendered):
+    def test_the_target_spans_the_transverse_extent(self, rendered, scales):
+        assert scales.slab_spans_domain
+        assert scales.slab_radius_di == pytest.approx(scales.transverse_halfwidth_di)
+        # Bounded in z only: an (abs(x)<rslab) factor with rslab = xhalf is always true,
+        # and writing it would suggest a target edge that does not exist.
+        assert 'density_function(x,y,z) = "nt*(abs(z)<slab)"' in rendered
+
+    def test_only_the_spot_is_heated(self, scales):
+        assert 0.0 < scales.spot_radius_di < scales.slab_radius_di
+        assert scales.spot_radius_di == pytest.approx(
+            scales.flash.spot_radius_over_di, rel=1e-12)
+
+    def test_the_injector_refills_only_the_illuminated_spot(self, rendered):
+        """Ablation happens where the laser is; the rest of the target is inert.
+
+        Topping the whole target up would pin it at nt as a rigid wall instead of
+        leaving it inertially confined.
+        """
         params = deck_module.key_params(rendered)
         constants = {k[len("const:"):]: v for k, v in params.items()
                      if k.startswith("const:")}
         assert params["injector.lo"] == pytest.approx(
-            [-constants["rslab"], -constants["slab"]], rel=1e-12)
+            [-constants["rspot"], -constants["slab"]], rel=1e-12)
         assert params["injector.hi"] == pytest.approx(
-            [constants["rslab"], constants["slab"]], rel=1e-12)
+            [constants["rspot"], constants["slab"]], rel=1e-12)
+        assert constants["rinj"] == pytest.approx(constants["rspot"], rel=1e-12)
+        assert constants["rinj"] < constants["rslab"]
 
-    def test_the_patch_fits_inside_the_domain(self, scales):
-        assert scales.slab_radius_di < scales.transverse_halfwidth_di
+    def test_the_plume_fits_inside_the_domain(self, scales):
+        assert scales.spot_radius_di < scales.transverse_halfwidth_di
         assert scales.slab_halfwidth_di < scales.domain_halfwidth_di
 
     def test_the_ambient_fills_the_complement_of_the_patch(self, rendered):
@@ -234,6 +255,37 @@ class TestTheNullControl:
         assert null["piston_electrons.ppc"] == production["piston_electrons.ppc"]
 
 
+class TestVerifyAgainstWhatWarpXEchoed:
+    """``--verify`` diffs the spec against ``warpx_used_inputs``, which is not a copy
+    of the deck: WarpX adds its own constants and echoes only the ``my_constants`` it
+    actually resolved. Both differences are structural, not drift."""
+
+    def test_warpx_builtin_constants_are_not_reported(self, rendered):
+        echoed = rendered.replace(
+            "my_constants.n0", "my_constants.hbar   = 1.0545718176461565e-34\n"
+                               "my_constants.kb     = 1.380649e-23\n"
+                               "my_constants.n0", 1)
+        assert deck_module.verify(echoed, rendered) == []
+
+    def test_a_constant_warpx_never_read_is_not_reported(self, rendered):
+        """A full-width target renders ``rslab`` and then never references it, so it is
+        absent from the echo. An unread constant cannot have changed the run."""
+        echoed = "\n".join(line for line in rendered.splitlines()
+                           if not line.startswith("my_constants.rslab"))
+        assert deck_module.verify(echoed, rendered) == []
+
+    def test_a_real_disagreement_is_still_reported(self, rendered):
+        echoed = rendered.replace("max_step      = ", "max_step      = 999", 1)
+        problems = deck_module.verify(echoed, rendered)
+        assert any(p.startswith("max_step") for p in problems)
+
+    def test_a_changed_constant_that_warpx_did_read_is_reported(self, spec, scales):
+        """The unread-constant exemption must not extend to one that IS in the echo."""
+        rendered = deck_module.render(spec, scales)
+        echoed = rendered.replace("my_constants.rspot   = ", "my_constants.rspot   = 9.9*di  #", 1)
+        assert any("rspot" in p for p in deck_module.verify(echoed, rendered))
+
+
 class TestLoadRaisesValidateWarns:
     def test_a_non_periodic_boundary_raises(self, tmp_path):
         raw = yaml.safe_load(SPEC_PATH.read_text())
@@ -254,10 +306,27 @@ class TestLoadRaisesValidateWarns:
     def test_an_off_target_deck_only_warns(self, spec, scales):
         assert isinstance(spec_config.validate(spec, scales), list)
 
-    def test_a_charge_state_the_calibration_never_saw_is_warned_about(self, spec, scales):
-        """The heater's rate carries m_i/m_e; the fit groups by m/(Z m_e)."""
-        warnings = spec_config.validate(spec, scales)
+    def test_a_charge_state_the_calibration_never_saw_is_warned_about(self, tmp_path):
+        """The heater's rate carries m_i/m_e; the fit groups by m/(Z m_e).
+
+        Z is therefore its own axis, and a deck whose Z the calibration never sampled is
+        extrapolating along it.  The checked-in spec HAS points at its own Z, so the
+        warning has to be provoked by removing them.
+        """
+        raw = yaml.safe_load(SPEC_PATH.read_text())
+        raw["calibration"] = [c for c in raw["calibration"]
+                              if int(c.get("charge_number", 1)) == 1]
+        path = tmp_path / "z1_only.yaml"
+        path.write_text(yaml.safe_dump(raw))
+        spec = spec_config.load(path)
+        warnings = spec_config.validate(spec, spec_config.scales(spec))
         assert any("calibration was measured at Z" in w for w in warnings)
+
+    def test_only_the_matching_charge_state_is_fitted(self, spec):
+        """Mixing Z = 1 and Z = 14 runs flattens the exponent -- see config.calibration."""
+        fitted = spec_config.calibration(spec)
+        assert {p.charge_number for p in fitted.points} == {14}
+        assert len(fitted.points) >= 2
 
 
 class TestFreeze:

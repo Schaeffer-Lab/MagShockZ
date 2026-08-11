@@ -83,6 +83,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--front-level-frac", type=float, default=1.0,
                         help="front = piston density crossing this multiple of the "
                              "ambient (default: %(default)s)")
+    parser.add_argument("--fit-window", type=float, nargs=2, metavar=("LO", "HI"),
+                        default=None,
+                        help="fit the front only over LO..HI in omega_ci^-1 (default: "
+                             "every dump). A calibration point wants 0.188 0.377 -- "
+                             "before that the slab is still accelerating out of its IC")
+    parser.add_argument("--band-di", type=float, default=None,
+                        help="average the line-outs over |x| < BAND_DI d_i; 0 uses the "
+                             "full transverse extent (default: the heated spot radius, "
+                             "or the full extent when the deck heats uniformly)")
     parser.add_argument("--output-dir", help="override the results directory")
     plot_style.add_publication_arg(parser)
     return parser.parse_args()
@@ -117,18 +126,39 @@ def find_plotfiles(spec: dict, config_path: str, override: str | None) -> list[s
         f"  sbatch init_warpx/run_heater_2d.sbatch")
 
 
-def transverse_average(dataset, field: str, scales: units.DeckScales
+def transverse_average(dataset, field: str, scales: units.DeckScales, *,
+                       band_de: float | None = None
                        ) -> tuple[np.ndarray, np.ndarray]:
     """z-profile of ``field``, averaged over x, from a 2D WarpX plotfile.
 
-    Averaging over the full transverse extent (rather than a cut through the spot) is
-    what makes the profile comparable to a FLASH line-out: both then represent the
-    piston as a whole rather than one ray through it.  Returns ``(z in d_e, values)``.
+    ``band_de`` restricts the average to ``|x| < band_de`` (in ``d_e``); ``None`` uses the
+    full transverse extent.  Which one is right follows from the target's geometry, and
+    getting it wrong is silent:
+
+    On a target that spans the domain, the ablated plume occupies only the illuminated
+    column while the rest of the target is the same species, never moves, and is far
+    wider -- here 15x.  A full-width average is then dominated by stationary material and
+    the front sits at the target edge for the whole run, reporting a piston speed of ~0.
+    Averaging over the spot instead is also what the FLASH side does: its comparison is a
+    line-out ray through the plume, not an average across the whole ablator.
+
+    On a finite patch the plume IS all the piston material, so banding looks unnecessary
+    -- but the front criterion is an absolute level, and a patch in a box several times
+    its own width is diluted by the fill fraction, which moves that level. Both geometries
+    are therefore banded to the spot, which is the only way their speeds compare.
+
+    Returns ``(z in d_e, values)``.
     """
     grid = dataset.covering_grid(level=0, left_edge=dataset.domain_left_edge,
                                  dims=dataset.domain_dimensions)
     values = np.asarray(grid["boxlib", field])
     # 2D WarpX plotfiles are (nx, nz, 1); average over x and drop the dummy axis.
+    if band_de is not None:
+        x_edges = np.linspace(float(dataset.domain_left_edge[0]),
+                              float(dataset.domain_right_edge[0]), values.shape[0] + 1)
+        x_centres = (0.5 * (x_edges[:-1] + x_edges[1:])
+                     / scales.electron_skin_depth.to_value(u.m))
+        values = values[np.abs(x_centres) < band_de]
     profile = values.mean(axis=0).squeeze()
     z_edges = np.linspace(float(dataset.domain_left_edge[1]),
                           float(dataset.domain_right_edge[1]), profile.size + 1)
@@ -136,8 +166,27 @@ def transverse_average(dataset, field: str, scales: units.DeckScales
     return z_centres / scales.electron_skin_depth.to_value(u.m), profile
 
 
+def averaging_band_de(scales: units.DeckScales,
+                      override_di: float | None = None) -> float | None:
+    """Half-width in ``d_e`` to average the line-outs over, or ``None`` for the full box.
+
+    Whenever a heated spot exists the band IS that spot, for both geometries. The front
+    criterion is an absolute density level, and a level is sensitive to the transverse
+    average in a way an areal quantile is not: a patch sitting in a box several times its
+    own width is diluted by the fill fraction, which moves every level. Banding both the
+    finite patch and the full-width surface target to the spot is what makes their
+    measured speeds comparable at all -- unbanded, the same patch run reads 0.02457
+    against 0.02241 for the identical data.
+    """
+    if override_di is not None:
+        return override_di * scales.di_over_de if override_di > 0 else None
+    if scales.spot_radius_di <= 0.0:
+        return None
+    return scales.spot_radius_di * scales.di_over_de
+
+
 def measure_plotfile(path: str, scales: units.DeckScales, *,
-                     front_level_frac: float) -> dict:
+                     front_level_frac: float, band_de: float | None) -> dict:
     """Piston front, drive density and ambient state from one WarpX plotfile.
 
     The slab is symmetric about z = 0 and expands both ways, so only the +z half is
@@ -149,8 +198,13 @@ def measure_plotfile(path: str, scales: units.DeckScales, *,
     dataset = yt.load(path)
     time = float(dataset.current_time) * u.s
 
-    z_de, piston_charge = transverse_average(dataset, f"rho_{PISTON_IONS}", scales)
-    _, ambient_charge = transverse_average(dataset, f"rho_{AMBIENT_IONS}", scales)
+    z_de, piston_charge = transverse_average(dataset, f"rho_{PISTON_IONS}", scales,
+                                             band_de=band_de)
+    _, ambient_charge = transverse_average(dataset, f"rho_{AMBIENT_IONS}", scales,
+                                           band_de=band_de)
+    # The ambient <u^2> history is the NUMERICAL grid-heating monitor, so it stays
+    # full-width on purpose: inside the band it would be dominated by the shock heating
+    # it exists to be distinguished from.
     _, ambient_usq = transverse_average(dataset, f"usq_{AMBIENT_ELECTRONS}", scales)
 
     # rho is a charge density; the species carry +q_e, so n = rho/q_e.
@@ -162,7 +216,14 @@ def measure_plotfile(path: str, scales: units.DeckScales, *,
     piston_out = piston_density[outward]
     ambient_out = ambient_density[outward]
 
-    level = front_level_frac * pp.ambient_reference_level(z_out, ambient_out)
+    # The level is a multiple of the deck's INITIAL ambient, not of the ambient measured
+    # in this dump. Two reasons, and the second is a bug this replaced: the deck's ambient
+    # is uniform and exactly known at t=0, so there is nothing to estimate; and the
+    # periodic lobes eventually contaminate the far field, which doubled the measured
+    # reference and made the front jump BACKWARDS from 6.7 to 2.4 d_i, reporting nan for
+    # the speed. `front_level_frac = 1.0` matches flash_piston_profile.py's own default,
+    # which is what makes the deck's speed comparable to the FLASH M_A it is matched to.
+    level = front_level_frac * scales.upstream.electron_density.to_value(u.m**-3)
     x_front = pp.front_position(z_out, piston_out, level=level if level > 0 else None)
 
     # Bands scaled to the run's own geometry, so they mean the same thing as the FLASH
@@ -226,9 +287,21 @@ def load_flash_target(spec: dict, override: str | None) -> dict | None:
         return {key: handle[key] for key in handle.files}
 
 
-def measure_run(per_dump: list, scales: units.DeckScales) -> list[metrics.ScoreRow]:
-    """Fit the front across the dump series and score it against FLASH and the deck."""
+def measure_run(per_dump: list, scales: units.DeckScales, *,
+                fit_window: tuple[float, float] | None = None) -> list[metrics.ScoreRow]:
+    """Fit the front across the dump series and score it against FLASH and the deck.
+
+    ``fit_window`` restricts the fit to a ``(lo, hi)`` range in GYROPERIODS -- the unit
+    times are stored in. The CLI takes ``omega_ci^-1`` and converts at the boundary, so
+    the displayed unit and the stored one never have to agree. A calibration
+    point wants it: the slab spends the first part of the run accelerating out of its
+    initial condition, so a fit over the whole series measures that transient as well as
+    the coasting speed the calibration is a map to.
+    """
     tracked = [d for d in per_dump if np.isfinite(d["x_front_de"])]
+    if fit_window is not None:
+        lo, hi = fit_window
+        tracked = [d for d in tracked if lo <= d["t_gyro"] <= hi]
     speed_over_c = metrics.front_speed_over_c(
         np.array([d["t_omega_pe"] for d in tracked]),
         np.array([d["x_front_de"] for d in tracked]),
@@ -237,7 +310,8 @@ def measure_run(per_dump: list, scales: units.DeckScales) -> list[metrics.ScoreR
         travel_di = (abs(tracked[-1]["x_front_de"] - tracked[0]["x_front_de"])
                      / scales.di_over_de)
         print(f"NOTE: the front has moved only {travel_di:.3f} d_i over "
-              f"{tracked[-1]['t_gyro'] - tracked[0]['t_gyro']:.4f} T_ci — too little to "
+              f"{metrics.wci(tracked[-1]['t_gyro'] - tracked[0]['t_gyro']):.4f} "
+              f"omega_ci^-1 — too little to "
               f"fit a speed (need {metrics.MIN_TRAVEL_DI} d_i). Speed/M_A left as nan; "
               f"run the full deck, not the smoke one.")
 
@@ -265,7 +339,9 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
             continue
         xi = (dump["z_de"] - dump["x_front_de"]) / d_i_de
         ax_profile.semilogy(xi, dump["piston_density"] / dump["n_drive"], color=color,
-                            lw=1.6, label=f"WarpX {dump['t_gyro']:.3f} $T_{{ci}}$")
+                            lw=1.6,
+                            label=f"WarpX {metrics.wci(dump['t_gyro']):.3f} "
+                                  f"${metrics.TIME_UNIT}$")
 
     if flash is not None:
         flash_x = flash["x_cm"]
@@ -288,25 +364,27 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
     ax_profile.legend(fontsize=7)
     ax_profile.grid(alpha=0.25, which="both")
 
-    gyro = np.array([d["t_gyro"] for d in per_dump])
+    gyro = metrics.wci(np.array([d["t_gyro"] for d in per_dump]))
     fronts_di = np.array([d["x_front_de"] for d in per_dump]) / d_i_de
     ax_trajectory.plot(gyro, fronts_di, "o-", ms=4, color="#e377c2", label="WarpX front")
     finite = np.isfinite(gyro) & np.isfinite(fronts_di)
     if np.count_nonzero(finite) >= 2:
         # The intended slope in these axes: v_piston in d_i per gyroperiod.
         intended = float((scales.piston_speed * scales.gyroperiod
-                          / scales.ion_skin_depth).decompose())
+                          / scales.ion_skin_depth).decompose()
+                         ) / metrics.INVERSE_OMEGA_PER_GYROPERIOD
         ax_trajectory.plot(gyro, fronts_di[finite][0] + intended
                            * (gyro - gyro[finite][0]), "k--", lw=1.4,
                            label=f"deck target ({scales.piston_speed_over_c:.3f} c)")
     if flash is not None:
-        flash_gyro = (flash["t_s"] - flash["t_s"][0]) / flash_gyroperiod.to_value(u.s)
+        flash_gyro = metrics.wci((flash["t_s"] - flash["t_s"][0])
+                                 / flash_gyroperiod.to_value(u.s))
         flash_front_di = ((flash["x_front_cm"] - flash["x_front_cm"][0])
                           / flash_di.to_value(u.cm))
         ax_trajectory.plot(flash_gyro, flash_front_di + fronts_di[finite][0]
                            if np.any(finite) else flash_front_di, "-", color="0.35",
                            lw=1.4, label="FLASH front")
-    ax_trajectory.set_xlabel(r"$t / T_{ci}$")
+    ax_trajectory.set_xlabel(rf"$t$ [${metrics.TIME_UNIT}$]")
     ax_trajectory.set_ylabel(r"front position [$d_i$]")
     ax_trajectory.set_title("front trajectory in matched units")
     ax_trajectory.legend(fontsize=8)
@@ -319,7 +397,7 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
         if f"{name}_t" not in reduced:
             continue
         total = reduced[f"{name}_total"]
-        ax_operator.plot(reduced[f"{name}_t"] / gyroperiod,
+        ax_operator.plot(metrics.wci(reduced[f"{name}_t"] / gyroperiod),
                          total / total[0] if total[0] else total,
                          color=color, label=label)
     # The ambient must stay cold: a rising <u^2> upstream is numerical grid heating, the
@@ -328,7 +406,7 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
     if np.any(np.isfinite(usq)) and usq[0] > 0:
         ax_operator.plot(gyro, usq / usq[0], "s--", ms=4, color="#d62728",
                          label=r"ambient $\langle u^2\rangle$ / initial")
-    ax_operator.set_xlabel(r"$t / T_{ci}$")
+    ax_operator.set_xlabel(rf"$t$ [${metrics.TIME_UNIT}$]")
     ax_operator.set_ylabel("normalised to t = 0")
     ax_operator.set_title("operator balance + upstream grid heating")
     ax_operator.legend(fontsize=8)
@@ -345,6 +423,10 @@ def plot(per_dump: list, reduced: dict, flash: dict | None,
         f"B0 = {scales.magnetic_field.to_value(u.mT):.4g} mT",
         f"n_target/n0 = {scales.contrast:.4g}   slab = "
         f"{scales.slab_halfwidth_di:.2f} d_i   r_H = {scales.spot_radius_di:.2f} d_i",
+        f"target r = " + ("the box half-width, so it is an edgeless surface and the "
+                          "plume is confined laterally"
+                          if scales.slab_spans_domain
+                          else f"{scales.slab_radius_di:.2f} d_i, a finite patch"),
         "",
         "Tuning knobs, in the order worth trying:",
         "  front too slow/fast     -> add this run to calibration: (the setpoint is",
@@ -379,8 +461,16 @@ def main() -> None:
     print(f"plotfiles : {len(plot_paths)} under "
           f"{os.path.dirname(plot_paths[0])}")
 
+    band_de = averaging_band_de(scales, args.band_di)
+    print("line-outs : " + ("averaged over the full transverse extent"
+                            if band_de is None else
+                            f"averaged over |x| < {band_de / scales.di_over_de:.3g} d_i "
+                            f"of the {scales.transverse_halfwidth_di:.3g} d_i half-width "
+                            f"— the rest of the target is un-ablated and stationary"))
+
     per_dump = [measure_plotfile(path, scales,
-                                 front_level_frac=args.front_level_frac)
+                                 front_level_frac=args.front_level_frac,
+                                 band_de=band_de)
                 for path in plot_paths]
     reduced = load_reduced_diags(plot_paths)
     flash = load_flash_target(spec, args.flash_npz)
@@ -388,18 +478,21 @@ def main() -> None:
         print("NOTE: no flash_piston_profile.npz found — plotting WarpX only. Run "
               "scripts/flash_piston_profile.py to get the FLASH overlay.")
 
-    rows = measure_run(per_dump, scales)
+    rows = measure_run(per_dump, scales,
+                       fit_window=(tuple(metrics.gyroperiods(args.fit_window))
+                                   if args.fit_window else None))
     lines = [
         metrics.scorecard_text(rows),
         "",
         "Per-plotfile WarpX measurement",
-        f"  {'t/T_ci':>8} {'front [d_i]':>12} {'n_drive':>11} {'n_amb':>11} "
+        f"  {'t w_ci':>8} {'front [d_i]':>12} {'n_drive':>11} {'n_amb':>11} "
         f"{'contrast':>9} {'amb <u^2>':>11}",
     ]
     d_i_de = scales.di_over_de
     for dump in per_dump:
         lines.append(
-            f"  {dump['t_gyro']:>8.4f} {dump['x_front_de'] / d_i_de:>12.3f} "
+            f"  {metrics.wci(dump['t_gyro']):>8.4f} "
+            f"{dump['x_front_de'] / d_i_de:>12.3f} "
             f"{dump['n_drive']:>11.3e} {dump['n_ambient']:>11.3e} "
             f"{dump['contrast']:>9.3f} {dump['ambient_usq']:>11.3e}")
     text = "\n".join(lines)

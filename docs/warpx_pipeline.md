@@ -85,6 +85,17 @@ constants against `units.py`'s CODATA-2018 — a ~1e-9 shift in every resolved
 length. `verify` ignores `amr.restart` and names `HEATER_EXTRA_ARGS` when `max_step`
 diverges, since the sbatch appends both.
 
+**`warpx_used_inputs` is not a copy of the deck**, and two structural differences would
+otherwise be reported as drift on every `--verify`. WarpX defines its own constants
+(`hbar`, `kb`, `m_p`, `m_u`, …), which appear in the echo having never been written by
+the generator — `deck.WARPX_BUILTIN_CONSTANTS` exempts them. And WarpX echoes only the
+`my_constants` it actually **resolved**, so one that is never referenced is simply absent:
+a full-width target renders `rslab` for documentation and then uses `(abs(z)<slab)` with
+no transverse factor, so nothing reads it. An unread constant cannot have changed the run,
+so a `const:` key missing from the echo is exempt too — but one that IS echoed is still
+compared, which is what keeps the check meaningful. The file lands in the **run directory**
+(WarpX writes it to its CWD, which the sbatch sets there), not in `diags/`.
+
 **`my_constants` are symbolic, so the deck states its own physics.** `slab = 2.0*di`,
 `B0 = vA*sqrt(mu0*namb*mi)`, `u_std = sqrt(theta_e_amb)`, and the ambient temperatures as
 the pressure balance they came from (`theta_e_amb = beta_e*B0^2/(2*mu0*namb*m_e*clight^2)`)
@@ -118,7 +129,36 @@ sbatch init_warpx/run_heater_2d.sbatch
 python scripts/warpx_make_deck.py --config runs/magshockz_2d_heater.warpx.yaml --verify
 # 5. compare to FLASH and iterate theta_e_heater / contrast / slab width
 python scripts/warpx_heater_compare.py --config runs/magshockz_2d_heater.warpx.yaml
+# 6. the presentation figure: one matched time, n / v / T, plus the scorecard
+python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml \
+    --figures profiles --cache
 ```
+
+`--figures profiles` writes `flash_vs_warpx_profiles.png` (+ `.txt`): the two codes'
+density, ambient bulk velocity and ambient temperatures at ONE matched time, with a table
+of the shocked layer's numbers. Three things about it are deliberate and are what make the
+comparison mean anything.
+
+- **It defaults to the last matched time WarpX still HAS an upstream.** The deck is
+  periodic in z and the slab expands both ways, so the two lobes' precursors eventually
+  meet through the far boundary: by the end of this run the "upstream" band reads 7.5 keV
+  against a 9.8 eV initial condition — hotter than the shocked layer it is the reference
+  for. `has_usable_upstream` requires the band's density to be within 25% of the initial
+  ambient *and* the band to be colder than the layer; `--profile-time` overrides it.
+- **Densities and temperatures are quoted against each run's INITIAL ambient, not against
+  its own upstream.** The two upstreams are not in the same state — FLASH's chamber has
+  rarefied to 0.26 and preheated ~15x by the time the piston is running, while the deck's
+  is still at its IC — so a "downstream / upstream" ratio divides the two codes by
+  denominators differing 15-fold and reports the difference as physics. The compression
+  ratio and the `|B|` jump stay as jumps, because those are what Rankine-Hugoniot
+  predicts, and `n upstream / n_0` is a row of its own so the drift is visible rather than
+  divided out.
+- **The velocity is normalized by each frame's MEASURED upstream `v_A`** (`Upstream` built
+  from the band's own density and field), not by the initial one, for the same reason.
+
+The two codes' `v_A` differ by 16x in absolute terms (34 vs 412 km/s) and that is correct:
+the deck runs at `m_i/(Z m_e) = 50` against FLASH's Al 6+, so nothing dimensional
+compares. Everything on the figure is a ratio within one code.
 
 Constraints that shaped the deck, all of them things that bite silently:
 
@@ -144,6 +184,77 @@ Constraints that shaped the deck, all of them things that bite silently:
     a correct build gets rejected as "predates the operator". The 15 MB CPU binary is
     small enough that `strings` finishes first, which is why the pattern looked fine until
     the GPU build existed.
+- **The target and the heated spot are independent, and the target is a SURFACE.**
+  `geometry.slab_radius_di` is the target's transverse half-extent and
+  `geometry.spot_radius_di` the heated spot's; `null` means "spans the transverse extent"
+  and "FLASH's laser spot" respectively, and `spot_radius_di: 0` heats uniformly
+  (`ParticleHeater`'s own convention for no spot). These used to be one knob,
+  `geometry.piston_shape: patch|slab`, which forced `r_slab == r_spot` — so **the entire
+  target was heated**, and the plume expanded as a free, nearly radially symmetric patch
+  with no un-illuminated material to push against. `flash.par` is not that: its ablator
+  spans the whole box (`xmin`/`xmax` = ±8500 µm = **39.4 `d_i`**, recorded as
+  `flash.piston.target_halfwidth_um`) and the laser is a 500 µm Gaussian
+  (`ed_gaussianRadiusMajor_1`, **2.32 `d_i`**) — a 17× ratio. The production spec now
+  matches that: `slab_radius_di: null` so the target's periodic images join into an
+  edgeless surface, heated over 6.6% of the transverse extent.
+  - `load` **raises** on a spec still carrying `piston_shape`, because `slab_radius_di:
+    null` changed meaning from "the spot radius" to "the whole box" — silently
+    re-geometrying a run is exactly the failure this pipeline cannot afford. The six
+    archived `runs/scan_theta/*` specs are pinned to their original numbers and
+    re-render byte-identically apart from the new `rinj` constant.
+  - **`r_target/d_i` is provenance, not a matched invariant.** The deck's target spans
+    its box, so its width is a resolution/cost choice; scoring it would report the 11%
+    gap (35 vs 39.4) as a physics miss on every render. It appears in the deck header,
+    `invariant_table`'s provenance section and the frozen `run.yaml`.
+  - **The injector footprint is `rinj = rspot`, not the whole target.** Ablation happens
+    only where the laser is; topping the rest up would pin it at `nt` as a rigid wall
+    instead of leaving it inertially confined, and would cost a 973k-cell injection
+    region against the spot's 64k. For every deck rendered before the split, `rinj`
+    resolves to exactly the old `rslab`, which is why no calibration point moved.
+  - Grid, step count and macroparticle count are **unchanged** (4128×5232, 105511 steps,
+    2160M): species are `NUniformPerCell` with `density_min = 1`, so widening the target
+    swaps ambient macroparticles for piston ones 1:1. Debye resolution is unaffected too
+    — the ambient's `λ_De/dx = 0.0365` still binds, against 0.129 in the cold target and
+    1.17 in the heated spot.
+  - **The line-out reduction had to follow.** `warpx_heater_compare.py`'s
+    `transverse_average` averaged over the full transverse extent; with a surface target
+    the un-ablated material is the same species, never moves and is 15× wider, so that
+    average is dominated by it and the front sits still — a reported piston speed of ~0.
+    It now averages over `|x| < r_spot` by default (`--band-di` overrides, `0` restores
+    the full extent), which is also the reduction the FLASH side uses: a line-out ray
+    through the plume, not an average across the ablator. The ambient `<u²>` history
+    deliberately stays full-width — it is the *numerical* grid-heating monitor, and
+    inside the band it would be dominated by the shock heating it exists to be
+    distinguished from. `warpx_flash_evolution.py` already banded at `AXIS_BAND_DI = 1.0`
+    and needed no change.
+- **The front definition is worth ~30%, so it is pinned: `n = n_0`, banded to the spot,
+  fitted over 0.03–0.06 `T_ci`.** The plume is not one front. It has a dense body with a
+  sharp edge, a suprathermal population streaming ahead of it, and — by 0.06 `T_ci` — a
+  separated shock (3.4 `d_i` ahead of the contact at `theta = 0.085`, compression ~2.1).
+  The same run reads 0.0217–0.0282 c across stably-fitting definitions, so the criterion
+  has to be stated, not assumed. The one to use is `flash_piston_profile.py`'s own
+  `--front-level-frac 1.0` — the piston electron density crossing 1× the far-field
+  ambient — because that is the criterion behind the 768.5 km/s that *defines*
+  `flash.piston.front_speed_km_s`, and hence `M_A = 23.71`. Matching it is what makes the
+  systematic cancel between the target and the measurement. It is also the most stable
+  fit (rms 0.010 `d_i` against 0.068 for a tail-level threshold).
+  - **A level criterion is sensitive to the transverse average; an areal quantile is
+    not.** A patch sitting in a box several times its own width is diluted by the fill
+    fraction, which moves every absolute level — the same patch run reads 0.02457
+    unbanded against 0.02241 banded. `warpx_heater_compare.py` therefore bands **both**
+    geometries to `|x| < r_spot` whenever a spot exists (`--band-di` overrides).
+  - **Do not fit the shock, and do not fit the precursor.** The shock runs ~1.5× the
+    piston; using it would put the calibration 54% high. The hand-marked precursor edge
+    would set `theta = 0.0385` and land the bulk piston at `M_A = 17.3`, **27% low**. The
+    precursor is also not a reproducible rule — the implied density level varies 2.5×
+    across runs and ~6× within one, because the marked edge tracks the macroparticle
+    noise floor rather than a physical feature. FLASH is ideal MHD and has no kinetic
+    precursor at all, so it has no counterpart to be matched to. It is recorded
+    separately in `results/warpx/precursor_handfit.txt`.
+  - **`achieved_theta` is not comparable across geometries.** It is a species mean, and on
+    a surface target ~93% of `piston_electrons` is un-illuminated cold target, so it reads
+    16–19% of setpoint against the Z = 1 runs' 71–80% purely from dilution. The
+    surface-target calibration points omit it.
 - **Fully periodic, so the slab is symmetric and expands both ways.** A uniform applied
   E/B on the grid requires periodic boundaries (*"do not use any other boundary condition
   than periodic"*, WarpX `parameters.rst`), so there is no one-sided piston off a wall:
@@ -299,6 +410,40 @@ Current numbers for `FLASH_MagShockZ3D-corrected`: piston front **769 km/s** (fi
 114 µm) over 3–12 ns, against the unperturbed background above → `M_A` = 23.8,
 `M_ms` = 21.9 (strongly super-critical), `beta_e` = 0.245, `beta_i` = 0.067, contrast 6.8,
 `d_i` = 355 µm, `T_ci` = 69.0 ns (so the 8.75 ns window is only 0.127 `T_ci`).
+
+The **surface-target** calibration (jobs 56584945/56584946/56586637, 4 GPU nodes each,
+17–19 min in the `debug` QOS) measures `theta` 0.035/0.055/0.085 → `v_piston/c`
+0.02296/0.02701/0.03213, giving a fit exponent 0.379 and `theta = 0.08829` for
+production's required 0.0325 c. Two things to watch on that deck: the setpoint is a
+**4% extrapolation** past the top of the calibrated range, and it puts the piston
+electrons at `v_th/c = 0.297`, just under the 0.3 guard where the heater's
+non-relativistic kicks stop imposing the temperature they are handed.
+
+**That deck ran and hit its target** (job 56595905, 4 nodes / 16 GPUs, `interactive`,
+3 h 22 m, `exit=0`, no non-finite, 72 plotfiles). Measured over the same 0.03–0.06 `T_ci`
+window the calibration used: `M_A` **23.73** against the 23.71 target, `v_piston/c`
+0.03252 against 0.0325, front 147.6 against FLASH's 149 `d_i/T_ci`. The 4%
+extrapolation cost nothing measurable, so the surface-target fit is now anchored at
+production's own setpoint.
+
+Two things it did NOT achieve, both open:
+- **Contrast is matched only at `t = 0`, then decays**: 4.196 → 2.65 by 0.012 `T_ci`
+  → 1.37 by 0.045 → 0.92 by 0.083, where FLASH sustains 4.2 across its window. The
+  injector refills only `|x| < r_spot`, so plume material expanding out of that column is
+  not replaced — the deliberate alternative being a rigid wall. Since contrast sets the
+  ram pressure, the compression ratio follows it down (`n down/n up` 1.91 against the
+  patch run's 2.39 and FLASH's 3.13).
+- **The last 45% of the run has no usable upstream.** The front peaks at 15.6 `d_i` at
+  t = 0.116 `T_ci` and then reads *backwards*, and `n_amb` leaves its IC by 10% at
+  t = 0.107: the two periodic lobes' precursors meet through the far boundary.
+  `warpx_flash_evolution` guards this with `has_usable_upstream`;
+  **`warpx_heater_compare` does not**, so its per-dump table prints meaningless late rows
+  (contrast "28.7" at t = 0.209). Read only `t <= 0.116` from it.
+
+Against the archived patch run (`diags_v4_patch_theta0.083`), the surface geometry moved
+the shock-front position and the `|B|` jump *closer* to FLASH and the compression ratio,
+layer thickness and both temperatures *further*. The dynamics are now right and the
+structure is not; the contrast decay above is the most likely single cause.
 
 The FIRST deck to target these — 568×2832 at 0.2 `d_e`, 35760 steps, 1.6e8 macroparticles —
 ran clean (`exit=0`, no non-finite) but at `kappa = 2.5` and so **missed**: front
