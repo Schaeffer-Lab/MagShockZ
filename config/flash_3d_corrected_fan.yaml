@@ -110,44 +110,52 @@ flash:
 
 # Per-ray, per-dump front and downstream-region edges [cm], written by
 # flash_tune_shock.py --mode regions.
+#
+# Every x_shock_cm carries a +100 µm hand offset on top of what tune_shock detected.
+# The transition here is ~100 µm thick, and both the detector and the ±60 µm gradient
+# snap land on its DOWNSTREAM foot -- the first step out of the shocked plateau --
+# which leaves the drawn front visibly behind the drop in n_e, T and B. The offset
+# puts it on the upstream foot instead, so the front marks where the shock meets
+# undisturbed gas. That is also why the RH jump band is 300 µm wide (--jump-band-um):
+# it has to clear the ramp to average the shocked plateau rather than the transition.
 flash_dump_params:
   los00:
     20:
-      x_shock_cm: 0.422975  # set by tune_shock
+      x_shock_cm: 0.432975  # tune_shock + 100 µm
       x_downstream_start_cm: 0.40315  # set by tune_shock
     36:
-      x_shock_cm: 0.772531  # set by tune_shock
+      x_shock_cm: 0.782531  # tune_shock + 100 µm
       x_downstream_start_cm: 0.706612  # set by tune_shock
     48:
-      x_shock_cm: 0.994739  # set by tune_shock
+      x_shock_cm: 1.004739  # tune_shock + 100 µm
       x_downstream_start_cm: 0.934411  # set by tune_shock
   los15:
     20:
-      x_shock_cm: 0.6309  # set by tune_shock
+      x_shock_cm: 0.6409  # tune_shock + 100 µm
       x_downstream_start_cm: 0.39  # set by tune_shock
     36:
-      x_shock_cm: 1.0246  # set by tune_shock
+      x_shock_cm: 1.0346  # tune_shock + 100 µm
       x_downstream_start_cm: 0.68  # set by tune_shock
     48:
-      x_shock_cm: 1.1955  # set by tune_shock
+      x_shock_cm: 1.2055  # tune_shock + 100 µm
       x_downstream_start_cm: 0.85  # set by tune_shock
   los30:
     20:
-      x_shock_cm: 0.338087  # set by tune_shock
+      x_shock_cm: 0.348087  # tune_shock + 100 µm
       x_downstream_start_cm: 0.318087  # set by tune_shock
     36:
-      x_shock_cm: 0.53  # set by tune_shock
+      x_shock_cm: 0.54  # tune_shock + 100 µm
       x_downstream_start_cm: 0.494007  # set by tune_shock
     48:
-      x_shock_cm: 0.646065  # set by tune_shock
+      x_shock_cm: 0.656065  # tune_shock + 100 µm
       x_downstream_start_cm: 0.626065  # set by tune_shock
   los45:
     20:
-      x_shock_cm: 0.315  # set by tune_shock
+      x_shock_cm: 0.325  # tune_shock + 100 µm
       x_downstream_start_cm: 0.292078  # set by tune_shock
     36:
-      x_shock_cm: 0.494  # set by tune_shock
+      x_shock_cm: 0.504  # tune_shock + 100 µm
       x_downstream_start_cm: 0.450806  # set by tune_shock
     48:
-      x_shock_cm: 0.589958  # set by tune_shock
+      x_shock_cm: 0.599958  # tune_shock + 100 µm
       x_downstream_start_cm: 0.569958  # set by tune_shock

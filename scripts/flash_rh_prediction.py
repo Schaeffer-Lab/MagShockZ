@@ -58,6 +58,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MaxNLocator
 import unyt
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -150,14 +151,18 @@ def main():
                              "jump fills part of the thin RH band with upstream "
                              "and drags every downstream mean toward ambient. The "
                              "shift is reported.")
-    parser.add_argument("--jump-band-um", type=float, default=100.0,
+    parser.add_argument("--jump-band-um", type=float, default=300.0,
                         dest="jump_band_um",
                         help="Width [µm] of the thin band just behind the front "
-                             "used for the Rankine-Hugoniot checks (default 100). "
+                             "used for the Rankine-Hugoniot checks (default 300). "
                              "RH is a LOCAL jump condition, so it must be tested "
                              "against a band much narrower than the shocked layer "
                              "-- momentum-flux continuity on this data runs 1.00 "
-                             "over 50 µm and 0.51 over 940 µm. Heating and the e/i "
+                             "over 50 µm and 0.51 over 940 µm. It must still be "
+                             "wider than the ramp: the front marks the UPSTREAM "
+                             "foot of the transition, which is ~100 µm thick here, "
+                             "so a band narrower than that averages the ramp rather "
+                             "than the shocked plateau. Heating and the e/i "
                              "partition still use the full layer band. 0 makes the "
                              "two bands identical.")
     parser.add_argument("--upstream-gap-um", type=float, default=200.0,
@@ -433,7 +438,7 @@ def main():
     # Report
     # ------------------------------------------------------------------
     # Ion-scale lengths and times, from the upstream state the shock actually runs
-    # into.  d_i and T_ci are what the PIC comparison is eventually normalised to.
+    # into.  d_i and 1/omega_ci are what the PIC comparison is eventually normalised to.
     # plasmapy carries the units and the definitions; convert at its boundary and come
     # straight back to unyt, per the FLASH convention in CLAUDE.md.
     from astropy import units as apu
@@ -447,10 +452,13 @@ def main():
     B_up_apu = float(Bmag_up.to("gauss").value) * apu.G
     ni_up_apu = float(ni_up.to("cm**-3").value) * apu.cm**-3
 
-    # gyrofrequency returns the ANGULAR frequency, so the period is 2*pi/omega.
+    # The reported ion time is the INVERSE gyrofrequency 1/omega_ci — the PIC
+    # normalisation — NOT the full gyroperiod 2*pi/omega_ci, which is 2*pi larger.
+    # gyrofrequency already returns the angular frequency, so no factor is applied.
+    # Equivalently 1/omega_ci = d_i / v_A.
     omega_ci = float(gyrofrequency(B_up_apu, ion).to(apu.rad / apu.s).value) / unyt.s
     d_i = float(inertial_length(ni_up_apu, ion).to(apu.um).value) * unyt.um
-    T_ci = (2.0 * np.pi / omega_ci).to("ns")
+    inv_omega_ci = (1.0 / omega_ci).to("ns")
 
     beta_e = float((8.0 * np.pi * ne_up * Te_up / Bmag_up**2).to("dimensionless"))
     beta_i = float((8.0 * np.pi * ni_up * Ti_up / Bmag_up**2).to("dimensionless"))
@@ -476,7 +484,7 @@ def main():
           f"beta = {beta_e + beta_i:.3f}")
     print(f"  v_A   = {v_A.to('km/s'):.1f}   c_s = {c_s.to('km/s'):.1f}   "
           f"v_ms = {v_ms.to('km/s'):.1f}")
-    print(f"  d_i   = {d_i:.1f}   T_ci = {T_ci:.1f}")
+    print(f"  d_i   = {d_i:.1f}   1/w_ci = {inv_omega_ci:.1f}")
     print(f"\n--- Shock ---")
     print(f"  v_shock = {v_shock.to('km/s'):.1f}   v_inflow = {v_inflow.to('km/s'):.1f}")
     # M_ms is the one that decides whether a shock exists at all, and the one to
@@ -542,7 +550,8 @@ def main():
     # Each panel: (display profile, upstream mean, predicted dn, measured dn,
     #              y-label, colour, log-y?).  Profiles/lines are converted to the
     #              panel's display unit with .to(...).value at draw time.
-    panels = [
+    # Row-major over the panel grid, so dropping an entry re-flows the layout.
+    all_panels = [
         (lo["ne"].to("cm**-3").value,  ne_up.to("cm**-3"),  ne_dn_pred.to("cm**-3"),  ne_dn_meas.to("cm**-3"),
          r"$n_e$ [cm$^{-3}$]",        "tab:purple", True),
         (B_perp.to("gauss").value,     Bperp_up.to("gauss"), Bperp_dn_pred.to("gauss"), Bperp_dn_meas.to("gauss"),
@@ -557,6 +566,15 @@ def main():
          r"$P_{\rm thermal}$ [erg cm$^{-3}$]", "tab:red", True),
     ]
 
+    # --publication trims to the four state variables the jump is read off. |v - v_sh| and
+    # P_thermal are diagnostics rather than the result -- they duplicate what n_e and the
+    # temperatures already show -- and a poster panel is better spent on fewer, larger
+    # axes. Both are still solved, printed and written to the .npz either way.
+    POSTER_PANELS = (0, 1, 3, 4)
+    panels = ([all_panels[i] for i in POSTER_PANELS] if args.publication
+              else all_panels)
+    n_panel_cols = len(panels) // 2
+
     x_um       = x.to("um").value
     x_shock_um = float(x_shock.to("um"))
     x_ds_um    = float(x_ds.to("um"))
@@ -564,8 +582,20 @@ def main():
     x_up_hi_um = float(x[up].max().to("um"))
     x_contact_um = float(x_contact.to("um")) if np.isfinite(x_contact) else float("nan")
 
-    fig, axes = plt.subplots(2, 3, figsize=plot_style.figsize(19, 9),
-                             sharex=True, layout="constrained")
+    # Line-outs with the jump parameters tabulated beside them, rather than carried in the
+    # suptitle where a poster reader has to parse a run-on line to find r.
+    fig = plt.figure(figsize=plot_style.figsize(5.0 * n_panel_cols + 4.0, 9),
+                     layout="constrained")
+    grid = fig.add_gridspec(2, n_panel_cols + 1,
+                            width_ratios=(1.0,) * n_panel_cols + (0.5,))
+    axes = np.empty((2, n_panel_cols), dtype=object)
+    for row in range(2):
+        for col in range(n_panel_cols):
+            axes[row, col] = fig.add_subplot(
+                grid[row, col],
+                sharex=None if (row, col) == (0, 0) else axes[0, 0])
+    table_ax = fig.add_subplot(grid[:, n_panel_cols])
+
     for ax, (prof, u_val, pred_val, meas_val, ylabel, color, log) in zip(
             axes.flat, panels):
         ax.plot(x_um, prof, color=color, lw=1.6, label="FLASH lineout")
@@ -593,6 +623,10 @@ def main():
             ax.set_yscale("log")
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.25, which="both")
+    # sharex is wired up by hand here, so the inner tick labels have to be hidden by hand
+    # too -- plt.subplots(sharex=True) would have done it.
+    for ax in axes[:-1].flat:
+        ax.tick_params(labelbottom=False)
     for ax in axes[-1]:
         ax.set_xlabel(r"distance along LOS [$\mu$m]")
     axes[0, 0].legend(loc="best", fontsize=8)
@@ -604,14 +638,27 @@ def main():
     lo_x = max(x_um.min(), min(x_shock_um - args.window_um, x_ds_um - 100.0))
     hi_x = min(x_um.max(), max(x_shock_um + args.window_um, x_up_hi_um + 100.0))
     axes[0, 0].set_xlim(lo_x, hi_x)
+    # Late dumps put the front past 10 mm, so the default locator lays five-digit labels
+    # end to end and they collide at publication font sizes. Shared axis: set once.
+    axes[0, 0].xaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 5, 10]))
+
+    # The jump parameters, in the slot the two dropped panels used to occupy. Small and
+    # top-anchored so it can be cropped out of the figure and placed independently.
+    table_ax.axis("off")
+    jump_table = table_ax.table(
+        cellText=[[r"$\theta_{Bn}$", f"{np.degrees(theta_bn):.0f}°"],
+                  [r"$M_s$",         f"{mach_s:.2f}"],
+                  [r"$M_A$",         f"{mach_a:.2f}"],
+                  [r"$\gamma$",      f"{gamma:.3f}"],
+                  [r"$r$",           f"{r:.2f}"]],
+        cellLoc="center", loc="upper center", bbox=(0.08, 0.74, 0.84, 0.22))
+    jump_table.auto_set_font_size(False)
+    jump_table.set_fontsize(10)
 
     fig.suptitle(
-        f"Perpendicular MHD prediction vs FLASH — {os.path.basename(snap_file)} "
-        f"(t = {t.to('ns'):.2f})\n"
-        f"$\\theta_{{Bn}}$ = {np.degrees(theta_bn):.0f}°   "
-        f"$M_s$ = {mach_s:.2f}   $M_A$ = {mach_a:.2f}   "
-        f"$\\gamma$ = {gamma:.3f}   →   $r$ = {r:.2f}",
-        fontsize=12,
+        f"MHD Rankine-Hugoniot prediction vs FLASH "
+        f"(t = {t.to('ns'):.2f}, {source.label})",
+        fontsize=17,
     )
     fig_path = os.path.join(
         out_dir, f"flash_rh_prediction_{os.path.basename(snap_file)}.png")
@@ -663,7 +710,8 @@ def main():
         v_A_kms=np.asarray(float(v_A.to("km/s"))),
         c_s_kms=np.asarray(float(c_s.to("km/s"))),
         v_ms_kms=np.asarray(float(v_ms.to("km/s"))),
-        d_i_um=np.asarray(float(d_i)), T_ci_ns=np.asarray(float(T_ci)),
+        d_i_um=np.asarray(float(d_i)),
+        inv_omega_ci_ns=np.asarray(float(inv_omega_ci)),
         # downstream heating and its electron/ion split
         heat_Te_adiabatic=np.asarray(heating["electron"]["adiabatic"]),
         heat_Te_excess=np.asarray(heating["electron"]["anomalous"]),
