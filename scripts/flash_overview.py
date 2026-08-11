@@ -100,6 +100,22 @@ def assemble_streak(lineouts: list, field: str):
 # Plot helpers
 # ---------------------------------------------------------------------------
 
+# One colormap per field rather than the shared plot_style.SEQUENTIAL_CMAP: the
+# overview shows four fields side by side, and a distinct map per field makes a
+# panel identifiable at a glance. The two temperatures share one deliberately,
+# so Te and Ti stay directly comparable by eye.
+FIELD_CMAPS = {
+    "El_number_density": "magma",
+    "b_magnitude":       "viridis",
+    "tele":              "inferno",
+    "tion":              "inferno",
+}
+SLICE_CMAPS = {
+    "El_number_density": "viridis",
+    "tion":              "hot",
+}
+
+
 def plot_streak(ax, time_ns, x_um, Z, *, label, cmap, log, shock_lines):
     """Render one streak (time ns horizontal, space µm vertical)."""
     from matplotlib.colors import LogNorm
@@ -203,6 +219,9 @@ def mass_continuity_vshock(lineouts, *, hand_fit=None, gap_cm=0.003, win_cm=0.01
 
 def save_yt_slice(path, slice_axis, field, output_path, title, cmap):
     """Create a yt SlicePlot and save to file.  ``field`` is a (ftype, name) tuple."""
+    # load_for_osiris is plugin-registered, so the plugin has to be enabled explicitly --
+    # flash_utils no longer does it at import (see flash_utils.enable_osiris_fields).
+    fu.enable_osiris_fields()
     ds = yt.load_for_osiris(path)
     slc = yt.SlicePlot(ds, slice_axis, field)
     slc.set_cmap(field, cmap)
@@ -511,16 +530,16 @@ def main():
     fig1, axes = plt.subplots(2, 2, figsize=plot_style.figsize(16, 10),
                               layout="constrained")
     plot_streak(axes[0, 0], time_ns, x_um, ne_streak,
-                label=r"$n_e$ [cm$^{-3}$]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
+                label=r"$n_e$ [cm$^{-3}$]", cmap=FIELD_CMAPS["El_number_density"], log=True,
                 shock_lines=shock_lines)
     plot_streak(axes[0, 1], time_ns, x_um, B_streak,
-                label=r"$|B|$ [G]", cmap=plot_style.SEQUENTIAL_CMAP, log=False,
+                label=r"$|B|$ [G]", cmap=FIELD_CMAPS["b_magnitude"], log=False,
                 shock_lines=shock_lines)
     plot_streak(axes[1, 0], time_ns, x_um, Te_streak,
-                label=r"$T_e$ [eV]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
+                label=r"$T_e$ [eV]", cmap=FIELD_CMAPS["tele"], log=True,
                 shock_lines=shock_lines)
     plot_streak(axes[1, 1], time_ns, x_um, Ti_streak,
-                label=r"$T_i$ [eV]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
+                label=r"$T_i$ [eV]", cmap=FIELD_CMAPS["tion"], log=True,
                 shock_lines=shock_lines)
 
     fig1.suptitle(
@@ -608,7 +627,7 @@ def main():
         save_yt_slice(snap_file, args.slice_axis, ("gas", "El_number_density"),
                       slice_edens_path,
                       f"Electron density — {os.path.basename(snap_file)}",
-                      plot_style.SEQUENTIAL_CMAP)
+                      SLICE_CMAPS["El_number_density"])
         print(f"Saved → {slice_edens_path}")
     except Exception as e:
         print(f"  Warning: could not save density slice: {e}")
@@ -619,7 +638,7 @@ def main():
         )
         save_yt_slice(snap_file, args.slice_axis, ("flash", "tion"), slice_tion_path,
                       f"Ion temperature — {os.path.basename(snap_file)}",
-                      plot_style.SEQUENTIAL_CMAP)
+                      SLICE_CMAPS["tion"])
         print(f"Saved → {slice_tion_path}")
     except Exception as e:
         print(f"  Warning: could not save Ti slice: {e}")

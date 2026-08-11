@@ -43,8 +43,10 @@ import numpy as np
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 import unyt as u
+from unyt import physical_constants as pc
 
 from magshockz.common import analysis_utils
+from magshockz.common import perpendicular_shock as ps
 from magshockz.common import plot_style
 from magshockz.common import flash_source
 from magshockz.common import yaml_edit
@@ -103,14 +105,18 @@ def main():
                              "jump fills part of the thin RH band with upstream "
                              "and drags every downstream mean toward ambient. The "
                              "shift is reported.")
-    parser.add_argument("--jump-band-um", type=float, default=100.0,
+    parser.add_argument("--jump-band-um", type=float, default=300.0,
                         dest="jump_band_um",
                         help="Width [µm] of the thin band just behind the front "
-                             "used for the Rankine-Hugoniot checks (default 100). "
+                             "used for the Rankine-Hugoniot checks (default 300). "
                              "RH is a LOCAL jump condition, so it must be tested "
                              "against a band much narrower than the shocked layer "
                              "-- momentum-flux continuity on this data runs 1.00 "
-                             "over 50 µm and 0.51 over 940 µm. Heating and the e/i "
+                             "over 50 µm and 0.51 over 940 µm. It must still be "
+                             "wider than the ramp: the front marks the UPSTREAM "
+                             "foot of the transition, which is ~100 µm thick here, "
+                             "so a band narrower than that averages the ramp rather "
+                             "than the shocked plateau. Heating and the e/i "
                              "partition still use the full layer band. 0 makes the "
                              "two bands identical.")
     parser.add_argument("--upstream-gap-um", type=float, default=200.0,
@@ -128,6 +134,16 @@ def main():
                         help="Adiabatic index for the RH compression check (default: "
                              "config 'gamma' key, else 5/3). gamma=(f+2)/f: 5/3 (3 DOF), "
                              "2 (2 DOF), 3 (1 DOF) — sweep to read off the effective index.")
+    parser.add_argument("--x-units", default="um", choices=("um", "di"),
+                        dest="x_units",
+                        help="Left-panel distance unit: 'um' (default) is the physical "
+                             "micron axis this lab-scale run is designed in; 'di' "
+                             "rescales to the upstream ion inertial length c/omega_pi "
+                             "to share the OSIRIS figure's axis -- but the whole window "
+                             "is under 2 d_i, so that axis reads in fractions.")
+    parser.add_argument("--log-decades", type=float, default=4.0, dest="log_decades",
+                        help="Decades shown below the largest bar on the log continuity "
+                             "panel (default 4).")
     parser.add_argument("--output-dir", default=None, dest="output_dir")
     flash_source.add_los_arg(parser)
     plot_style.add_publication_arg(parser)
@@ -218,6 +234,16 @@ def main():
     print(f"x_shock        : {(x_shock_cm * u.cm).to('um').value:.2f} µm")
     print(f"x_downstream   : {(x_ds_start * u.cm).to('um').value:.2f} µm")
     print(f"v_shock        : {(v_shock_cms * u.cm / u.s).to('km/s').value:.2f} km/s")
+    if v_shock_cms == 0.0:
+        # A hand-placed x_shock_cm (flash_dump_params) skips the overview-npz branch
+        # above, which is the only place v_shock is read from a file -- so this script
+        # silently lands in the LAB frame while every label still says "shock rest
+        # frame".  The ram channel is then rho*v^2 with the upstream at rest, i.e. ~0,
+        # and the continuity check reads dn/up ~ 100 instead of ~1.
+        print("  !! v_shock = 0: ram is in the LAB frame, NOT the shock rest frame.\n"
+              "     Pass --v-shock-cms <cm/s> (the config documents an instantaneous\n"
+              "     locally-fitted value per dump; the straight-line v_shock_est_cms\n"
+              "     seeds are explicitly NOT the analysis input).")
 
     # ------------------------------------------------------------------
     # Lineout
@@ -330,26 +356,63 @@ def main():
 
     # Panel A: stacked-area momentum flux vs distance from the front
     # (0 = shock, +ve upstream/ambient, −ve downstream/shocked).
+    #
+    # Distance stays in MICRONS -- FLASH is a lab-scale MHD run and microns are the
+    # quantity the experiment is designed and diagnosed in.  d_i is still REPORTED for
+    # comparison against the OSIRIS figure's c/omega_pi axis, and `--x-units di` will
+    # plot in it, but that axis is misleading here: the whole 600 um window is under two
+    # ion inertial lengths, because single-fluid MHD has no kinetic scale and this
+    # front's width is set by grid resolution rather than by d_i.
+    #
+    # d_i uses an EFFECTIVE ion mass and charge -- m_i = rho/n_ion, Z = n_e/n_ion --
+    # since the ambient is an Al+Si mixture with no single ion species.
+    prim_up = _prims(up_mask)
+    n_i = float(prim_up["n_ion"]) * u.cm**-3
+    m_i = (float(prim_up["rho"]) * u.g / u.cm**3) / n_i
+    Z_i = float(prim_up["ne"]) / float(prim_up["n_ion"])
+    omega_pi = np.sqrt(4.0 * np.pi * n_i * (Z_i * pc.qp_cgs) ** 2 / m_i).to("1/s")
+    d_i_um = float((pc.c_cgs / omega_pi).to("um").value)
+    print("\n--- Upstream ion inertial length (reference scale) ---")
+    print(f"  n_i = {float(n_i.value):.3e} cm^-3   "
+          f"m_i = {float(m_i.to('g').value) / 1.6726231e-24:.2f} m_p   "
+          f"Z_eff = {Z_i:.2f}")
+    print(f"  d_i = c/omega_pi = {d_i_um:.1f} um   "
+          f"(plot window +/-{args.window_um:.0f} um = +/-{args.window_um/d_i_um:.2f} d_i)")
+
+    if args.x_units == "di":
+        x_label = r"distance from shock front [$c/\omega_{pi}$]"
+    else:
+        d_i_um, x_label = None, r"distance from shock front [$\mu$m]"
+
     x_rel_um = ((x_cm - x_shock_cm) * u.cm).to("um").value
     order    = np.argsort(x_rel_um)
     x_sorted = x_rel_um[order]
+    scale = d_i_um if d_i_um else 1.0
+    x_plot = x_sorted / scale
     stack = np.zeros_like(x_sorted)
     for ch in CHANNELS:
         arr = momflux[ch][order].to("dyn/cm**2").value
-        axA.fill_between(x_sorted, stack, stack + arr,
+        axA.fill_between(x_plot, stack, stack + arr,
                          color=COLORS[ch], alpha=0.85, label=LABELS[ch])
         stack = stack + arr
     axA.axvline(0.0, color="k", ls="--", lw=1.4, label="shock front")
-    axA.set_xlabel(r"distance from shock front [$\mu$m]   ($+$ upstream, $-$ downstream)")
+    axA.set_xlabel(x_label + "\n($+$ upstream,  $-$ downstream)")
     axA.set_ylabel(r"momentum flux [dyn cm$^{-2}$]")
+
+    # Header carries only what the figure cannot show: the frame, the time and the two
+    # Mach numbers.  M_ms leads -- at beta >> 1 the sound speed dominates the fast speed,
+    # so M_A overstates a perpendicular shock's strength.  The dump filename is dropped;
+    # it is still in the output file's own name and in the .npz.
+    m_ms = ps.magnetosonic_mach(check["mach_s"], check["mach_a"])
     axA.set_title(
         f"Momentum-flux partition (shock rest frame, "
         f"$v_{{sh}}$ = {(v_shock_cms * u.cm / u.s).to('km/s').value:.0f} km/s)\n"
-        f"{os.path.basename(snap_file)}  (t = {t_ns:.2f} ns)"
+        f"$t$ = {t_ns:.2f} ns     $M_{{ms}}$ = {m_ms:.2f}"
+        f"     $M_A$ = {check['mach_a']:.1f}"
     )
-    axA.legend(loc="upper right", fontsize=9)
+    axA.legend(loc="upper right")
     win = (x_sorted >= -args.window_um) & (x_sorted <= args.window_um)
-    axA.set_xlim(-args.window_um, args.window_um)
+    axA.set_xlim(-args.window_um / scale, args.window_um / scale)
     if win.any():
         axA.set_ylim(0, 1.05 * float(np.nanmax(stack[win])))
     axA.grid(alpha=0.25)
@@ -361,22 +424,42 @@ def main():
     colors = [COLORS[c] for c in CHANNELS] + ["0.5"]
     xpos = np.arange(len(bar_lbls))
     w = 0.38
-    axB.bar(xpos - w / 2, up_vals, w, color=colors, alpha=0.6,
+
+    # LOG y.  The channels span several decades -- upstream `ram` is 3.7e5 dyn/cm^2
+    # against a 3.5e8 total, and the downstream is two decades above that again -- so on
+    # a linear axis every bar but the largest reads as a flat zero.  These bars are
+    # independent means from a common baseline (unlike the stack on the left, whose band
+    # thicknesses only mean something on a linear axis), so a log axis is well posed.
+    # Bars run from the axis floor rather than 0, since log has no zero.
+    finite = [v for v in up_vals + dn_vals if np.isfinite(v) and v > 0]
+    peak = max(finite) if finite else 1.0
+    floor = peak / 10.0 ** args.log_decades
+    up_h = [max(v - floor, 0.0) for v in up_vals]
+    dn_h = [max(v - floor, 0.0) for v in dn_vals]
+    axB.bar(xpos - w / 2, up_h, w, bottom=floor, color=colors, alpha=0.6,
             edgecolor="k", linewidth=0.8, label="Upstream")
-    bars_dn = axB.bar(xpos + w / 2, dn_vals, w, color=colors, alpha=1.0,
+    bars_dn = axB.bar(xpos + w / 2, dn_h, w, bottom=floor, color=colors, alpha=1.0,
                       edgecolor="k", linewidth=0.8, label="Downstream")
     for b in bars_dn:
         b.set_hatch("///")
     axB.axvline(len(CHANNELS) - 0.5, color="0.7", lw=1, ls=":")  # set off Total
+    axB.set_yscale("log")
+    # Headroom for a one-row legend.  Every bar is drawn from the axis floor, so the only
+    # empty region in this panel is ABOVE the bars -- an in-axes legend placed anywhere
+    # else lands on top of a short channel.
+    axB.set_ylim(floor, peak * 30.0)
+    # Sizes here are RELATIVE ("small") or inherited, never absolute points: an absolute
+    # fontsize silently overrides plot_style's publication rcParams (xtick.labelsize 18,
+    # legend.fontsize 18), which is why these read as 9 pt on a poster-sized canvas.
     axB.annotate(f"dn/up = {cont['ratio']:.2f}  ({100 * cont['rel_imbalance']:+.0f}%)",
-                 xy=(xpos[-1], max(up_vals[-1], dn_vals[-1])), xytext=(0, 4),
-                 textcoords="offset points", ha="center", va="bottom", fontsize=10)
+                 xy=(0.98, 0.88), xycoords="axes fraction",
+                 ha="right", va="top", fontsize="small")
     axB.set_xticks(xpos)
-    axB.set_xticklabels(bar_lbls, fontsize=9, rotation=20, ha="right")
+    axB.set_xticklabels(bar_lbls, rotation=25, ha="right")
     axB.set_ylabel(r"momentum flux [dyn cm$^{-2}$]")
     axB.set_title("Continuity (conserved if dn/up ≈ 1)")
-    axB.legend(fontsize=9)
-    axB.grid(axis="y", alpha=0.3)
+    axB.legend(loc="upper left", ncol=2, framealpha=0.9, columnspacing=1.2)
+    axB.grid(axis="y", alpha=0.3, which="both")
 
     fig_path = os.path.join(out_dir, f"flash_pressure_partition_{os.path.basename(snap_file)}.png")
     fig.savefig(fig_path, dpi=150, bbox_inches="tight")

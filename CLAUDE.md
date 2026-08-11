@@ -147,11 +147,17 @@ plasmapy (~2.5 s) and yt are still imported **lazily** in a few `magshockz/` mod
 that is purely an import-time cost decision for scripts, not a CI constraint, so don't add
 a new lazy import just to keep a module "pure".
 
-One thing yt-in-CI does *not* buy: `magshockz/common/flash_utils.py` is still un-importable there,
-because it calls `yt.enable_plugins()` at module scope and yt **raises**
-`FileNotFoundError` when there is no `~/.config/yt/my_plugins.py` (the flash2osiris
-plugin, symlinked in on Perlmutter). Testing `flash_utils` in CI needs that call guarded
-first — installing yt is necessary but not sufficient.
+`magshockz/common/flash_utils.py` **is** importable in CI. It used to call
+`yt.enable_plugins()` at module scope, which raises `FileNotFoundError` when there is no
+`~/.config/yt/my_plugins.py` (the flash2osiris plugin, symlinked in on Perlmutter) — and,
+worse, registers the `("flash", …)` derived fields *globally*, so any WarpX plotfile
+opened later in the same process died on `("flash", "velz")`. The plugin is now **opt-in**:
+`flash_lineout` / `flash_slice` use a plain `yt.load` (every field they read is native to
+it, and B's `sqrt(4π)` is unaffected — the plugin never overrode `magnetic_unit`), and a
+script that actually wants `targdens` / `vth*` / `dominant_material` calls
+`flash_utils.enable_osiris_fields()` itself immediately before `yt.load_for_osiris`
+(`flash_overview.py`, `flash_tune_shock.py` do). Do **not** reintroduce a module-scope
+`enable_plugins()`.
 
 `tests/test_warpx_deck.py` asserts on `key_params` — *what WarpX will do* — rather than on
 the deck text wherever the claim is about behaviour, so rewording a comment is not a
@@ -237,6 +243,19 @@ signature, or the structure, where it cannot go stale. Default to *fewer* commen
 - **Match the surrounding file.** These rules describe where the codebase is heading; when
   editing an existing module, follow its established naming and density rather than
   restyling it mid-task.
+
+## Consult before changing design or physics
+
+**Always ask the user before making any design or physics change.** Diagnosing, measuring
+and reporting are free — running a scan, reading a dump, computing a number to test a
+hypothesis needs no permission. What needs permission is anything that changes *what the
+code claims about the physics* or *how the pipeline is shaped*: a new or altered formula,
+a changed baseline/prediction, a different band or averaging convention, a new default
+value for a physical parameter, a new module or script, a renamed/moved interface.
+
+Present the diagnosis and the options, and let the user choose. This overrides the
+general instruction to act once you have enough information: for physics and design, the
+deliverable is the recommendation, not the edit.
 
 ## Conventions
 

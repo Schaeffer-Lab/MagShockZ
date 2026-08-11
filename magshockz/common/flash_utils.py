@@ -24,12 +24,28 @@ from multiprocessing import Pool
 import numpy as np
 import yt
 
-# ``yt.load_for_osiris`` is registered by the flash2osiris yt plugin (symlinked into
-# ~/.config/yt/my_plugins.py). Enabling plugins here makes it available to every FLASH
-# load below and — crucially — applies the plugin's magnetic-unit fix (1 code_magnetic ==
-# 1 G), so ``.to("G")`` no longer tacks on a spurious sqrt(4π). Idempotent; runs once on
-# import and is inherited by the multiprocessing workers (fork) in ``load_lineouts``.
-yt.enable_plugins()
+
+def enable_osiris_fields() -> None:
+    """Register the flash2osiris derived fields (``targdens``, ``vth*``, ``jx``, …).
+
+    Call this ONLY in a script that reads one of those fields, immediately before it
+    loads FLASH data with ``yt.load_for_osiris``.  Nothing in this module needs it: every
+    field the line-out and slice helpers read is native to a plain ``yt.load``.
+
+    It is deliberately not called at import, because ``yt.enable_plugins()`` is a GLOBAL,
+    irreversible side effect on two counts.  It registers the ``("flash", …)`` fields in
+    ``yt.fields.local_fields``, which yt then validates against every dataset opened
+    afterwards -- so a WarpX plotfile loaded later in the same process dies on
+    ``("flash", "velz")``.  And it raises ``FileNotFoundError`` outright when there is no
+    ``~/.config/yt/my_plugins.py``, which is why importing this module used to be
+    impossible anywhere the plugin is not symlinked in, CI included.
+
+    This does NOT change B's normalization.  FLASH runs ``unitsystem="none"``, so yt's
+    FLASH frontend sets ``magnetic_unit = sqrt(4π) G`` and ``.to("G")`` is already
+    physical Gauss; the plugin leaves that alone (an earlier override to 1 G was a
+    misdiagnosis and was reverted).  Verified equal to floating-point on this dataset.
+    """
+    yt.enable_plugins()
 
 
 def find_plot_files(data_dir: str) -> list:
@@ -91,7 +107,7 @@ def flash_lineout(
         rho     : mass density [g/cm³]
         t_s     : simulation time [s]  (scalar float, not an array)
     """
-    ds = yt.load_for_osiris(path)
+    ds = yt.load(path)
 
     start  = np.asarray(start_pt, dtype=float)
     end    = np.asarray(end_pt,   dtype=float)
@@ -157,6 +173,7 @@ def flash_slice(
     halfwidth_um: float = 0.0,
     resolution: int = 512,
     mask_field: tuple | None = None,
+    unit: str | None = None,
 ) -> dict:
     """2-D slice through the LOS, oriented with the LOS axis HORIZONTAL.
 
@@ -177,6 +194,10 @@ def flash_slice(
         ``field`` is multiplied by, giving that species' share of it.  Weighting by the
         mass fraction is what makes a mixed cell contribute partially, rather than being
         assigned whole to whichever material happens to dominate it.
+    unit : convert ``field`` to this unit before the units are stripped.  ``None`` keeps
+        whatever yt hands back, which is the frontend's own unit and therefore only safe
+        for a caller that already knows it — name the unit whenever the number leaves as
+        a bare float, so a wrong-dimension field raises here instead of scaling silently.
 
     Returns
     -------
@@ -193,7 +214,7 @@ def flash_slice(
         axis_index = next(a for a in (2, 1, 0) if a != los_axis)
     slice_coord = float(start[axis_index])
 
-    ds = yt.load_for_osiris(path)
+    ds = yt.load(path)
     ax_h = ds.coordinates.x_axis[axis_index]
     ax_v = ds.coordinates.y_axis[axis_index]
 
@@ -219,7 +240,8 @@ def flash_slice(
     frb = ds.slice(axis_index, slice_coord).to_frb(
         width=((width_h, "cm"), (width_v, "cm")),
         resolution=(res_h, res_v), center=centre)
-    img = np.array(frb[field])                       # [ax_v, ax_h]
+    sampled = frb[field]
+    img = np.array(sampled.to(unit) if unit else sampled)   # [ax_v, ax_h]
     if mask_field is not None:
         img = img * np.array(frb[mask_field])
     bounds_cm = [float(v.to("cm")) for v in frb.bounds]   # h_lo, h_hi, v_lo, v_hi

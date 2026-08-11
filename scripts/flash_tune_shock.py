@@ -370,6 +370,8 @@ class RegionsTuner:
             ax_idx = candidates[0]
         slice_coord = float(start[ax_idx])
 
+        # See flash_overview.save_yt_slice: the plugin is opt-in now.
+        fu.enable_osiris_fields()
         ds = yt.load_for_osiris(snap_file)
         ax_h = ds.coordinates.x_axis[ax_idx]   # in-plane horizontal data-axis index
         ax_v = ds.coordinates.y_axis[ax_idx]   # in-plane vertical   data-axis index

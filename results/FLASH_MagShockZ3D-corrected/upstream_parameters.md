@@ -13,6 +13,18 @@ processed by the channel, which is the point of the comparison, not a defect.
 Every ray lies in z=0 with **B along z**, so all are perpendicular shocks
 (theta_Bn = 90 deg) and directly comparable to perpendicular MHD theory.
 
+Both the temperature ratio `T_i/T_e` and the **pressure** ratio
+`P_i/P_e = (n_i T_i)/(n_e T_e) = T_i/(Zbar T_e)` are reported throughout. They are not
+interchangeable: they differ by a factor of Zbar, so a ray at Zbar = 13 has a pressure
+ratio 13x smaller than its temperature ratio. `T_i/T_e` is what a temperature diagnostic
+measures; `P_i/P_e` is what the *dynamics* respond to — and, in this dataset specifically,
+it is the quantity FLASH's `ragelike` scheme uses to apportion shock-dissipated energy
+(see below), which is why the two rays' partitions differ so much more than their
+temperature ratios suggest.
+
+Ion times are quoted as the **inverse gyrofrequency** `1/w_ci = m_i/(Zbar e B) = d_i/v_A`,
+which is the PIC normalization — not the full gyroperiod, which is 2pi larger.
+
 ## Upstream state
 
 | quantity | los00 5 ns | los00 9 ns | los00 12 ns | los45 5 ns | los45 9 ns | los45 12 ns |
@@ -24,6 +36,7 @@ Every ray lies in z=0 with **B along z**, so all are perpendicular shocks
 | T_e [eV] | 373.5 | 209.2 | 156.9 | 18.0 | 14.6 | 13.9 |
 | T_i [eV] | 77.3 | 83.6 | 112.6 | 18.1 | 14.6 | 13.9 |
 | T_i / T_e | 0.207 | 0.400 | 0.717 | 1.005 | 0.997 | 1.000 |
+| P_i / P_e | 0.0159 | 0.0307 | 0.0565 | 0.170 | 0.199 | 0.207 |
 | B [T] | 2.80 | 2.43 | 2.76 | 7.00 | 7.01 | 7.01 |
 | B_perp [T] | 2.80 | 2.43 | 2.76 | 7.00 | 7.01 | 7.01 |
 | theta_Bn [deg] | 90.0 | 90.0 | 90.0 | 90.0 | 90.0 | 90.0 |
@@ -34,7 +47,7 @@ Every ray lies in z=0 with **B along z**, so all are perpendicular shocks
 | c_s [km/s] | 171.5 | 129.2 | 112.1 | 27.2 | 22.9 | 22.0 |
 | v_ms [km/s] | 174.7 | 134.8 | 120.7 | 43.5 | 41.4 | 41.2 |
 | d_i [um] | 257.5 | 339.8 | 357.9 | 229.1 | 273.2 | 286.7 |
-| T_ci [ns] | 48.3 | 55.7 | 50.1 | 42.5 | 49.8 | 51.7 |
+| 1/w_ci [ns] | 7.7 | 8.9 | 8.0 | 6.8 | 7.9 | 8.2 |
 
 ## Shock
 
@@ -51,7 +64,10 @@ Every ray lies in z=0 with **B along z**, so all are perpendicular shocks
 
 M_ms > 1 on every column, so a shock exists in all cases; the ion-reflection
 threshold is M_ms ~ 2.76, which every column also exceeds (super-critical).
-`momentum flux dn/up` is the independent Rankine-Hugoniot check and should be 1.
+`momentum flux dn/up` is the independent Rankine-Hugoniot check. It should be 1 *at the
+discontinuity*; the tabulated value is a 100 um band average, and the post-shock flow has
+a real gradient behind it, so the 2-7% shortfall is a band-width artifact rather than a
+failure of the jump condition — see "Why momentum flux reads 0.93-0.98" below.
 
 ## Inputs for the idealized reflecting-wall runs
 
@@ -74,7 +90,7 @@ physics:
   theta_deg: 90.0
 ```
 
-Implies beta_e = 13.243, T_i/T_e = 0.400, M_A = 20.73.
+Implies beta_e = 13.243, T_i/T_e = 0.400, **P_i/P_e = 0.0307**, M_A = 20.73.
 
 ### `los45` — unperturbed upstream
 
@@ -90,7 +106,12 @@ physics:
   theta_deg: 90.0
 ```
 
-Implies beta_e = 0.443, T_i/T_e = 0.997, M_A = 8.47.
+Implies beta_e = 0.443, T_i/T_e = 0.997, **P_i/P_e = 0.199**, M_A = 8.47.
+
+The two rays' pressure ratios differ by **6.5x** while their temperature ratios differ by
+only 2.5x, because Zbar is 13 in the channel against 5 in the ambient. If the idealized
+runs are matched on `temp_ratio` alone they will not reproduce this dataset's ion pressure
+share, which is the quantity that governs the partition.
 
 
 ---
@@ -153,23 +174,156 @@ the RH check (compression, field jump, continuity), and the **full layer** from 
 front back to the piston contact for downstream heating, Zbar and the electron/ion
 partition — the latter being the plasma an experiment would actually diagnose.
 
-## Why the measured compression exceeds 4
+## Why `los45` compresses past 4 — the shock is ionizing
 
-`r measured` reaches 4.2-5.6 on `los45`, above the gamma = 5/3 ceiling of 4 that an
-ideal single-fluid shock cannot exceed. The shock is **ionizing**: Zbar roughly doubles
-across the front, and energy that the adiabatic baseline would put into temperature
-goes into ionization instead, which permits higher compression and lower downstream
-temperature. An order-of-magnitude accounting with literature Al ionization potentials
-puts the ionization cost at ~3400 eV/ion against ~3700 eV/ion of thermal energy gained,
-i.e. **roughly half the post-shock energy budget**.
+`r measured` reaches 4.2-5.6 on `los45`, above the gamma = 5/3 ceiling of 4 that an ideal
+single-fluid shock cannot exceed. The shock is **ionizing**: energy the adiabatic baseline
+would put into temperature strips electrons instead, which softens the effective adiabatic
+index and permits higher compression at lower downstream temperature. Three independent
+tests were run against this claim, because the original version of this section asserted it
+from an order-of-magnitude estimate alone.
 
-This is also why measured downstream temperatures fall well below the adiabatic RH
-prediction. Note the prediction plotted in the figures is the **unmodified**
-single-fluid `T2/T1 = (p2/p1)/(rho2/rho1)`. That form assumes a fixed mean molecular
-weight, which an ionizing shock violates; the composition-corrected value
-`x (1+Zbar_1)/(1+Zbar_2)` is reported alongside it as a diagnostic, roughly a factor of
-two smaller, but is **not** applied — it is only half a correction, since `r` and
-`p_ratio` still come from an energy equation with no ionization sink.
+**Test 1 — is the ionization at the front, or is it preheat?** Zbar (from FLASH's own
+`ye/sumy`) is flat at 5-6 everywhere upstream of the front and rises to 11-13 within 30 um
+behind it, co-located with the density jump. It is the shock doing the ionizing, not a
+radiative precursor arriving ahead of it.
+
+**Test 2 — energy budget.** Per ion, against NIST Al ionization potentials (an independent
+check: FLASH itself uses PROPACEOS tables), with `f_ion` the ionization share of the total
+energy the shock deposits and `gamma_eff = 1 + (gamma-1)(1-f_ion)`:
+
+| ray | t [ns] | Zbar up -> dn | f_ion | gamma_eff | r ceiling | r measured |
+|---|---|---|---|---|---|---|
+| los45 | 5 | 5.90 -> 13.00 | 0.300 | 1.467 | 5.28 | 4.26 |
+| los45 | 9 | 5.03 -> 11.25 | 0.481 | 1.346 | 6.78 | 5.68 |
+| los45 | 12 | 4.84 -> 11.00 | 0.499 | 1.334 | 6.99 | 4.57 |
+| los00 | 5 | 13.00 -> 13.00 | 0.000 | 1.667 | 4.00 | 3.65 |
+| los00 | 9 | 12.99 -> 13.00 | 0.000 | 1.666 | 4.00 | 2.83 |
+| los00 | 12 | 12.71 -> 13.00 | 0.020 | 1.653 | 4.06 | 2.78 |
+
+`los45` sits at 65-84% of the ionization-softened ceiling, which is above 4; `los00` stays
+under the unmodified gamma = 5/3 ceiling of 4. The ~50% figure quoted originally is
+confirmed at 9 and 12 ns (`f_ion` = 0.48, 0.50). (These `r` are sampled at 2048 points
+rather than the production 512, so they differ from the table above by up to ~8%; see
+Caveats.)
+
+**Test 3 — is anything else draining the layer?** The Rankine-Hugoniot *energy* flux
+`rho u (u^2/2 + e_th + e_ion + p/rho) + u B_t^2 / 4pi` is conserved across a steady
+adiabatic front, and every term in it is measured, so its dn/up ratio is a closure test
+with no free parameters:
+
+| | los45 5 ns | los45 9 ns | los45 12 ns | los00 5 ns | los00 9 ns | los00 12 ns |
+|---|---|---|---|---|---|---|
+| mass flux dn/up | 1.218 | 1.290 | 0.984 | 0.988 | 1.042 | 1.207 |
+| energy flux, **no** ionization term | 0.998 | 0.739 | 0.732 | 0.955 | 1.065 | 1.262 |
+| energy flux, **with** ionization term | 1.213 | **0.998** | **0.996** | 0.957 | 1.063 | 1.269 |
+
+On `los45` at 9 and 12 ns a 26-27% energy deficit closes to within 0.4% the moment the
+ionization term is carried — ionization is not merely *a* sink, it is the *whole* missing
+budget, leaving no room for a second one. On `los00` the two rows are identical to three
+digits, confirming there is no ionization sink there at all. Two columns are excluded:
+`los45` at 5 ns and `los00` at 12 ns fail *mass* flux by 20%, so the front is not locally
+steady there and neither energy number is meaningful (the 12 ns `los00` failure is the
+mushroom-cap obliquity already discussed).
+
+Radiative cooling was checked as the competing candidate and ruled out. Downstream
+`T_rad/T_e` is only 0.02-0.15 on `los45`, i.e. the matter radiates into a far colder field
+— but that field is optically thin and carries no energy: the bremsstrahlung cooling time
+is 3e7-7e7 ns against a 12 ns run, and even a 1e5x line-radiation enhancement leaves it
+above 300 ns. Radiation *pressure* `a T_rad^4/3` is 0.01% of the momentum flux.
+
+The RH temperature prediction plotted in the figures is the **unmodified** single-fluid
+`T2/T1 = (p2/p1)/(rho2/rho1)`. That form assumes a fixed mean molecular weight, which an
+ionizing shock violates; the composition-corrected value `x (1+Zbar_1)/(1+Zbar_2)` is
+reported alongside it as a diagnostic, roughly a factor of two smaller, but is **not**
+applied — it is only half a correction, since `r` and `p_ratio` still come from an energy
+equation with no ionization sink.
+
+## Why `los00`'s downstream T_i falls ~3x below prediction — *not* ionization
+
+The channel ray needs a different explanation, and an earlier version of this document got
+this wrong by extending the `los45` ionization story to it. In the channel the ambient Al
+is **already fully stripped**: Zbar goes 13.00 -> 13.00 (5 ns), 12.99 -> 13.00 (9 ns),
+12.71 -> 13.00 (12 ns). There is no ionization headroom, the composition factor
+`(1+Zbar_1)/(1+Zbar_2)` is 1.000 / 0.999 / 0.979 — a no-op — and the energy-closure test
+above shows adding the ionization term changes nothing. Ionization cannot explain the
+channel's low T_i.
+
+The actual cause is **how FLASH apportions shock-dissipated energy**. This run uses
+`hy_3tmode = ragelike` (`MagShockZ.log:1189`; it is the FLASH default and is never set in
+`flash.par`), with `hy_3ttry_g = 4` (`:358`) and `hy_3ttry_d = 2.0` (`:834`). In
+`source/physics/Hydro/HydroMain/unsplit_rad/multiTemp/hy_uhd_ragelike.F90`, `G > 0` makes
+lines 147-154 call `hy_uhd_getPressure` to fill `pele_adv / pion_adv / prad_adv`; `D /= 3.0`
+makes lines 170-172 set `PrP/PeP/PiP` to exactly those **partial pressures**; lines 175-178
+hand them to `Hydro_recalibrateEints`, which (`Hydro_recalibrateEints.F90:197-231`) forms
+`scaleEi = eint/sumEi` and scales each component by it. The dissipated energy is therefore
+divided **in direct proportion to partial pressure**.
+
+In the channel the ions hold almost none of that pressure — beta_e is 13-31 against
+beta_i ~ 0.4 — so they receive almost none of the heat:
+
+| | ion share of *dissipated* energy | ion share of *upstream* pressure |
+|---|---|---|
+| los00 5 / 9 / 12 ns | 0.23% / 0.67% / 1.82% | 1.57% / 2.99% / 5.34% |
+| los45 5 / 9 / 12 ns | 1.26% / 9.01% / 16.63% | 14.55% / 16.54% / 17.12% |
+
+The measured dissipative split tracks the upstream pressure share on both rays, which is
+the `ragelike` rule showing up in the data.
+
+**And FLASH cannot recover from it**, because the two species never re-equilibrate. The
+NRL electron-ion energy equilibration time downstream on `los00` is **1900-2900 ns**,
+against a 0.4 ns residence in the jump band and a 12 ns run — a ratio of ~5000. So T_e
+reaches 4.3-6.0x its adiabatic value while T_i reaches only 1.5-2.5x. Measured over the
+100 um jump band:
+
+| downstream, jump band | los00 5 ns | los00 9 ns | los00 12 ns | los45 5 ns | los45 9 ns | los45 12 ns |
+|---|---|---|---|---|---|---|
+| T_i / T_e | 0.071 | 0.140 | 0.325 | 0.226 | 1.273 | 2.206 |
+| P_i / P_e | 0.005 | 0.011 | 0.025 | 0.017 | 0.113 | 0.201 |
+
+The channel's ions end up holding **0.5-2.5% of the downstream thermal pressure**. On
+`los45` the equilibration time is 3.5-37 ns, comparable to the run, and the ion pressure
+share both survives the front and grows with time (0.017 -> 0.201), reaching the upstream
+value of 0.207 by 12 ns; its ions in fact run *hotter* than its electrons downstream
+(`T_i/T_e` = 1.3-2.2), which is what a strong shock does when the species stay coupled
+enough to keep their share. The channel does the opposite.
+
+Two consequences worth carrying into the presentation:
+
+- **The RH momentum-flux check cannot detect this.** Ions hold only 1-5% of the downstream
+  pressure in the channel, so total pressure closes to a few percent while T_i is off by 3x.
+  A single-fluid RH test is simply blind to the ion temperature here.
+- **The channel's *upstream* T_i is soft too.** `los00`'s upstream equilibration time is
+  180-320 ns >> 12 ns, so the tabulated `T_i = 83.6 eV` and `T_i/T_e = 0.400` reflect
+  FLASH's dissipation bookkeeping in a plasma that has never equilibrated, not a measured
+  equilibrium. `los45`'s `T_i/T_e = 1.00` is earned (upstream equilibration 4.4-4.8 ns <
+  12 ns).
+
+## Why momentum flux reads 0.93-0.98
+
+The tabulated `momentum flux dn/up` is averaged over the 100 um jump band, and the
+post-shock flow is not uniform across it. Re-sampling at 5.5-6.5 um (finer than the 11 um
+finest AMR cell) and scanning the band width:
+
+| band width [um] | 15 | 25 | 40 | 60 | 100 | 200 | 400 |
+|---|---|---|---|---|---|---|---|
+| los00 9 ns | 0.962 | 0.962 | 0.962 | 0.958 | 0.949 | 0.917 | 0.864 |
+| los45 5 ns | 1.098 | 1.077 | 1.059 | 1.042 | 0.999 | 0.916 | 0.789 |
+
+The ratio falls monotonically with band width at -1% to -11% per 100 um. Extrapolating the
+<= 200 um points linearly to zero width gives 0.986 / 0.971 / 1.122 on `los00` and 1.101 /
+1.060 / 0.993 on `los45` — scattered about 1 with no systematic deficit. The published
+0.93-0.98 is that slope sampled at 100 um, not a broken jump condition.
+
+Two candidate causes of the gradient were tested and are **not** the main one: radiation
+pressure `a T_rad^4/3` is 0.01% of the flux (despite this being an MGD run), and spherical
+divergence, whose steady form gives `d(rho u^2 + P_tot)/dr = -2 rho u^2 / r`, accounts for
+only 5-43% of the measured slope.
+
+The residual +-10% scatter in the zero-width intercepts is dominated by the fitted shock
+speed: a +-5% change in `v_shock` moves dn/up by +-2-4% (+-7% on `los45` at 5 ns). The one
+column that is high under any `v_shock` is `los00` at 12 ns (1.06-1.15), which is the
+mushroom-cap obliquity discussed above.
 
 ## What separates the two scenarios
 
@@ -179,13 +333,20 @@ The comparison is not mainly about density or temperature — it is about
 - **beta_e differs by 30x** (13.2 in the channel against 0.44 in the ambient). The
   laser channel has made the field dynamically almost irrelevant on axis, while the
   off-axis case is properly magnetized at beta_e < 1.
-- **T_i/T_e is 0.40 in the channel against 1.00 in the ambient**, so the two idealized
-  runs differ in `temp_ratio` as well as `beta_e`.
+- **T_i/T_e is 0.40 in the channel against 1.00 in the ambient**, and the underlying
+  **P_i/P_e is 0.031 against 0.199 — a 6.5x separation**, wider than the temperature
+  ratio's 2.5x because Zbar is 13 against 5. The pressure ratio is the sharper
+  discriminator of the two scenarios and the one that survives into the downstream
+  partition. The 0.40 should be quoted with the caveat above: the channel's electrons and ions are collisionally decoupled on the run
+  timescale (equilibration 180-320 ns vs 12 ns), so that ratio is set by FLASH's
+  pressure-proportional dissipation split rather than measured at equilibrium. Its
+  direction (T_i < T_e in a high-beta_e channel) is physical; its precise value is not
+  a hard number.
 - **M_ms is nearly the same** (5.9 against 7.1) despite M_A differing by 2.4x, because
   the channel's high sound speed compensates for its weak field. The two shocks are of
   comparable *strength* but very different *magnetization* — which is the cleanest way
   to frame the comparison.
-- **d_i and T_ci come out similar** (340 vs 273 um, 56 vs 50 ns), so one box size and
+- **d_i and 1/w_ci come out similar** (340 vs 273 um, 8.9 vs 7.9 ns), so one box size and
   duration serves both idealized runs.
 
 ## Caveats on the tabulated values
@@ -198,6 +359,23 @@ The comparison is not mainly about density or temperature — it is about
 - `los00`'s upstream is flagged `PROCESSED` at every time (rho/rho_0 = 0.08-0.15). That
   is the intended physics of the channel case, not a measurement failure, but its Mach
   numbers are not comparable to the off-axis ray's without saying so.
+- `r measured` is **resolution-sensitive**. The table is sampled at the production 512
+  points along the ray; at 2048 points `los00` at 9 ns reads 2.83 instead of 3.08, an ~8%
+  shift, and other columns move by less. The conclusions above are unaffected (the
+  question is only whether `r` clears 4), but a compression ratio quoted to three digits
+  is not warranted.
+- **`los45`'s downstream T_i is the most resolution-sensitive number in this document.**
+  The 100 um jump band holds only 4 sample points at 512 and 18 at 2048, and T_i there
+  moves 144.7 -> 184.2 eV at 9 ns and 136.2 -> 227.0 eV at 12 ns between the two. The
+  downstream table above uses 2048. `los00` is stable at both (T_i within 5%), as is T_e
+  on both rays, so the contrast between the rays is robust even though `los45`'s absolute
+  downstream T_i is not. Quote it as "ions at or above electron temperature, ion pressure
+  share ~0.1-0.2" rather than as a number.
+- Downstream ion temperatures on `los00` should be presented as **a FLASH bookkeeping
+  result, not a measurement**: they follow from `hy_3tmode = ragelike` splitting
+  dissipation by partial pressure into a plasma that cannot equilibrate within the run.
+  An experiment measuring T_i in the channel need not reproduce them, and neither need a
+  PIC run that resolves the actual collisionless ion heating.
 - The 15 and 30 degree rays were analysed and then set aside. `los15` is unusable: a
   laser-channel column of ambient material crosses its upstream, and a rarefaction
   separates its piston from its shell. `los30` never reached momentum-flux

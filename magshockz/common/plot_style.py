@@ -82,6 +82,16 @@ def figsize(width: float, height: float) -> tuple:
     return (width * scale, height * scale)
 
 
+def publication_rc() -> dict:
+    """The publication rcParams, for a figure that is ALWAYS drawn at paper/slide sizes.
+
+    A copy, so a caller feeding it to ``matplotlib.rc_context`` cannot edit the shared
+    definition.  Use this only for a figure whose whole purpose is a poster or a slide;
+    everything else follows the ``--publication`` flag through :func:`apply`.
+    """
+    return dict(_PUB_RC)
+
+
 def add_publication_arg(parser):
     """Add the shared ``--publication`` flag to an argparse parser; returns it."""
     parser.add_argument(

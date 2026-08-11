@@ -161,6 +161,10 @@ sbatch init_warpx/run_heater_2d.sbatch  # 4 GPU nodes; HEATER_EXE=<cpu app> to f
 python scripts/warpx_make_deck.py --config ...yaml --verify   # vs the post-run echo
 python scripts/warpx_heater_compare.py --config runs/magshockz_2d_heater.warpx.yaml
 python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml
+
+# the poster figure alone: n / v / T at one matched time + the shocked-layer scorecard
+python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml \
+    --figures profiles --cache [--profile-time 0.95]
 ```
 
 The heater-off null control answers "is the ambient heating numerical?". Give it its own
