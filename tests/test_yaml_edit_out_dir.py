@@ -6,22 +6,18 @@ an output directory, because the FLASH scripts hand data to each other through i
 wrong-line-of-sight bug and not just clutter.
 """
 
-import importlib.util
 import os
 import shutil
 
 import pytest
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "yaml_edit.py")
-_spec = importlib.util.spec_from_file_location("yaml_edit", _PATH)
-yaml_edit = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(yaml_edit)
+from magshockz.common import yaml_edit
 
 # out_dir creates directories under the real <repo>/results, so the tests use a
 # throwaway dataset name and delete its tree afterwards rather than littering it.
 NAME = "_test_dataset_FLASH_2026-07"
 DATASET = f"/data/sims/{NAME}"
-_RESULTS = os.path.realpath(os.path.join(os.path.dirname(_PATH), "..", "results"))
+_RESULTS = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "results"))
 
 
 @pytest.fixture(autouse=True)
@@ -151,3 +147,29 @@ def test_roundtrip_still_rejects_a_numeric_looking_string():
 def test_roundtrip_rejects_a_genuinely_wrong_number():
     with pytest.raises(AssertionError):
         yaml_edit.assert_roundtrip("a:\n  b: 2.0\n", "a.b", 1.0)
+
+
+# ---------------------------------------------------------------------------
+# subdir — one tree per line of sight
+# ---------------------------------------------------------------------------
+# A config holding several rays writes each ray's outputs to its own directory, for
+# the same reason two configs do: flash_rh_prediction reads flash_overview_*.npz back
+# out of this directory, so sharing it means reading the wrong ray's line-out.
+
+def test_subdir_is_appended_to_the_dataset_tree():
+    assert _rel(yaml_edit.out_dir(DATASET, subdir="los30")) == os.path.join(NAME, "los30")
+
+
+def test_subdir_composes_with_results_subdir():
+    out = yaml_edit.out_dir(DATASET, cfg={"results_subdir": "offaxis"}, subdir="los45")
+    assert _rel(out) == os.path.join(NAME, "offaxis", "los45")
+
+
+def test_subdir_applies_under_an_explicit_output_dir(tmp_path):
+    out = yaml_edit.out_dir(DATASET, str(tmp_path / "elsewhere"), subdir="los00")
+    assert out == str(tmp_path / "elsewhere" / "los00")
+
+
+def test_no_subdir_leaves_the_path_flat():
+    assert _rel(yaml_edit.out_dir(DATASET, subdir=None)) == NAME
+    assert _rel(yaml_edit.out_dir(DATASET, subdir="")) == NAME

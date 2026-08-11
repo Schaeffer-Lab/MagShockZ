@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from conftest import FakeAxis, FakeH5Data, make_phase_space
-import moments
+from magshockz.common import moments
 
 
 # ---------------------------------------------------------------------------

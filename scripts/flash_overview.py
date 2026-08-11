@@ -2,7 +2,7 @@
 """scripts/flash_overview.py — general overview of a MagShockZ FLASH shock run.
 
 Produces two figures and a data archive that mirror the output of
-scripts/overview.py for the OSIRIS run, but in physical units throughout:
+scripts/osiris_overview.py for the OSIRIS run, but in physical units throughout:
 
   Figure 1 — time-space streak plots (time [ns] horizontal, distance [µm] vertical):
     nₑ     electron number density   [cm⁻³]
@@ -51,18 +51,16 @@ import yt
 yt.set_log_level(50)   # suppress yt chatter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
-sys.path.insert(0, os.path.join(_HERE, "..", "init_nopython"))
 
 import unyt as u
 
-import analysis_utils
-import plot_style
-import flash_source
-import flash_utils as fu
-import shock
-import perpendicular_shock as ps
-import yaml_edit
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common import flash_source
+from magshockz.common import flash_utils as fu
+from magshockz.analysis.flash import shock
+from magshockz.common import perpendicular_shock as ps
+from magshockz.common import yaml_edit
 
 
 # ---------------------------------------------------------------------------
@@ -246,10 +244,19 @@ def main():
                              "(believed) linear: used for the constant-velocity "
                              "trajectory fit and the windowed mass-continuity median "
                              "(default 2 5).")
+    parser.add_argument("--vshock-halfwidth-ns", type=float, default=1.0,
+                        dest="vshock_halfwidth_ns", metavar="HALF",
+                        help="Half-width [ns] of the LOCAL window used for the "
+                             "instantaneous shock speed at each placed dump "
+                             "(default 1.0 = 9 dumps at 0.25 ns cadence). Narrow "
+                             "enough that the trajectory is locally smooth; the "
+                             "blast decelerates over the run, so a single global "
+                             "speed misstates the Mach numbers at the window edges.")
     parser.add_argument("--output-dir", default=None, dest="output_dir")
     parser.add_argument("--nprocs", type=int, default=None,
                         help="Number of worker processes for loading dumps "
                              "(default: all cores on the node). Use 1 to load serially.")
+    flash_source.add_los_arg(parser)
     plot_style.add_publication_arg(parser)
     args = parser.parse_args()
     plot_style.apply(args.publication)
@@ -258,7 +265,7 @@ def main():
     # Config + run parameters
     # ------------------------------------------------------------------
     cfg    = analysis_utils.load_config(args.config)
-    source = flash_source.resolve(cfg, args.config)
+    source = flash_source.resolve(cfg, args.config, los=args.los)
 
     flash_dir      = source.flash_dir
     flash_ic_index = source.ic_index
@@ -268,7 +275,7 @@ def main():
     ref_density    = source.reference_density               # cm⁻³, or None
 
     # Shock velocity and position estimates from config (used to seed detection)
-    flash_cfg    = cfg.get("flash", {})
+    flash_cfg    = flash_source.los_params(cfg, "flash", source.label)
     v_shock_est  = float(flash_cfg.get("v_shock_est_cms", 0.0))
     x_shock_0_cm = float(flash_cfg.get("x_shock_0_cm", 0.0))
     # Trajectory anchor t₀: the time at which the front sat at x_shock_0_cm. Absent
@@ -290,7 +297,7 @@ def main():
         )
 
     out_dir = yaml_edit.out_dir(source.flash_dir, args.output_dir,
-                                cfg=cfg, config_path=args.config)
+                                cfg=cfg, config_path=args.config, subdir=source.label)
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"Config     : {args.config}")
@@ -413,7 +420,8 @@ def main():
     # region values are medians.  Independent of any trajectory fit, so it reveals
     # whether the front is accelerating.
     # ------------------------------------------------------------------
-    hand_fit = [cfg.get("flash_dump_params", {}).get(i) for i in loaded_indices]
+    per_dump = flash_source.los_params(cfg, "flash_dump_params", source.label)
+    hand_fit = [per_dump.get(i) for i in loaded_indices]
     use_hand_fit = any(hf for hf in hand_fit)
     mc = mass_continuity_vshock(
         lineouts, hand_fit=hand_fit if use_hand_fit else None,
@@ -458,6 +466,36 @@ def main():
         print(f"  mass-continuity median v_shock = {(mc_med_win_cms * u.cm / u.s).to('km/s').value:.1f} km/s   "
               f"({mc_in_win.sum()} dumps)")
 
+    # ------------------------------------------------------------------
+    # Instantaneous shock speed: a LOCAL fit to the front track at each placed dump.
+    # The window fit above assumes ONE constant speed, but the blast decelerates
+    # across the analysis window, so the speed belonging in a dump's Mach numbers is
+    # the slope of x_front(t) there.  Both the naive line and the quadratic are
+    # reported: over a symmetric, evenly sampled window they give the same slope by
+    # construction (see shock.FrontFit), so a gap between them means the window ran
+    # off the end of the run — while the quadratic's residual, which no longer counts
+    # real curvature as scatter, is the honest tracking-quality flag.
+    # ------------------------------------------------------------------
+    front_track_um = np.array([
+        shock.detect_front_outermost(np.asarray(lo["x"].to("um")),
+                                     np.asarray(lo["rho"].to("g/cm**3")))
+        for lo in lineouts])
+    fit_rows = [i for i, hf in enumerate(hand_fit) if hf] or [snap_idx]
+    fits = [shock.local_front_fit(time_ns, front_track_um, float(time_ns[i]),
+                                  half_width=args.vshock_halfwidth_ns)
+            for i in fit_rows]
+
+    print(f"\n--- Instantaneous shock speed "
+          f"(local ±{args.vshock_halfwidth_ns:.2f} ns fit to the front track) ---")
+    print(f"  {'dump':>5}{'t[ns]':>7}{'v_lin':>8}{'v_quad':>8}{'accel':>9}"
+          f"{'rms_lin':>9}{'rms_quad':>10}{'n':>4}")
+    for row, f in zip(fit_rows, fits):
+        print(f"  {loaded_indices[row]:>5}{f.t:>7.2f}{f.v_linear:>8.0f}"
+              f"{f.v_quadratic:>8.0f}{f.acceleration:>9.1f}{f.rms_linear:>9.0f}"
+              f"{f.rms_quadratic:>10.0f}{f.n_points:>4}")
+    print("  (v [km/s]; accel [km/s per ns]; rms [µm]. v_lin == v_quad on a centred "
+          "window;\n   a large rms_quad means the track is wrong, not merely curved.)")
+
     # Shock front line (config trajectory) in µm units for the streak plots.
     x_um_pred   = (x_pred_cm * u.cm).to("um").value
     config_line = (time_ns, x_um_pred,
@@ -470,18 +508,19 @@ def main():
     # ------------------------------------------------------------------
     # Figure 1 — streaks
     # ------------------------------------------------------------------
-    fig1, axes = plt.subplots(2, 2, figsize=(16, 10))
+    fig1, axes = plt.subplots(2, 2, figsize=plot_style.figsize(16, 10),
+                              layout="constrained")
     plot_streak(axes[0, 0], time_ns, x_um, ne_streak,
-                label=r"$n_e$ [cm$^{-3}$]", cmap="magma", log=True,
+                label=r"$n_e$ [cm$^{-3}$]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
                 shock_lines=shock_lines)
     plot_streak(axes[0, 1], time_ns, x_um, B_streak,
-                label=r"$|B|$ [G]", cmap="viridis", log=False,
+                label=r"$|B|$ [G]", cmap=plot_style.SEQUENTIAL_CMAP, log=False,
                 shock_lines=shock_lines)
     plot_streak(axes[1, 0], time_ns, x_um, Te_streak,
-                label=r"$T_e$ [eV]", cmap="inferno", log=True,
+                label=r"$T_e$ [eV]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
                 shock_lines=shock_lines)
     plot_streak(axes[1, 1], time_ns, x_um, Ti_streak,
-                label=r"$T_i$ [eV]", cmap="inferno", log=True,
+                label=r"$T_i$ [eV]", cmap=plot_style.SEQUENTIAL_CMAP, log=True,
                 shock_lines=shock_lines)
 
     fig1.suptitle(
@@ -490,7 +529,6 @@ def main():
         f"v_shock = {v_shock_kms:.1f} km/s   M_A = {float(mach['M_A']):.2f}   M_s = {float(mach['M_s']):.2f}",
         fontsize=12,
     )
-    fig1.tight_layout()
     streak_path = os.path.join(out_dir, f"flash_overview_streaks_{tag}.png")
     fig1.savefig(streak_path, dpi=150, bbox_inches="tight")
     plt.close(fig1)
@@ -499,7 +537,8 @@ def main():
     # ------------------------------------------------------------------
     # Figure 1b — mass-continuity shock speed vs time (acceleration check)
     # ------------------------------------------------------------------
-    figv, (axv, axin) = plt.subplots(1, 2, figsize=(15, 5.5))
+    figv, (axv, axin) = plt.subplots(1, 2, figsize=plot_style.figsize(15, 6.5),
+                                     layout="constrained")
     t_fin   = time_ns[mc_finite]
     vsh_fin = (mc["v_sh"][mc_finite] * u.cm / u.s).to("km/s").value
     v_shock_est_kms = (v_shock_est * u.cm / u.s).to("km/s").value
@@ -546,7 +585,6 @@ def main():
     axin.set_title("Mass-continuity inputs (region averages)")
 
     figv.suptitle(f"Mass-continuity shock speed — {os.path.basename(flash_dir)}", fontsize=12)
-    figv.tight_layout()
     vsh_path = os.path.join(out_dir, f"flash_overview_vshock_masscontinuity_{tag}.png")
     figv.savefig(vsh_path, dpi=150, bbox_inches="tight")
     plt.close(figv)
@@ -569,7 +607,8 @@ def main():
         )
         save_yt_slice(snap_file, args.slice_axis, ("gas", "El_number_density"),
                       slice_edens_path,
-                      f"Electron density — {os.path.basename(snap_file)}", "viridis")
+                      f"Electron density — {os.path.basename(snap_file)}",
+                      plot_style.SEQUENTIAL_CMAP)
         print(f"Saved → {slice_edens_path}")
     except Exception as e:
         print(f"  Warning: could not save density slice: {e}")
@@ -579,13 +618,15 @@ def main():
             out_dir, f"flash_slice_tion_{os.path.basename(snap_file)}.png"
         )
         save_yt_slice(snap_file, args.slice_axis, ("flash", "tion"), slice_tion_path,
-                      f"Ion temperature — {os.path.basename(snap_file)}", "hot")
+                      f"Ion temperature — {os.path.basename(snap_file)}",
+                      plot_style.SEQUENTIAL_CMAP)
         print(f"Saved → {slice_tion_path}")
     except Exception as e:
         print(f"  Warning: could not save Ti slice: {e}")
 
     # Lineout figure (2 panels)
-    fig2, ax2 = plt.subplots(1, 2, figsize=(14, 5))
+    fig2, ax2 = plt.subplots(1, 2, figsize=plot_style.figsize(15, 6.5),
+                             layout="constrained")
 
     # Panel [0]: nₑ + |B| line-out
     axp = ax2[0]
@@ -624,7 +665,6 @@ def main():
         f"FLASH lineouts — {os.path.basename(snap_file)}  (t = {snap_t_ns:.2f} ns)",
         fontsize=13,
     )
-    fig2.tight_layout()
     lineout_path = os.path.join(out_dir, f"flash_overview_lineouts_{os.path.basename(snap_file)}.png")
     fig2.savefig(lineout_path, dpi=150, bbox_inches="tight")
     plt.close(fig2)
@@ -637,6 +677,9 @@ def main():
     np.savez(
         npz_path,
         dump_files  = np.asarray([os.path.basename(f) for f in dump_files]),
+        # Plot-file index of each row, so a consumer can find a dump by its index
+        # rather than by position — the two differ under --stride/--t-start.
+        dump_indices = np.asarray(loaded_indices),
         time_ns     = time_ns,
         x_um        = x_um,
         ne_streak   = ne_streak,
@@ -654,6 +697,16 @@ def main():
         mc_rho_up       = mc["rho_up"],
         mc_rho_dn       = mc["rho_dn"],
         mc_x_front_cm   = mc["x_front"],
+        # continuous front track + the local (instantaneous) fits taken from it
+        front_track_um          = front_track_um,
+        fit_dump_indices        = np.asarray([loaded_indices[r] for r in fit_rows]),
+        fit_t_ns                = np.asarray([f.t for f in fits]),
+        fit_v_linear_kms        = np.asarray([f.v_linear for f in fits]),
+        fit_v_quadratic_kms     = np.asarray([f.v_quadratic for f in fits]),
+        fit_acceleration_kms_ns = np.asarray([f.acceleration for f in fits]),
+        fit_rms_linear_um       = np.asarray([f.rms_linear for f in fits]),
+        fit_rms_quadratic_um    = np.asarray([f.rms_quadratic for f in fits]),
+        fit_halfwidth_ns        = np.asarray(args.vshock_halfwidth_ns),
         # hand-fit trajectory + windowed mass-continuity shock speed
         vshock_window_ns        = np.asarray([lo_ns, hi_ns]),
         v_traj_cms              = np.asarray(v_traj_cms),

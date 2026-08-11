@@ -52,7 +52,7 @@ With finite resistivity `η`, field slips through the plasma with magnetic diffu
 where `t_age` is the time since the laser drive created the interface (i.e. the dump
 time, minus any early time before the piston existed). This is the *only* smoothing an
 MHD code could ever have produced, and it is fully computable from the dump: we already
-have the machinery in `src/spitzer_resistivity.py` / `scripts/spitzer_resistivity.py`
+have the machinery in `magshockz/analysis/warpx/spitzer_resistivity.py` / `scripts/warpx_spitzer_resistivity.py`
 (Spitzer `η(T_e, Z̄)` maps over an extracted FLASH slice, built for choosing WarpX's
 `plasma_resistivity`).
 
@@ -169,7 +169,7 @@ also be `≳` a few kinetic-grid cells.
   index (line-outs through the LOS; `tune_flash_shock.py --mode regions` already gives
   the geometry). Confirm it is grid-limited (width ∝ Δx).
 - Build the scale table of §2 for the production dump(s): evaluate `η_Spitzer` maps with
-  the existing `scripts/spitzer_resistivity.py`, compute `δ_Sp`, `ρ_d`, `sqrt(ρ_e ρ_i)`,
+  the existing `scripts/warpx_spitzer_resistivity.py`, compute `δ_Sp`, `ρ_d`, `sqrt(ρ_e ρ_i)`,
   `ρ_i`, `d_i`, and the local `Rm`.
 - **Decision point:** if `δ_Sp ≳ ρ_i` at the interface, resistive physics dominates and
   Option B (FLASH rerun) is worth its cost; if `δ_Sp ≪` kinetic scales (`Rm ≫ 1`),

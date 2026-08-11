@@ -1,0 +1,580 @@
+# -*- coding: utf-8 -*-
+"""scripts/flash_tune_shock.py — interactively place a FLASH run's shock front.
+
+The FLASH analog of ``scripts/osiris_tune_shock.py``.  The FLASH overview's automatic
+steepest-gradient edge tracker is unreliable with so few dumps (it locks onto the
+fast leading edge, biased high relative to the mass-flux frame), so this tool lets
+you place the front by hand on the SAME physical-unit lineouts the analysis draws,
+see the overlay move immediately, and (on confirm) write the value back into the
+config with every comment preserved.
+
+The downstream analysis reads the front from the config:
+
+    flash:             v_shock_est_cms, x_shock_0_cm, t_shock_0_s   (front trajectory)
+    flash_dump_params: <idx>: x_shock_cm, x_downstream_start_cm   (per-dump region edges)
+
+``flash_dump_params`` is a separate top-level section (physical CGS, keyed by the
+plot-file index) so its cm-unit positions never collide with the OSIRIS c/ωpe
+``dump_params``.  ``scripts/flash_rh_prediction.py`` reads them straight back.
+
+Display is a PNG you refresh in your editor (robust over SSH, no X11): each command
+re-renders ``results/<run>/tune_flash_*.png`` and prints its path.  Distances are in
+µm and times in ns throughout (the config stores cm / cm·s⁻¹).
+
+Two modes
+---------
+trajectory (default) — tune the straight front ``x(t) = x₀ + v·(t − t₀)`` against the
+    nₑ and |B| streaks.  All three parameters move, including the anchor t₀: a shock
+    that forms partway through the run is fitted by sliding the start point of the fit
+    to its formation time, instead of back-extrapolating to a position it never had.
+    t₀ defaults to the IC dump time (the original behaviour) and the anchor (t₀, x₀) is
+    drawn as a star.  Commands:
+        v <val>     set trial v_shock [km/s]
+        x <val>     set trial x_shock_0 [µm]  (front position at the anchor time t₀)
+        t <val>     set trial t_shock_0 [ns]  (the anchor: when the front sat at x₀)
+        save        write v_shock_est_cms + x_shock_0_cm + t_shock_0_s (asks y/N)
+        q           quit
+
+regions — tune one dump's ``x_shock_cm`` / ``x_downstream_start_cm`` against its
+    nₑ/|B|/Tₑ/Tᵢ line-outs AND a 2D density slice through the LOS (so the front can
+    be placed against the actual shock geometry, not just the 1D trace).  The slice
+    shares the LOS-distance axis with the line-outs, so the shock/downstream marker
+    lines fall directly over the 2D density jump.  Pick the dump with --snapshot-idx.
+    Commands:
+        shock <x>   set trial shock-front position [µm]
+        down <x>    set trial downstream-region left edge [µm]
+        save        write flash_dump_params.<idx> to the config (asks y/N)
+        q           quit
+
+Env: analysis (yt / unyt).  Examples:
+    python scripts/flash_tune_shock.py --config config/flash_3d_noshield.yaml
+    python scripts/flash_tune_shock.py --config ...yaml --mode regions --snapshot-idx -1
+"""
+
+import argparse
+import os
+import sys
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import unyt as u
+import yt
+from matplotlib.colors import LogNorm
+from scipy.ndimage import map_coordinates
+
+yt.set_log_level(50)   # suppress yt chatter
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.common import flash_source
+from magshockz.common import flash_utils as fu
+from magshockz.analysis.flash import shock
+from magshockz.common import yaml_edit
+# Reuse the overview's streak assembly so the streak the tuner draws is byte-for-byte
+# the one the analysis produces; dumps load via the shared fu.load_lineouts.
+from flash_overview import assemble_streak
+
+
+# The interactive write-back plumbing (out_dir / confirm_write / …) is shared with
+# scripts/osiris_tune_shock.py and lives in src/yaml_edit.py; confirm_write routes the
+# ``flash_dump_params.<idx>.<key>`` paths to set_dump_param automatically.
+
+
+# ---------------------------------------------------------------------------
+# FLASH run-spec resolution
+# ---------------------------------------------------------------------------
+
+def _run_paths(cfg, config_path="config", los=None):
+    """Resolve (flash_dir, sorted plot files, LOS endpoints, IC index/time, label).
+
+    The FLASH directory and LOS come from :func:`flash_source.resolve` — either
+    stated in the config (``flash_data_dir`` + ``line_of_sight``) or inherited from
+    an OSIRIS run's run.yaml (``sim_dir``).  ``label`` names the ray when the config
+    carries a fan of them; it keys both the output directory and the config blocks
+    this tuner writes back to.
+    """
+    source     = flash_source.resolve(cfg, config_path, los=los)
+    flash_dir  = source.flash_dir
+    ic_index   = source.ic_index
+    line_start = source.line_start
+    line_end   = source.line_end
+    all_files  = fu.find_plot_files(flash_dir)
+    try:
+        t_ic_s = fu.flash_time_s(all_files[ic_index] if ic_index < len(all_files)
+                                 else all_files[0])
+    except Exception:
+        t_ic_s = 0.0
+    return flash_dir, all_files, line_start, line_end, ic_index, t_ic_s, source.label
+
+
+def _cfg_path(label, *segments):
+    """Dotted config path for an edit, keyed by line of sight when there is one.
+
+    ``_cfg_path("los30", "flash", "v_shock_est_cms")`` -> ``flash.los30.v_shock_est_cms``;
+    with no label the original flat path is unchanged.
+    """
+    head, tail = segments[0], segments[1:]
+    return ".".join((head, label) + tail if label else segments)
+
+
+# ---------------------------------------------------------------------------
+# Trajectory mode
+# ---------------------------------------------------------------------------
+
+class TrajectoryTuner:
+    """nₑ/|B| streaks with a movable straight front trajectory (config flash:)."""
+
+    def __init__(self, cfg, args):
+        self.cfg = cfg
+        (self.flash_dir, all_files, line_start, line_end,
+         ic_index, self.t_ic_s, self.label) = _run_paths(cfg, args.config, args.los)
+        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir,
+                                         cfg=cfg, config_path=args.config,
+                                         subdir=self.label)
+        self.png = os.path.join(self.out_dir, "tune_flash_trajectory.png")
+
+        idx_range = range(args.t_start,
+                          len(all_files) if args.t_stop is None
+                          else min(args.t_stop + 1, len(all_files)),
+                          args.stride)
+        self.loaded_indices = [i for i in idx_range if i < len(all_files)]
+        paths = [all_files[i] for i in self.loaded_indices]
+        if len(paths) < 2:
+            raise RuntimeError(f"Need ≥2 dumps for a streak; got {len(paths)}.")
+
+        nprocs = args.nprocs or int(os.environ.get("SLURM_CPUS_PER_TASK", 0)) \
+            or os.cpu_count() or 1
+        nprocs = min(max(1, nprocs), len(paths))
+        print(f"Loading nₑ, |B| over {len(paths)} dumps "
+              f"({nprocs} process{'es' if nprocs > 1 else ''}) …", flush=True)
+        lineouts = fu.load_lineouts(paths, line_start, line_end, nprocs)
+
+        self.ne_streak, self.time_ns, self.x_um = assemble_streak(lineouts, "ne")
+        self.B_streak,  _,            _         = assemble_streak(lineouts, "B_mag")
+        self.t_s = (self.time_ns * u.ns).to("s").value
+
+        # Trial trajectory seeded from the config flash: block.  The anchor t₀ is a
+        # third free parameter (a shock that forms mid-run is fitted by sliding the
+        # anchor to its formation time); absent from the config it is the IC dump time,
+        # which reproduces the original two-parameter behaviour exactly.
+        flash = flash_source.los_params(cfg, "flash", self.label)
+        self.v_cms  = float(flash.get("v_shock_est_cms", 0.0))
+        self.x0_cm  = float(flash.get("x_shock_0_cm",
+                                      (float(self.x_um.mean()) * u.um).to("cm").value))
+        self.t0_s   = float(flash.get("t_shock_0_s", self.t_ic_s))
+
+    def _front_um(self):
+        # x(t) = x_shock_0 + v_shock·(t − t₀), exactly as flash_overview plots it.
+        return ((shock.front_line(self.x0_cm, self.v_cms, self.t_s, self.t0_s))
+                * u.cm).to("um").value
+
+    def _t0_ns(self):
+        return (self.t0_s * u.s).to("ns").value
+
+    def _fit_fronts(self):
+        """Per-dump hand-fit shock fronts (config flash_dump_params) mapped onto the
+        streak's time axis.  Returns (t_ns, x_um) for the loaded dumps that carry an
+        ``x_shock_cm``.  Entries where the front sits on (or below) the downstream
+        edge are degenerate "no shock yet" placements — kept, so the gap before a
+        shock forms is visible rather than silently dropped."""
+        per = flash_source.los_params(self.cfg, "flash_dump_params", self.label)
+        idx_to_t = dict(zip(self.loaded_indices, self.time_ns))
+        t, x = [], []
+        for idx, p in sorted(per.items()):
+            if idx not in idx_to_t or "x_shock_cm" not in p:
+                continue
+            t.append(idx_to_t[idx])
+            x.append((float(p["x_shock_cm"]) * u.cm).to("um").value)
+        return np.array(t), np.array(x)
+
+    def render(self):
+        fig, axes = plt.subplots(2, 1, figsize=plot_style.figsize(13, 9), sharex=True)
+        x_line = self._front_um()
+        t_fit, x_fit = self._fit_fronts()
+        leg = (f"trial  v={(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s  "
+               f"x₀={(self.x0_cm * u.cm).to('um').value:.1f} µm  "
+               f"t₀={self._t0_ns():.2f} ns")
+        self._panel(axes[0], self.ne_streak, self.x_um, r"$n_e$ [cm$^{-3}$]",
+                    "magma", True, x_line, leg, t_fit, x_fit)
+        self._panel(axes[1], self.B_streak, self.x_um, r"$|B|$ [G]",
+                    "viridis", False, x_line, leg, t_fit, x_fit)
+        axes[1].set_xlabel("$t$ [ns]")
+        fig.suptitle(f"FLASH trajectory tuning — {os.path.basename(self.flash_dir)}\n"
+                     f"trial v_shock={(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s, "
+                     f"x_shock_0={(self.x0_cm * u.cm).to('um').value:.1f} µm "
+                     f"@ t_0={self._t0_ns():.2f} ns", fontsize=12)
+        fig.tight_layout()
+        fig.savefig(self.png, dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  v_shock = {(self.v_cms * u.cm / u.s).to('km/s').value:.1f} km/s   "
+              f"x_shock_0 = {(self.x0_cm * u.cm).to('um').value:.2f} µm ({self.x0_cm:.4g} cm)   "
+              f"t_0 = {self._t0_ns():.3f} ns ({self.t0_s:.4g} s)")
+        print(f"  ↻ wrote {self.png} — refresh in your IDE")
+
+    def _panel(self, ax, streak, x_um, label, cmap, log, x_line_um, leg,
+               t_fit=None, x_fit=None):
+        C = streak.T   # [x, time] for pcolormesh(time, x)
+        finite = C[np.isfinite(C)]
+        if log:
+            pos = finite[finite > 0]
+            vmax = np.percentile(pos, 99.5) if pos.size else 1.0
+            vmin = max(np.percentile(pos, 2) if pos.size else 1e-6, vmax * 1e-4)
+            im = ax.pcolormesh(self.time_ns, x_um, np.clip(C, vmin, None),
+                               cmap=cmap, norm=LogNorm(vmin=vmin, vmax=vmax),
+                               shading="auto")
+        else:
+            vmax = np.percentile(finite, 99.5) if finite.size else 1.0
+            im = ax.pcolormesh(self.time_ns, x_um, C, cmap=cmap,
+                               vmin=0.0, vmax=vmax, shading="auto")
+        cb = ax.figure.colorbar(im, ax=ax, pad=0.01)
+        cb.set_label(label)
+        ax.plot(self.time_ns, x_line_um, color="white", ls="-", lw=2.0, label=leg)
+        # The anchor (t₀, x₀) itself — the movable start point of the fit.
+        ax.scatter([self._t0_ns()], [(self.x0_cm * u.cm).to("um").value],
+                   s=110, marker="*", facecolor="white", edgecolor="k",
+                   linewidths=1.0, zorder=6, label=r"anchor ($t_0$, $x_0$)")
+        if t_fit is not None and t_fit.size:
+            ax.scatter(t_fit, x_fit, s=55, marker="o",
+                       facecolor="cyan", edgecolor="k", linewidths=1.0,
+                       zorder=5, label="hand-fit front")
+        ax.set_ylabel(r"distance along LOS [$\mu$m]")
+        ax.set_ylim(x_um.min(), x_um.max())
+        ax.set_title(label)
+        ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
+
+    def loop(self, config_path, no_write):
+        print("\ntrajectory mode — commands: v <km/s> | x <µm> | t <ns> | save | q")
+        self.render()
+        while True:
+            try:
+                raw = input("tune> ").strip()
+            except EOFError:
+                break
+            if not raw:
+                continue
+            cmd, *rest = raw.split()
+            cmd = cmd.lower()
+            if cmd in ("q", "quit", "exit"):
+                break
+            elif cmd == "v" and rest:
+                self.v_cms = float((float(rest[0]) * u.km / u.s).to("cm/s").value); self.render()
+            elif cmd == "x" and rest:
+                self.x0_cm = float((float(rest[0]) * u.um).to("cm").value); self.render()
+            elif cmd == "t" and rest:
+                self.t0_s = float((float(rest[0]) * u.ns).to("s").value); self.render()
+            elif cmd == "save":
+                edits = [(_cfg_path(self.label, "flash", "v_shock_est_cms"),
+                          round(self.v_cms)),
+                         (_cfg_path(self.label, "flash", "x_shock_0_cm"),
+                          round(self.x0_cm, 6)),
+                         (_cfg_path(self.label, "flash", "t_shock_0_s"),
+                          float(f"{self.t0_s:.6g}"))]
+                yaml_edit.confirm_write(config_path, edits, no_write)
+            else:
+                print("  ? commands: v <km/s> | x <µm> | save | q")
+
+
+# ---------------------------------------------------------------------------
+# Regions mode
+# ---------------------------------------------------------------------------
+
+class RegionsTuner:
+    """Single-dump line-outs with movable shock-front / downstream-edge markers."""
+
+    def __init__(self, cfg, args):
+        self.cfg = cfg
+        (self.flash_dir, all_files, line_start, line_end,
+         _ic_index, t_ic_s, self.label) = _run_paths(cfg, args.config, args.los)
+        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir,
+                                         cfg=cfg, config_path=args.config,
+                                         subdir=self.label)
+
+        self.idx = args.snapshot_idx % len(all_files)   # positive plot-file index = config key
+        snap_file = all_files[self.idx]
+        self.png = os.path.join(self.out_dir, f"tune_flash_regions_idx{self.idx:04d}.png")
+
+        print(f"Loading lineout for dump idx {self.idx} "
+              f"({os.path.basename(snap_file)}) …", flush=True)
+        self.lo = fu.flash_lineout(snap_file, line_start, line_end)
+        self.x_um  = self.lo["x"].to("um").value
+        self.t_ns  = float((self.lo["t_s"] * u.s).to("ns").value)
+        self.snap_name = os.path.basename(snap_file)
+
+        # 2D density slice through the LOS (static image; only the markers move).
+        # Built once here, then just re-overlaid each render.
+        self.slice = None
+        if not args.no_slice:
+            try:
+                self.slice = self._load_slice(snap_file, line_start, line_end,
+                                              args.slice_axis, args.slice_halfwidth_um)
+            except Exception as e:
+                print(f"  Warning: could not build density slice ({e}); "
+                      "falling back to line-outs only.")
+
+        # Seed markers from the config (formula fallback from the flash: trajectory).
+        per = flash_source.los_params(cfg, "flash_dump_params", self.label).get(self.idx, {})
+        flash = flash_source.los_params(cfg, "flash", self.label)
+        if "x_shock_cm" in per:
+            self.x_shock_um = (float(per["x_shock_cm"]) * u.cm).to("um").value
+        else:
+            v_cms = float(flash.get("v_shock_est_cms", 0.0))
+            x0_cm = float(flash.get("x_shock_0_cm", 0.0))
+            # x0_cm is the front at the anchor time t₀ (config flash.t_shock_0_s,
+            # default the IC dump time); project to this dump's time exactly as
+            # flash_overview does (x0 + v·(t − t₀)).
+            t0_s = float(flash.get("t_shock_0_s", t_ic_s))
+            self.x_shock_um = (shock.front_line(x0_cm, v_cms, self.lo["t_s"], t0_s)
+                               * u.cm).to("um").value \
+                if (v_cms or x0_cm) else float(self.x_um.mean())
+        self.x_down_um = (float(per["x_downstream_start_cm"]) * u.cm).to("um").value \
+            if "x_downstream_start_cm" in per else self.x_shock_um - 200.0
+
+    def _load_slice(self, snap_file, line_start, line_end, slice_axis, halfwidth_um):
+        """2D density slice around the LOS, resampled into the LOS's own coordinates.
+
+        The horizontal axis is **distance along the ray** and the vertical is
+        perpendicular offset from it, so the image shares its abscissa with the
+        line-out panels and the shock/downstream markers fall on the density jump
+        they were placed from.
+
+        This has to resample rather than crop an axis-aligned slice.  Taking the
+        Cartesian coordinate along the ray's dominant axis as the horizontal — which
+        is what an axis-aligned frame buffer gives — compresses the axis by cos(theta)
+        against the line-outs' path length: 15% at 30 deg and 41% at 45 deg, so the
+        markers would sit well off the feature.  An off-axis ray is also a diagonal
+        across such a slice, not a horizontal line.
+
+        Returns ``img`` [perpendicular, along-LOS] in cm^-3, ``extent`` in µm for
+        imshow, and ``los_tr_um`` = 0 (the ray is the horizontal axis by construction).
+        """
+        start = np.asarray(line_start, dtype=float)   # cm
+        end   = np.asarray(line_end,   dtype=float)
+        direction = end - start
+        length = float(np.linalg.norm(direction))
+        if length <= 0.0:
+            raise ValueError("line_start and line_end coincide")
+
+        # The slice plane must CONTAIN the ray, i.e. the ray must not move along the
+        # plane's normal.  Prefer the requested axis; fall back to one that qualifies.
+        ax_idx = {"x": 0, "y": 1, "z": 2}[slice_axis]
+        if abs(direction[ax_idx]) > 1.0e-9 * length:
+            candidates = [a for a in (2, 1, 0) if abs(direction[a]) <= 1.0e-9 * length]
+            if not candidates:
+                raise ValueError(
+                    "the LOS lies in no coordinate plane (it moves along all three "
+                    "axes), so no 2D slice can contain it")
+            ax_idx = candidates[0]
+        slice_coord = float(start[ax_idx])
+
+        ds = yt.load_for_osiris(snap_file)
+        ax_h = ds.coordinates.x_axis[ax_idx]   # in-plane horizontal data-axis index
+        ax_v = ds.coordinates.y_axis[ax_idx]   # in-plane vertical   data-axis index
+
+        # In-plane unit vectors: along the ray, and perpendicular to it.
+        e_s = np.array([direction[ax_h], direction[ax_v]]) / length
+        e_n = np.array([-e_s[1], e_s[0]])
+
+        hw_cm = ((halfwidth_um or 0.0) * u.um).to("cm").value
+        if hw_cm <= 0.0:
+            hw_cm = 0.15 * length
+
+        # Sample the plane over the ray's bounding box, then interpolate onto (s, n).
+        origin = np.array([start[ax_h], start[ax_v]])
+        corners = np.array([origin + s * e_s + n * e_n
+                            for s in (0.0, length) for n in (-hw_cm, hw_cm)])
+        box_lo, box_hi = corners.min(axis=0), corners.max(axis=0)
+        for k, a in enumerate((ax_h, ax_v)):
+            box_lo[k] = max(box_lo[k], float(ds.domain_left_edge[a].to("cm")))
+            box_hi[k] = min(box_hi[k], float(ds.domain_right_edge[a].to("cm")))
+
+        res = 768
+        center = [slice_coord, slice_coord, slice_coord]
+        center[ax_h] = 0.5 * (box_lo[0] + box_hi[0])
+        center[ax_v] = 0.5 * (box_lo[1] + box_hi[1])
+        frb = ds.slice(ax_idx, slice_coord).to_frb(
+            width=((box_hi[0] - box_lo[0], "cm"), (box_hi[1] - box_lo[1], "cm")),
+            resolution=(res, res), center=center)
+        img = np.array(frb[("gas", "El_number_density")])   # [ax_v, ax_h]
+        b = [float(v.to("cm")) for v in frb.bounds]         # (h_lo, h_hi, v_lo, v_hi)
+
+        n_along, n_perp = 640, 256
+        s_grid = np.linspace(0.0, length, n_along)
+        n_grid = np.linspace(-hw_cm, hw_cm, n_perp)
+        S, N = np.meshgrid(s_grid, n_grid)
+        p_h = origin[0] + S * e_s[0] + N * e_n[0]
+        p_v = origin[1] + S * e_s[1] + N * e_n[1]
+        col = (p_h - b[0]) / (b[1] - b[0]) * (img.shape[1] - 1)
+        row = (p_v - b[2]) / (b[3] - b[2]) * (img.shape[0] - 1)
+        disp = map_coordinates(img, [row, col], order=1, mode="nearest")
+
+        extent = list((np.array([0.0, length, -hw_cm, hw_cm]) * u.cm).to("um").value)
+        return dict(img=disp, extent=extent, los_tr_um=0.0,
+                    tr_label=r"perpendicular offset [$\mu$m]")
+
+    def render(self):
+        if self.slice is not None:
+            fig, (axs, axn, axT) = plt.subplots(
+                3, 1, figsize=plot_style.figsize(13, 12), sharex=True,
+                gridspec_kw=dict(height_ratios=[1.1, 1, 1]))
+            self._slice_panel(axs)
+        else:
+            fig, (axn, axT) = plt.subplots(2, 1, figsize=plot_style.figsize(13, 9), sharex=True,
+                                           gridspec_kw=dict(height_ratios=[1, 1]))
+        ne = np.asarray(self.lo["ne"].to("cm**-3"))
+        B  = np.asarray(self.lo["B_mag"].to("G"))
+        Te = np.asarray(self.lo["Te"].to("eV"))
+        Ti = np.asarray(self.lo["Ti"].to("eV"))
+
+        # Top: nₑ (log, left) + |B| (right).  Upstream is the ambient side (larger x);
+        # downstream is the shocked side between x_down and x_shock.
+        axn.semilogy(self.x_um, ne, color="tab:purple", lw=1.8, label=r"$n_e$")
+        axn.set_ylabel(r"$n_e$ [cm$^{-3}$]", color="tab:purple")
+        axn.tick_params(axis="y", labelcolor="tab:purple")
+        axb = axn.twinx()
+        axb.plot(self.x_um, B, color="tab:orange", lw=1.6, label=r"$|B|$")
+        axb.set_ylabel(r"$|B|$ [G]", color="tab:orange")
+        axb.tick_params(axis="y", labelcolor="tab:orange")
+        axn.set_title(f"dump idx {self.idx} ({self.snap_name}, t={self.t_ns:.2f} ns) "
+                      "— density & field compression")
+
+        # Bottom: Tₑ, Tᵢ.
+        axT.semilogy(self.x_um, Te, color="tab:blue", lw=1.8, label=r"$T_e$")
+        axT.semilogy(self.x_um, Ti, color="tab:red",  lw=1.8, label=r"$T_i$")
+        axT.set_ylabel("Temperature [eV]")
+        axT.set_xlabel(r"distance along LOS [$\mu$m]")
+        axT.legend(fontsize=9, loc="best")
+        axT.set_title("electron & ion temperature")
+
+        marked = (axs, axn, axT) if self.slice is not None else (axn, axT)
+        for ax in marked:
+            self._marks(ax)
+        for ax in (axn, axT):
+            ax.grid(alpha=0.3, which="both")
+        axn.legend(loc="upper left", fontsize=9, framealpha=0.7)
+
+        fig.tight_layout()
+        fig.savefig(self.png, dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  shock={self.x_shock_um:.1f} µm, down={self.x_down_um:.1f} µm  "
+              f"(shock={(self.x_shock_um * u.um).to('cm').value:.4g} cm, "
+              f"down={(self.x_down_um * u.um).to('cm').value:.4g} cm)")
+        # Region widths so the user can sanity-check the averaging windows.
+        n_dn = int(((self.x_um >= self.x_down_um) & (self.x_um <= self.x_shock_um)).sum())
+        n_up = int((self.x_um > self.x_shock_um).sum())
+        print(f"  region cells: downstream {n_dn}, upstream {n_up}")
+        print(f"  ↻ wrote {self.png} — refresh in your IDE")
+
+    def _slice_panel(self, ax):
+        """2D density slice with the LOS path overlaid (markers added by _marks)."""
+        s = self.slice
+        img = s["img"]
+        pos = img[np.isfinite(img) & (img > 0)]
+        vmax = np.percentile(pos, 99.5) if pos.size else 1.0
+        vmin = max(np.percentile(pos, 2) if pos.size else 1e-6, vmax * 1e-4)
+        im = ax.imshow(np.clip(img, vmin, None), origin="lower", extent=s["extent"],
+                       aspect="auto", cmap="magma",
+                       norm=LogNorm(vmin=vmin, vmax=vmax))
+        # Inset colorbar (just outside the right edge) so the slice axes keeps the
+        # SAME width as the line-out panels — markers then align across all panels.
+        cax = ax.inset_axes([1.005, 0.0, 0.012, 1.0])
+        cb = ax.figure.colorbar(im, cax=cax)
+        cb.set_label(r"$n_e$ [cm$^{-3}$]")
+        # The LOS itself (the line the 1D traces are sampled along).
+        ax.axhline(s["los_tr_um"], color="cyan", ls="-", lw=1.0, alpha=0.7, label="LOS")
+        ax.set_ylabel(s["tr_label"])
+        ax.set_title(f"density slice through LOS — dump idx {self.idx} "
+                     f"(t={self.t_ns:.2f} ns)")
+
+    def _marks(self, ax):
+        ax.axvline(self.x_shock_um, color="k", ls="--", lw=1.6,
+                   label=f"shock {self.x_shock_um:.0f} µm")
+        ax.axvline(self.x_down_um, color="0.5", ls=":", lw=1.6,
+                   label=f"downstream start {self.x_down_um:.0f} µm")
+
+    def loop(self, config_path, no_write):
+        print(f"\nregions mode — dump idx {self.idx} ({self.snap_name}, t={self.t_ns:.2f} ns)")
+        print("  commands: shock <µm> | down <µm> | save | q")
+        self.render()
+        while True:
+            try:
+                raw = input("tune> ").strip()
+            except EOFError:
+                break
+            if not raw:
+                continue
+            cmd, *rest = raw.split()
+            cmd = cmd.lower()
+            if cmd in ("q", "quit", "exit"):
+                break
+            elif cmd == "shock" and rest:
+                self.x_shock_um = float(rest[0]); self.render()
+            elif cmd == "down" and rest:
+                self.x_down_um = float(rest[0]); self.render()
+            elif cmd == "save":
+                edits = [
+                    (_cfg_path(self.label, "flash_dump_params", str(self.idx), "x_shock_cm"),
+                     round(float((self.x_shock_um * u.um).to("cm").value), 6)),
+                    (_cfg_path(self.label, "flash_dump_params", str(self.idx),
+                               "x_downstream_start_cm"),
+                     round(float((self.x_down_um * u.um).to("cm").value), 6)),
+                ]
+                yaml_edit.confirm_write(config_path, edits, no_write)
+            else:
+                print("  ? commands: shock <µm> | down <µm> | save | q")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    p = argparse.ArgumentParser(
+        description="Interactively place a FLASH run's shock front (config write-back).")
+    p.add_argument("--config", required=True, help="Path to analysis YAML config.")
+    p.add_argument("--mode", choices=("trajectory", "regions"), default="trajectory")
+    p.add_argument("--snapshot-idx", type=int, default=-1, dest="snapshot_idx",
+                   help="(regions) plot-file index to tune (default -1 = last dump).")
+    p.add_argument("--slice-axis", default="z", choices=("x", "y", "z"),
+                   dest="slice_axis",
+                   help="(regions) axis ⟂ to the 2D density slice (default z; the "
+                        "slice plane always contains the LOS).")
+    p.add_argument("--slice-halfwidth-um", type=float, default=2000.0,
+                   dest="slice_halfwidth_um",
+                   help="(regions) transverse half-width of the slice [µm] around the "
+                        "LOS (default 2000; 0 = full domain).")
+    p.add_argument("--no-slice", action="store_true",
+                   help="(regions) skip the 2D density slice panel (line-outs only).")
+    p.add_argument("--stride", type=int, default=1,
+                   help="(trajectory) dump stride for the streaks (default 1).")
+    p.add_argument("--t-start", type=int, default=0, dest="t_start")
+    p.add_argument("--t-stop", type=int, default=None, dest="t_stop",
+                   help="(trajectory) last plot-file index (default: all available).")
+    p.add_argument("--nprocs", type=int, default=None,
+                   help="(trajectory) worker processes for loading dumps "
+                        "(default: all node cores; 1 = serial).")
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--no-write", action="store_true",
+                   help="Render and preview edits but never modify the config.")
+    flash_source.add_los_arg(p)
+    plot_style.add_publication_arg(p)
+    args = p.parse_args()
+    plot_style.apply(args.publication)
+
+    cfg = analysis_utils.load_config(args.config)
+    config_path = os.path.abspath(args.config)
+    src = flash_source.resolve(cfg, config_path, los=args.los)
+    print(f"Config  : {config_path}")
+    print(f"FLASH   : {src.flash_dir}   (from {src.source})")
+
+    if args.mode == "trajectory":
+        TrajectoryTuner(cfg, args).loop(config_path, args.no_write)
+    else:
+        RegionsTuner(cfg, args).loop(config_path, args.no_write)
+
+
+if __name__ == "__main__":
+    main()

@@ -23,7 +23,7 @@ def gaussian_phase_space(mu, sigma, p_arr, x_arr):
 class TestSafeRatio:
     def setup_method(self):
         # Import inside method so sys.path manipulation is in effect
-        import temperature_anisotropy as ta
+        from magshockz.common import temperature_anisotropy as ta
         self.ta = ta
 
     def test_normal_division(self):
@@ -72,7 +72,7 @@ class TestSafeRatio:
 
 class TestTemperatureProfile:
     def setup_method(self):
-        import temperature_anisotropy as ta
+        from magshockz.common import temperature_anisotropy as ta
         self.ta = ta
         self.p_arr = np.linspace(-10.0, 10.0, 2001)
         self.x_arr = np.linspace(0.0, 50.0, 20)
@@ -111,7 +111,7 @@ class TestTemperatureProfile:
 
 class TestRegionAverages:
     def setup_method(self):
-        import temperature_anisotropy as ta
+        from magshockz.common import temperature_anisotropy as ta
         self.ta = ta
 
     def test_known_averages(self):

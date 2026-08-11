@@ -6,16 +6,45 @@ import os
 import numpy as np
 import pytest
 
-# Put tests/ before src/ so stub modules (osh5def, analysis_utils) shadow the
-# real ones that pull in heavy optional dependencies (astropy, osiris, etc.).
 _TESTS_DIR = os.path.dirname(__file__)
-_SRC_DIR = os.path.join(_TESTS_DIR, "..", "src")
-for _p in (_SRC_DIR, _TESTS_DIR):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-# Ensure tests/ is first so stubs win.
-sys.path.remove(_TESTS_DIR)
-sys.path.insert(0, _TESTS_DIR)
+
+
+def _stub_osiris_stack() -> None:
+    """Stand in for the OSIRIS libraries, which are not pip-installable.
+
+    magshockz.common.analysis_utils imports osiris_utils, osh5io and osh5def at
+    module scope, and six library modules import analysis_utils, so without these
+    the bulk of the suite cannot even be collected.  Only import-time symbols are
+    provided; any test needing real behaviour requires the real stack.
+    """
+    import types
+
+    sys.path.insert(0, _TESTS_DIR)  # tests/osh5def.py
+
+    diagnostic = types.ModuleType("osiris_utils.data.diagnostic")
+    for registry in ("OSIRIS_FLD", "OSIRIS_PHA", "OSIRIS_SPECIE_REPORTS", "OSIRIS_SPECIE_REP_UDIST"):
+        setattr(diagnostic, registry, {})
+    data = types.ModuleType("osiris_utils.data")
+    data.diagnostic = diagnostic
+    osiris_utils = types.ModuleType("osiris_utils")
+    osiris_utils.data = data
+
+    sys.modules.update({
+        "osiris_utils": osiris_utils,
+        "osiris_utils.data": data,
+        "osiris_utils.data.diagnostic": diagnostic,
+        "osh5io": types.ModuleType("osh5io"),
+    })
+
+
+# Prefer the real stack where it exists (Perlmutter's `analysis` env), so the tests
+# exercise what the scripts actually run against; stub only where it does not (CI).
+try:
+    import osiris_utils  # noqa: F401
+    import osh5io  # noqa: F401
+    import osh5def  # noqa: F401
+except ImportError:
+    _stub_osiris_stack()
 
 
 class FakeAxis:

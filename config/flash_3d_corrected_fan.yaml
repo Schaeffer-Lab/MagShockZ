@@ -1,0 +1,153 @@
+# FLASH_MagShockZ3D-corrected — a FAN of lines of sight through one dataset.
+#
+# The single-LOS companion is config/flash_3d_corrected.yaml, which stays canonical
+# for the WarpX heater pipeline (flash_piston_profile.py). This config exists because
+# FLASH responds strongly to the laser-channel preheating that comes down the normal
+# (-y) direction, so the on-axis physics is NOT representative of the off-axis physics:
+# characterising the shock needs several rays, not one.
+#
+# Dataset facts (flash.par, /pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected):
+#   cartesian 3D, x,z in [-0.85, 0.85] cm, y in [-0.10, 1.60] cm, lrefine_max 6
+#   sim_MagField = 1.9747e+04 code = 7.0e+04 G = 7 T along +z
+#   1 laser beam, 1e12 W flat-top 0.1 -> 1.85 ns, 0.532 um, 800 um spot at the origin,
+#     lens at (0, +4.2, 0) cm firing along -y
+#   targ = Si (Z=14, A=28.0855, rho=2.33); cham = Al foam (rho=3.73e-05, Te=Ti=114060 K)
+#   tmax 20 ns, plots every 0.25 ns (62 dumps on disk, ~0 -> 15.25 ns), ideal MHD
+#
+# GEOMETRY OF THE FAN. B is along z, so every ray in the z = 0 plane is perpendicular
+# to B — which is what makes these rays comparable to each other and to the
+# perpendicular-shock theory in perpendicular_shock.py. The fan radiates from the
+# laser spot at the origin, each ray starting at r = 0.07 cm (clear of the target
+# slab) and running out to r = 1.40 cm, so each cuts the roughly spherical blast
+# near its normal.
+#
+#   los00   0 deg   straight up the laser channel
+#   los15  15 deg
+#   los30  30 deg
+#   los45  45 deg   TRUNCATED at r = 1.20 cm: xmax is 0.85 cm and a full-length
+#                   45 deg ray would end at x = 0.99 cm, outside the domain. It
+#                   therefore has 1.13 cm of path against the others' 1.33 cm.
+#
+# UPSTREAM BUDGET IS THE THING TO WATCH. flash_3d_corrected.yaml records that a
+# 0.70 cm ray on this dataset had NO pristine upstream left after 7 ns — the
+# diamagnetic cavity swallows the whole line-out and the "ambient" average returns
+# the cavity interior (beta_e ~ 160, sub-critical M_ms) instead. That is why every
+# ray here runs to 1.40 cm, and why los45 (the short one) is the ray most likely to
+# lose its upstream first. Check it per dump; never assume it.
+#
+# Each ray writes to results/FLASH_MagShockZ3D-corrected/<label>/ (out_dir's subdir),
+# so no ray reads another's flash_overview_*.npz.
+#
+# Usage — one invocation per ray, --los selects it:
+#   python scripts/flash_overview.py        --config config/flash_3d_corrected_fan.yaml --los los30 --pub
+#   python scripts/flash_tune_shock.py      --config config/flash_3d_corrected_fan.yaml --los los30 --mode regions --snapshot-idx 36
+#   python scripts/flash_rh_prediction.py   --config config/flash_3d_corrected_fan.yaml --los los30 --snapshot-idx 36 --pub
+#   python scripts/flash_pressure_partition.py --config config/flash_3d_corrected_fan.yaml --los los30 --snapshot-idx 36 --pub
+
+flash_data_dir: /pscratch/sd/d/dschnei/FLASH_MagShockZ3D-corrected
+
+# Endpoints [cm] = r * (sin(theta), cos(theta), 0), r_start = 0.07, r_end = 1.40
+# (1.20 for los45). All lie in z = 0, hence all perpendicular to B.
+lines_of_sight:
+  # SHIFTED +500 µm in x, and parallel to the axis rather than radial. By 9-12 ns the
+  # on-axis structure is a mushroom cap whose nose has drifted to x ~ +750 µm, so a
+  # ray at x = 0 crosses the front obliquely and the Rankine-Hugoniot conditions --
+  # which assume the ray lies along the shock normal -- stop applying. Measured
+  # momentum-flux continuity along parallel rays at 12 ns:
+  #     x =    0 µm   dn/up = 1.60      x = +500 µm   dn/up = 1.08
+  #     x = +250 µm   dn/up = 1.24      x = +750 µm   dn/up = 1.01
+  # +500 is the compromise: near enough to the axis that the ray still samples the
+  # laser channel (which is what makes this the "channel" case), far enough that the
+  # front is close to normal. The nose also runs faster than the flank -- v_shock is
+  # 629 km/s on axis against 682 km/s here -- so the speed is a property of the ray.
+  # Offset in z was checked and is flat (front 9454-9519 µm over z = -500..+750), so
+  # the obliquity is in x only.
+  los00:
+    start_point: [0.050000, 0.070000, 0.0]
+    end_point:   [0.050000, 1.400000, 0.0]
+  los15:
+    start_point: [0.018117, 0.067615, 0.0]
+    end_point:   [0.362347, 1.352296, 0.0]
+  los30:
+    start_point: [0.035000, 0.060622, 0.0]
+    end_point:   [0.700000, 1.212436, 0.0]
+  los45:
+    start_point: [0.049497, 0.049497, 0.0]
+    end_point:   [0.848528, 0.848528, 0.0]
+
+ic_index: 0
+
+# The chamber fill as flash.par set it up, read back off the t=0 dump as a
+# cross-check (flash_piston_profile warns on a >2% mismatch). Note Zbar: flash.par
+# gives ms_chamZ = 13, the ATOMIC number, while the EOS returns Zbar = 3.66 at
+# 9.83 eV — and Zbar is what sets n_e, beta_e and d_i.
+unperturbed_background:
+  rho_g_cm3: 3.73e-05
+  te_ev: 9.8289
+  ti_ev: 9.8289
+  b_tesla: 7.00013
+
+piston_material: targ
+ambient_material: cham
+
+# gamma: 1.6667          # adiabatic index for the RH baseline; default 5/3
+
+# Per-ray shock trajectory. Each ray gets its own: the fan cuts an expanding blast at
+# four different angles, and the measured speeds run from ~760 km/s on axis to
+# ~400 km/s at 45 deg, so one trajectory cannot describe all four.
+#
+# These are SEEDS, not the analysis input. They are a straight-line fit through the
+# automatically detected front at 5/9/12 ns, present so that flash_tune_shock --mode
+# regions opens with its markers near the front instead of at x = 0. The blast
+# DECELERATES 17-33% across the window, so no straight line describes it well: the
+# Mach numbers are computed from an instantaneous, locally fitted v_shock passed to
+# flash_rh_prediction.py on the command line (--v-shock-cms), which overrides these.
+flash:
+  los00: {v_shock_est_cms: 7.59e+07, x_shock_0_cm: 0.423, t_shock_0_s: 5.0e-09}
+  los15: {v_shock_est_cms: 7.60e+07, x_shock_0_cm: 0.631, t_shock_0_s: 5.0e-09}
+  los30: {v_shock_est_cms: 4.40e+07, x_shock_0_cm: 0.338, t_shock_0_s: 5.0e-09}
+  los45: {v_shock_est_cms: 3.97e+07, x_shock_0_cm: 0.312, t_shock_0_s: 5.0e-09}
+
+# Per-ray, per-dump front and downstream-region edges [cm], written by
+# flash_tune_shock.py --mode regions.
+flash_dump_params:
+  los00:
+    20:
+      x_shock_cm: 0.422975  # set by tune_shock
+      x_downstream_start_cm: 0.40315  # set by tune_shock
+    36:
+      x_shock_cm: 0.772531  # set by tune_shock
+      x_downstream_start_cm: 0.706612  # set by tune_shock
+    48:
+      x_shock_cm: 0.994739  # set by tune_shock
+      x_downstream_start_cm: 0.934411  # set by tune_shock
+  los15:
+    20:
+      x_shock_cm: 0.6309  # set by tune_shock
+      x_downstream_start_cm: 0.39  # set by tune_shock
+    36:
+      x_shock_cm: 1.0246  # set by tune_shock
+      x_downstream_start_cm: 0.68  # set by tune_shock
+    48:
+      x_shock_cm: 1.1955  # set by tune_shock
+      x_downstream_start_cm: 0.85  # set by tune_shock
+  los30:
+    20:
+      x_shock_cm: 0.338087  # set by tune_shock
+      x_downstream_start_cm: 0.318087  # set by tune_shock
+    36:
+      x_shock_cm: 0.53  # set by tune_shock
+      x_downstream_start_cm: 0.494007  # set by tune_shock
+    48:
+      x_shock_cm: 0.646065  # set by tune_shock
+      x_downstream_start_cm: 0.626065  # set by tune_shock
+  los45:
+    20:
+      x_shock_cm: 0.315  # set by tune_shock
+      x_downstream_start_cm: 0.292078  # set by tune_shock
+    36:
+      x_shock_cm: 0.494  # set by tune_shock
+      x_downstream_start_cm: 0.450806  # set by tune_shock
+    48:
+      x_shock_cm: 0.589958  # set by tune_shock
+      x_downstream_start_cm: 0.569958  # set by tune_shock

@@ -11,8 +11,8 @@ import argparse
 import numpy as np
 import pytest
 
-import plot_style
-from plot_style import DisplayUnits, electron_units
+from magshockz.common import plot_style
+from magshockz.common.plot_style import DisplayUnits, electron_units
 
 
 def test_electron_units_is_identity():

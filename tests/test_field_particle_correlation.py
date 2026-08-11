@@ -1,15 +1,10 @@
 """Tests for field_particle_correlation.py (Klein-Howes FPC)."""
 
-import importlib.util
-import os
 
 import numpy as np
 import pytest
 
-_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "field_particle_correlation.py")
-_spec = importlib.util.spec_from_file_location("field_particle_correlation", _PATH)
-fpc = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(fpc)
+from magshockz.analysis.osiris import field_particle_correlation as fpc
 
 
 def gaussian_f(u, x, amp, mu, sigma):

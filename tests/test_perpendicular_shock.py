@@ -1,28 +1,14 @@
-"""Tests for src/perpendicular_shock.py.
+"""Tests for magshockz.common.perpendicular_shock.
 
 Locks the perpendicular MHD shock to Fitzpatrick's equations and cross-checks it
 against the independently-derived perpendicular path in rankine_hugoniot.py.
 """
 
-import importlib.util
-import os
-
 import numpy as np
 import pytest
 
-_HERE = os.path.dirname(__file__)
-
-
-def _load(name):
-    path = os.path.join(_HERE, "..", "src", f"{name}.py")
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-ps = _load("perpendicular_shock")
-rh = _load("rankine_hugoniot")
+from magshockz.common import perpendicular_shock as ps
+from magshockz.common import rankine_hugoniot as rh
 
 GAMMA = 5.0 / 3.0
 
@@ -232,3 +218,80 @@ def test_predict_downstream_density_consistent_with_pressure_and_T():
     jump = ps.solve(6.0, 5.0, GAMMA)
     pred = ps.predict_downstream(jump, rho1=1.0, p1=1.0, T1=1.0)
     assert pred["p"] == pytest.approx(pred["rho"] * pred["T"])
+
+
+# ---------------------------------------------------------------------------
+# magnetosonic_mach — the Mach number that decides whether a shock forms
+# ---------------------------------------------------------------------------
+
+def test_magnetosonic_mach_combines_the_two_in_quadrature():
+    # 1/M_ms^2 = 1/M_s^2 + 1/M_A^2
+    assert ps.magnetosonic_mach(3.0, 4.0) == pytest.approx(1.0 / np.hypot(1 / 3.0, 1 / 4.0))
+
+
+def test_magnetosonic_mach_is_below_both_components():
+    m = ps.magnetosonic_mach(6.0, 20.0)
+    assert m < 6.0 and m < 20.0
+
+
+def test_unmagnetised_limit_reduces_to_the_sonic_mach():
+    assert ps.magnetosonic_mach(4.0, float("inf")) == pytest.approx(4.0)
+
+
+def test_cold_limit_reduces_to_the_alfvenic_mach():
+    assert ps.magnetosonic_mach(float("inf"), 8.0) == pytest.approx(8.0)
+
+
+def test_magnetosonic_mach_above_one_is_exactly_shock_exists():
+    """shock_exists tests 1/M_s^2 + 1/M_A^2 < 1, i.e. M_ms > 1 — the two must agree."""
+    for mach_s, mach_a in [(0.8, 0.9), (1.2, 1.2), (6.0, 20.0), (1.05, 1.05), (2.0, 1.0)]:
+        assert (ps.magnetosonic_mach(mach_s, mach_a) > 1.0) == ps.shock_exists(mach_s, mach_a)
+
+
+def test_solve_reports_the_magnetosonic_mach():
+    out = ps.solve(6.0, 20.0)
+    assert out["mach_ms"] == pytest.approx(ps.magnetosonic_mach(6.0, 20.0))
+
+
+def test_solve_from_speeds_reports_the_fast_speed():
+    out = ps.solve_from_speeds(v_inflow=1000.0, c_s=100.0, v_A=200.0)
+    assert out["v_ms"] == pytest.approx(np.sqrt(100.0**2 + 200.0**2))
+    assert out["mach_ms"] == pytest.approx(1000.0 / out["v_ms"])
+
+
+# ---------------------------------------------------------------------------
+# effective_gamma — the index implied by a measured compression
+# ---------------------------------------------------------------------------
+# These FLASH shocks ionize (Zbar roughly doubles across the front), so they compress
+# past the gamma=5/3 ceiling of 4. Inverting for gamma turns that into a number.
+
+# The los30 upstream at t=9 ns, in bare Gaussian CGS: temperatures are ENERGIES in
+# erg (not eV) because that is what makes n*T a pressure in erg/cm^3 here.
+EV_ERG = 1.602176634e-12
+UPSTREAM = dict(ne=3.0e18, Te=11.4 * EV_ERG, n_ion=7.0e17, Ti=11.4 * EV_ERG,
+                B_perp=7.0e4, rho=3.0e-5, v_shock=6.0e7, v_para=5.0e6)
+
+
+def test_effective_gamma_recovers_the_index_it_was_solved_with():
+    """Round trip: solve at a known gamma, hand back its r, get the gamma again."""
+    for gamma in (1.2, 1.4, 5.0 / 3.0, 1.8):
+        r = ps.solve_from_upstream(**UPSTREAM, gamma=gamma)["r"]
+        assert ps.effective_gamma(r, UPSTREAM) == pytest.approx(gamma, rel=1e-4)
+
+
+def test_compression_above_four_implies_gamma_below_five_thirds():
+    r_5_3 = ps.solve_from_upstream(**UPSTREAM, gamma=5.0 / 3.0)["r"]
+    g = ps.effective_gamma(r_5_3 * 1.2, UPSTREAM)
+    assert g < 5.0 / 3.0
+
+
+def test_softer_index_always_gives_more_compression():
+    """Monotonicity is what makes the bracketed root unique."""
+    rs = [ps.solve_from_upstream(**UPSTREAM, gamma=g)["r"] for g in (1.1, 1.3, 1.5, 1.9)]
+    assert all(a > b for a, b in zip(rs, rs[1:]))
+
+
+def test_unattainable_compression_returns_nan_not_a_wrong_root():
+    """Above the ceiling at every index in the bracket, there is no answer to give."""
+    assert np.isnan(ps.effective_gamma(500.0, UPSTREAM))
+    assert np.isnan(ps.effective_gamma(0.5, UPSTREAM))

@@ -38,7 +38,7 @@ flash:
   x_shock_0_cm:   0.185      # position at IC dump [cm]
 
 # Per-dump hand-placed front, keyed by the plot-file index (set by
-# scripts/tune_flash_shock.py --mode regions). Indices 1-6 are "no shock yet"
+# scripts/flash_tune_shock.py --mode regions). Indices 1-6 are "no shock yet"
 # (x_shock_cm = 0 / degenerate); the shock forms around index 7 (t ~ 2 ns).
 #   x_shock_cm            : shock-front position along the LOS [cm]
 #   x_downstream_start_cm : left edge of the downstream region [cm]

@@ -1,52 +1,32 @@
 # -*- coding: utf-8 -*-
-"""scripts/osiris_rh_prediction.py — predict the downstream OSIRIS state from the
-measured UPSTREAM state + shock speed, using the perpendicular (theta = 90 deg)
-MHD shock theory in src/perpendicular_shock.py, and overlay the prediction on
-lineouts across the shock front so the PIC run's DEPARTURE from ideal MHD is read
-off directly.
+"""scripts/osiris_rh_prediction.py — the ideal-MHD downstream state, overlaid on the PIC
+lineouts so the run's DEPARTURE from it is read off directly.
 
-This is the OSIRIS/PIC analog of scripts/flash_rh_prediction.py.  Where the FLASH
-script works on a physical-unit yt lineout, this one works entirely in OSIRIS
-normalised units (lengths in c/omega_pe, velocities in c, fields in B_0,
-densities in n_0, temperatures/pressures in m_e c^2 / n_0 m_e c^2), so no unit
-conversions are needed and the numbers are directly comparable to the rest of the
-OSIRIS analysis suite.
+Predicts the downstream state from the measured upstream plus the shock speed, using the
+perpendicular (theta = 90 deg) MHD jump in ``magshockz/common/perpendicular_shock.py``,
+and plots each quantity across the front against three lines: the upstream mean, the
+theory prediction, and the measured downstream mean.
 
-What it does
-------------
-1. Loads one OSIRIS dump into a shock_state.ShockState (the shared per-dump
-   loader): electron density, per-species isotropic temperatures, the EM fields
-   on a common grid, the shock kinematics from the tuned config, and the
-   upstream/downstream averaging masks.
-2. Forms the UPSTREAM region averages and the perpendicular-shock inputs:
-      c_s      = sqrt(gamma (T_e + T_i) / |rqm_i|)      two-temperature sound speed
-      v_A      = sqrt(B_perp^2 / (|rqm_i| n_e))          TRANSVERSE-field Alfven speed
-      v_inflow = |v_shock - v_para|                      shock-frame normal inflow
-   B_perp = sqrt(b2^2 + b3^2) is the shock-tangential field (normal = x1, so the
-   parallel field is b1); using B_perp — not the total |B| — is what the
-   theta = 90 deg jump assumes.  theta_Bn = atan2(|B_perp|, |B_para|) is reported
-   so you can see how perpendicular the run actually is.
-3. Solves the perpendicular MHD jump (perpendicular_shock.solve) for the
-   compression r = rho2/rho1, the pressure ratio p2/p1 and the temperature ratio
-   T2/T1, then predicts every downstream quantity by applying those ratios to the
-   measured upstream state (density and B_perp by r, pressure by p2/p1, each
-   temperature by T2/T1, the shock-frame inflow by 1/r).
-4. Plots each quantity's lineout across the front with three reference lines: the
-   upstream mean, the THEORY-predicted downstream value, and the MEASURED
-   downstream mean.  The gap between the last two IS the collisionless/kinetic
-   physics that single-fluid MHD drops.
-5. Prints a measured-vs-predicted table (with the divergence ratio meas/pred) and
-   saves an inspectable .npz.
+The OSIRIS analog of ``scripts/flash_rh_prediction.py``, working entirely in normalized
+units, so no conversions are needed (see ``docs/physics_notes.md``).
 
-Why the PIC run should diverge from these lines
------------------------------------------------
-Single-fluid ideal MHD assumes a scalar (isotropic) pressure and ONE temperature,
-so it predicts a single T2/T1 applied to T_e and T_i alike.  It has no separate
-electron/ion heating, no pressure anisotropy, no reflected-ion foot, no
-finite-Larmor-radius overshoot — exactly the effects the PIC code keeps.  So the
-electron/ion temperature SPLIT, any density/field overshoot at the ramp, and the
-downstream departures from the dashed line are the kinetic story this baseline
-makes visible.
+The upstream inputs to the jump::
+
+    c_s      = sqrt(gamma (T_e + T_i) / |rqm_i|)     two-temperature sound speed
+    v_A      = sqrt(B_perp^2 / (|rqm_i| n_e))        TRANSVERSE-field Alfven speed
+    v_inflow = |v_shock - v_para|                    shock-frame normal inflow
+
+``B_perp = sqrt(b2^2 + b3^2)`` is the shock-tangential field (normal = x1, so b1 is the
+parallel one).  Using B_perp rather than the total |B| is what the theta = 90 deg jump
+assumes; ``theta_Bn = atan2(|B_perp|, |B_para|)`` is reported so you can see how
+perpendicular the run actually is.
+
+**Why the PIC run should diverge from these lines.** Single-fluid ideal MHD assumes a
+scalar pressure and ONE temperature, so it predicts a single T2/T1 applied to T_e and T_i
+alike.  It has no separate electron/ion heating, no pressure anisotropy, no reflected-ion
+foot, no finite-Larmor-radius overshoot — exactly the effects PIC keeps.  So the
+electron/ion temperature split, the overshoot at the ramp, and the downstream departures
+are the kinetic story this baseline exists to make visible.
 
 Usage
 -----
@@ -68,13 +48,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
-import analysis_utils
-import plot_style
-import shock_state
-import dimensionless_params as dp
-import perpendicular_shock as ps
+from magshockz.common import analysis_utils
+from magshockz.common import plot_style
+from magshockz.analysis.osiris import shock_state
+from magshockz.common import dimensionless_params as dp
+from magshockz.common import perpendicular_shock as ps
 
 
 def _region_mean(profile, mask):
@@ -142,7 +121,7 @@ def main():
     # Ion bulk velocity profile [c] is not stored on ShockState as a full profile,
     # only its region means (prim_up/prim_dn["u_bulk_i"]).  Recompute it here from
     # the same p1x1 phase space the loader used, so we can plot |v_i - v_shock|.
-    import moments as mom_module
+    from magshockz.common import moments as mom_module
     u_bulk_i = mom_module.moment(st.pha_p1[ion], axis="p1", order=1)   # [c]
     v_sf = np.abs(u_bulk_i - st.v_shock)                              # shock-frame [c]
 

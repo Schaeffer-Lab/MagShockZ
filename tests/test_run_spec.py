@@ -1,22 +1,16 @@
 """Tests for run_spec.RunSpec — the single source of truth for run parameters.
 
-run_spec is dependency-light (stdlib + PyYAML), so these run in CI without the
-full OSIRIS/astropy stack. The astropy-backed norm_density property is covered by
-an importorskip-guarded test.
+run_spec is dependency-light (stdlib + PyYAML + astropy), so these run in CI without
+the OSIRIS/yt stack.
 """
 
-import importlib.util
-import os
 
 import pytest
 
 # Load the real src/run_spec.py directly (conftest puts tests/ first on the path,
 # but there is no run_spec stub, so a normal import would also work; loading by
 # path keeps this independent of sys.path ordering).
-_SPEC_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "run_spec.py")
-_spec = importlib.util.spec_from_file_location("run_spec", _SPEC_PATH)
-run_spec = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(run_spec)
+from magshockz.common import run_spec
 RunSpec = run_spec.RunSpec
 
 
@@ -157,11 +151,10 @@ def test_missing_reference_density_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# astropy-backed property (skipped where astropy is absent, e.g. minimal CI)
+# astropy-backed property
 # ---------------------------------------------------------------------------
 
 def test_norm_density_quantity(tmp_path):
-    pytest.importorskip("astropy")
     import astropy.units as u
     _write(tmp_path, "run.yaml", "reference_density: 5.0e18\n")
     s = RunSpec.from_sim_dir(str(tmp_path))

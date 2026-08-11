@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from conftest import make_phase_space
-import moments
-import reflected_ions as ri
+from magshockz.common import moments
+from magshockz.analysis.osiris import reflected_ions as ri
 
 
 def _gauss(p, mu, sigma):
