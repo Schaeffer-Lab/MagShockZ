@@ -46,13 +46,25 @@ regions — tune one dump's ``x_shock_cm`` / ``x_downstream_start_cm`` against i
         save        write flash_dump_params.<idx> to the config (asks y/N)
         q           quit
 
+movie — non-interactive: the regions-mode Tₑ/Tᵢ panel rendered once per dump and
+    encoded to an MP4, so the temperature evolution can be watched rather than
+    inferred from a streak.  Axes are frozen across frames (shared log range over
+    every dump) so only the physics moves.  Front markers come from the same places
+    regions mode seeds them: ``flash_dump_params.<idx>`` where it exists, else the
+    ``flash:`` straight trajectory.  Tₑ/Tᵢ are read from this ray's cached
+    ``flash_overview_*.npz`` streaks when it has them (``--reload`` forces a yt
+    re-read of the dumps, which costs minutes per dump on a 3D run).
+
 Env: analysis (yt / unyt).  Examples:
     python scripts/flash_tune_shock.py --config config/flash_3d_noshield.yaml
     python scripts/flash_tune_shock.py --config ...yaml --mode regions --snapshot-idx -1
+    python scripts/flash_tune_shock.py --config config/flash_3d_corrected_fan.yaml \
+        --los los00 --mode movie
 """
 
 import argparse
 import os
+import subprocess
 import sys
 
 import matplotlib
@@ -121,6 +133,18 @@ def _cfg_path(label, *segments):
     return ".".join((head, label) + tail if label else segments)
 
 
+def _nprocs(requested, n_items):
+    """Worker count for the per-dump loaders: the request, else the node's cores."""
+    n = requested or int(os.environ.get("SLURM_CPUS_PER_TASK", 0)) or os.cpu_count() or 1
+    return min(max(1, n), max(1, n_items))
+
+
+def _dump_indices(args, n_files):
+    """Plot-file indices selected by --t-start / --t-stop / --stride."""
+    stop = n_files if args.t_stop is None else min(args.t_stop + 1, n_files)
+    return list(range(args.t_start, stop, args.stride))
+
+
 # ---------------------------------------------------------------------------
 # Trajectory mode
 # ---------------------------------------------------------------------------
@@ -137,18 +161,12 @@ class TrajectoryTuner:
                                          subdir=self.label)
         self.png = os.path.join(self.out_dir, "tune_flash_trajectory.png")
 
-        idx_range = range(args.t_start,
-                          len(all_files) if args.t_stop is None
-                          else min(args.t_stop + 1, len(all_files)),
-                          args.stride)
-        self.loaded_indices = [i for i in idx_range if i < len(all_files)]
+        self.loaded_indices = _dump_indices(args, len(all_files))
         paths = [all_files[i] for i in self.loaded_indices]
         if len(paths) < 2:
             raise RuntimeError(f"Need ≥2 dumps for a streak; got {len(paths)}.")
 
-        nprocs = args.nprocs or int(os.environ.get("SLURM_CPUS_PER_TASK", 0)) \
-            or os.cpu_count() or 1
-        nprocs = min(max(1, nprocs), len(paths))
+        nprocs = _nprocs(args.nprocs, len(paths))
         print(f"Loading nₑ, |B| over {len(paths)} dumps "
               f"({nprocs} process{'es' if nprocs > 1 else ''}) …", flush=True)
         lineouts = fu.load_lineouts(paths, line_start, line_end, nprocs)
@@ -530,6 +548,153 @@ class RegionsTuner:
 
 
 # ---------------------------------------------------------------------------
+# Movie mode
+# ---------------------------------------------------------------------------
+
+class TemperatureMovie:
+    """The regions-mode Tₑ/Tᵢ panel, one frame per dump, encoded to an MP4."""
+
+    def __init__(self, cfg, args):
+        self.cfg = cfg
+        (self.flash_dir, all_files, line_start, line_end,
+         _ic_index, self.t_ic_s, self.label) = _run_paths(cfg, args.config, args.los)
+        self.out_dir = yaml_edit.out_dir(self.flash_dir, args.output_dir,
+                                         cfg=cfg, config_path=args.config,
+                                         subdir=self.label)
+        self.frame_dir = os.path.join(self.out_dir, "temperature_frames")
+        os.makedirs(self.frame_dir, exist_ok=True)
+        self.mp4 = os.path.join(self.out_dir, "flash_temperature_movie.mp4")
+        self.fps = args.fps
+
+        selected = _dump_indices(args, len(all_files))
+        if not selected:
+            raise RuntimeError("No dumps selected (check --t-start/--t-stop/--stride).")
+
+        cached = None if args.reload else self._from_overview_npz(selected)
+        if cached is None:
+            cached = self._from_dumps(all_files, selected, line_start, line_end,
+                                      args.nprocs)
+        self.indices, self.time_ns, self.x_um, self.Te, self.Ti = cached
+
+        self.flash = flash_source.los_params(cfg, "flash", self.label)
+        self.per   = flash_source.los_params(cfg, "flash_dump_params", self.label)
+
+        # Freeze the axes over the whole run, so a change between frames is physics
+        # and not a rescaled axis.
+        T = np.concatenate([self.Te.ravel(), self.Ti.ravel()])
+        T = T[np.isfinite(T) & (T > 0)]
+        self.ylim = (0.7 * float(T.min()), 1.5 * float(T.max()))
+        self.xlim = (float(self.x_um.min()), float(self.x_um.max()))
+
+    def _from_overview_npz(self, selected):
+        """(indices, t_ns, x_um, Te, Ti) from this ray's flash_overview .npz, or None.
+
+        The overview already samples Tₑ/Tᵢ along this LOS for every dump and saves
+        the streaks in eV on a common µm grid, so the movie reads them back (the
+        same path flash_rh_prediction takes) instead of re-walking the 3D dumps with
+        yt, which is minutes per dump on a login node.
+        """
+        npz_files = sorted(f for f in os.listdir(self.out_dir)
+                           if f.startswith("flash_overview_") and f.endswith(".npz"))
+        if not npz_files:
+            return None
+        path = os.path.join(self.out_dir, npz_files[-1])
+        d = np.load(path, allow_pickle=True)
+        if not {"Te_streak", "Ti_streak", "x_um", "time_ns"} <= set(d.files):
+            return None
+
+        stored = (d["dump_indices"] if "dump_indices" in d.files
+                  else np.arange(len(d["time_ns"])))
+        rows = [i for i, idx in enumerate(stored) if idx in set(selected)]
+        if not rows:
+            return None
+        print(f"Reading Tₑ, Tᵢ for {len(rows)} dumps from {os.path.basename(path)} "
+              "(--reload to re-read the FLASH dumps instead)")
+        return (np.asarray(stored)[rows], np.asarray(d["time_ns"])[rows],
+                np.asarray(d["x_um"]), np.asarray(d["Te_streak"])[rows],
+                np.asarray(d["Ti_streak"])[rows])
+
+    def _from_dumps(self, all_files, selected, line_start, line_end, nprocs_arg):
+        """(indices, t_ns, x_um, Te, Ti) read straight off the FLASH plot files."""
+        paths = [all_files[i] for i in selected]
+        nprocs = _nprocs(nprocs_arg, len(paths))
+        print(f"Loading Tₑ, Tᵢ over {len(paths)} dumps "
+              f"({nprocs} process{'es' if nprocs > 1 else ''}) …", flush=True)
+        lineouts = fu.load_lineouts(paths, line_start, line_end, nprocs)
+        Te, time_ns, x_um = assemble_streak(lineouts, "Te")
+        Ti, _,       _    = assemble_streak(lineouts, "Ti")
+        return np.asarray(selected), time_ns, x_um, Te, Ti
+
+    def _markers(self, t_s, idx):
+        """(x_shock_um, x_down_um) for one dump — either is None when unavailable.
+
+        Same sources regions mode seeds its markers from: the hand-tuned
+        ``flash_dump_params.<idx>`` where that dump has been tuned, otherwise the
+        ``flash:`` straight trajectory projected to this dump's time.
+        """
+        per = self.per.get(idx, {})
+        if "x_shock_cm" in per:
+            x_shock = (float(per["x_shock_cm"]) * u.cm).to("um").value
+        else:
+            v_cms = float(self.flash.get("v_shock_est_cms", 0.0))
+            x0_cm = float(self.flash.get("x_shock_0_cm", 0.0))
+            t0_s  = float(self.flash.get("t_shock_0_s", self.t_ic_s))
+            x_shock = (shock.front_line(x0_cm, v_cms, t_s, t0_s)
+                       * u.cm).to("um").value if (v_cms or x0_cm) else None
+        x_down = (float(per["x_downstream_start_cm"]) * u.cm).to("um").value \
+            if "x_downstream_start_cm" in per else None
+        return x_shock, x_down
+
+    def render_frame(self, frame, idx, t_ns):
+        fig, axT = plt.subplots(figsize=plot_style.figsize(13, 5))
+        axT.semilogy(self.x_um, self.Te[frame], color="tab:blue", lw=1.8, label=r"$T_e$")
+        axT.semilogy(self.x_um, self.Ti[frame], color="tab:red",  lw=1.8, label=r"$T_i$")
+        axT.set_ylabel("Temperature [eV]")
+        axT.set_xlabel(r"distance along LOS [$\mu$m]")
+        axT.set_xlim(*self.xlim)
+        axT.set_ylim(*self.ylim)
+        axT.grid(alpha=0.3, which="both")
+        axT.set_title(f"electron & ion temperature — {self.label or 'LOS'}, "
+                      f"dump idx {idx} (t={t_ns:.2f} ns)")
+
+        x_shock, x_down = self._markers(float((t_ns * u.ns).to("s").value), idx)
+        if x_shock is not None:
+            axT.axvline(x_shock, color="k", ls="--", lw=1.6,
+                        label=f"shock {x_shock:.0f} µm")
+        if x_down is not None:
+            axT.axvline(x_down, color="0.5", ls=":", lw=1.6,
+                        label=f"downstream start {x_down:.0f} µm")
+        axT.legend(fontsize=9, loc="best")
+
+        png = os.path.join(self.frame_dir, f"frame_{frame:04d}.png")
+        fig.tight_layout()
+        fig.savefig(png, dpi=130)
+        plt.close(fig)
+        return png
+
+    def run(self):
+        print(f"\nmovie mode — {len(self.indices)} frames from "
+              f"{os.path.basename(self.flash_dir)}")
+        for frame, (idx, t_ns) in enumerate(zip(self.indices, self.time_ns)):
+            png = self.render_frame(frame, int(idx), float(t_ns))
+            print(f"  [{frame + 1:3d}/{len(self.indices)}] idx {idx} "
+                  f"(t={t_ns:.2f} ns) → {os.path.basename(png)}", flush=True)
+
+        # Frames are fixed-size (no bbox_inches="tight"), which is what lets ffmpeg
+        # encode them without rescaling artefacts.
+        cmd = ["ffmpeg", "-y", "-framerate", str(self.fps),
+               "-pattern_type", "glob",
+               "-i", os.path.join(self.frame_dir, "frame_*.png"),
+               "-c:v", "libx264", "-pix_fmt", "yuv420p",
+               "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", self.mp4]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            print(f"  wrote {self.mp4}  ({self.fps} fps)")
+        except (OSError, subprocess.CalledProcessError) as e:
+            print(f"  Warning: ffmpeg failed ({e}); frames are in {self.frame_dir}")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -537,7 +702,8 @@ def main():
     p = argparse.ArgumentParser(
         description="Interactively place a FLASH run's shock front (config write-back).")
     p.add_argument("--config", required=True, help="Path to analysis YAML config.")
-    p.add_argument("--mode", choices=("trajectory", "regions"), default="trajectory")
+    p.add_argument("--mode", choices=("trajectory", "regions", "movie"),
+                   default="trajectory")
     p.add_argument("--snapshot-idx", type=int, default=-1, dest="snapshot_idx",
                    help="(regions) plot-file index to tune (default -1 = last dump).")
     p.add_argument("--slice-axis", default="z", choices=("x", "y", "z"),
@@ -551,12 +717,18 @@ def main():
     p.add_argument("--no-slice", action="store_true",
                    help="(regions) skip the 2D density slice panel (line-outs only).")
     p.add_argument("--stride", type=int, default=1,
-                   help="(trajectory) dump stride for the streaks (default 1).")
+                   help="(trajectory/movie) dump stride (default 1 = every dump).")
     p.add_argument("--t-start", type=int, default=0, dest="t_start")
     p.add_argument("--t-stop", type=int, default=None, dest="t_stop",
-                   help="(trajectory) last plot-file index (default: all available).")
+                   help="(trajectory/movie) last plot-file index (default: all "
+                        "available).")
+    p.add_argument("--fps", type=int, default=8,
+                   help="(movie) frames per second of the encoded MP4 (default 8).")
+    p.add_argument("--reload", action="store_true",
+                   help="(movie) re-read the FLASH dumps with yt instead of the "
+                        "cached flash_overview .npz streaks.")
     p.add_argument("--nprocs", type=int, default=None,
-                   help="(trajectory) worker processes for loading dumps "
+                   help="(trajectory/movie) worker processes for loading dumps "
                         "(default: all node cores; 1 = serial).")
     p.add_argument("--output-dir", default=None)
     p.add_argument("--no-write", action="store_true",
@@ -574,6 +746,8 @@ def main():
 
     if args.mode == "trajectory":
         TrajectoryTuner(cfg, args).loop(config_path, args.no_write)
+    elif args.mode == "movie":
+        TemperatureMovie(cfg, args).run()
     else:
         RegionsTuner(cfg, args).loop(config_path, args.no_write)
 

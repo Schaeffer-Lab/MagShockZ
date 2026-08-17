@@ -68,9 +68,12 @@ from magshockz.common import analysis_utils
 from magshockz.common import flash_source
 from magshockz.common import plot_style
 
-# NB: intentionally NOT importing flash_utils — its module-level yt.enable_plugins()
+from magshockz.common import flash_utils as fu
+
+# NB: importing flash_utils is safe (its yt.enable_plugins() is opt-in, see
+# flash_utils.enable_osiris_fields) but CALLING enable_osiris_fields here is not — it
 # would register the OSIRIS derived fields globally and break the uniform-grid scene
-# (see the note above). find_plot_files is inlined below instead.
+# (see the note above). find_plot_files stays inlined below.
 
 K_TO_EV = 8.617333262e-5  # Kelvin -> eV (k_B/e)
 
@@ -413,13 +416,17 @@ def slice_los_figure(path, rays, out_path, *, field="ne", width=None,
     kw = dict(origin="native")
     if center is not None:
         kw["center"] = center
-    p = yt.SlicePlot(ds, "z", spec["yt"], **kw)
+    # tele/tion are stored in K; eV is the thermal equivalence (kT), which yt can only
+    # reach through a derived field, not set_unit.
+    yt_field = (fu.add_temperature_ev_field(ds, spec["yt"])
+                if spec["disp_unit"] == "eV" else spec["yt"])
+    p = yt.SlicePlot(ds, "z", yt_field, **kw)
     if width is not None:
         p.set_width((width, "cm"))
-    p.set_unit(spec["yt"], spec["disp_unit"])
-    p.set_cmap(spec["yt"], "magma")
+    p.set_unit(yt_field, spec["disp_unit"])
+    p.set_cmap(yt_field, "magma")
     if spec["tf"]["kind"] == "emissive":
-        p.set_zlim(spec["yt"], *spec["tf"]["bounds"])
+        p.set_zlim(yt_field, *spec["tf"]["bounds"])
     p.set_font({"size": 26 if publication else 16})
 
     for i, (label, start, end) in enumerate(rays):
@@ -567,19 +574,20 @@ def main():
     if args.slice_los:
         los_dir = os.path.join(out_dir, "los")
         os.makedirs(los_dir, exist_ok=True)
-        field = args.fields[0]
         for n, i in enumerate(indices):
-            path = os.path.join(los_dir, f"flash_los_slice_{field}_{i:04d}.png")
-            if not args.force and os.path.exists(path):
-                print(f"[{n + 1:3d}/{len(indices)}] slice exists — skip", flush=True)
-                continue
-            t_ns = slice_los_figure(
-                all_files[i], rays, path, field=field,
-                width=args.width if "width" in explicit_cam else None,
-                center=([args.focus[0], args.focus[1], 0.0]
-                        if "focus" in explicit_cam else None),
-                publication=args.publication)
-            print(f"[{n + 1:3d}/{len(indices)}] t={t_ns:.2f} ns -> {path}", flush=True)
+            for field in args.fields:
+                path = os.path.join(los_dir, f"flash_los_slice_{field}_{i:04d}.png")
+                if not args.force and os.path.exists(path):
+                    print(f"[{n + 1:3d}/{len(indices)}] {field} slice exists — skip",
+                          flush=True)
+                    continue
+                t_ns = slice_los_figure(
+                    all_files[i], rays, path, field=field,
+                    width=args.width if "width" in explicit_cam else None,
+                    center=([args.focus[0], args.focus[1], 0.0]
+                            if "focus" in explicit_cam else None),
+                    publication=args.publication)
+                print(f"[{n + 1:3d}/{len(indices)}] t={t_ns:.2f} ns -> {path}", flush=True)
         print(f"\nLines of sight: {', '.join(label for label, _, _ in rays)}")
         return
 

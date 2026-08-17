@@ -132,7 +132,29 @@ python scripts/warpx_heater_compare.py --config runs/magshockz_2d_heater.warpx.y
 # 6. the presentation figure: one matched time, n / v / T, plus the scorecard
 python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml \
     --figures profiles --cache
+# 7. the same piston panels as a movie over every dump (compute node -- see below)
+python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml \
+    --figures compare --cache --movie --jobs 24
 ```
+
+`--movie` animates one of the 2-D figures over **every** WarpX dump rather than the three
+or five matched times the stills use. `--movie` (bare, or `--movie compare`) writes
+`piston_comparison.mp4`: the piston-comparison panels with FLASH *beside* WarpX instead of
+above it, because a movie is watched on a landscape screen — same colormaps, same log
+ranges, same |B| contours, same equal aspect, so a grabbed frame reads as one column of
+the poster figure. `--movie slices` animates the stacked target-species slices instead.
+
+Two things to know before running it.
+
+- **It belongs on a compute node.** A frame costs ~50 s, nearly all of it the FLASH
+  slice, and there are ~70 of them: half an hour serial. `--jobs N` forks a pool over the
+  frame indices (each worker re-reads the dumps its own frames need, trading IO for wall
+  clock), which brings it to a few minutes. The 2-D maps deliberately bypass `--cache`:
+  seventy of them is ~500 MB and does not belong in a `frames.pkl` of line-outs.
+- **The FLASH panel advances at half the rate.** Each WarpX dump is paired with the FLASH
+  dump nearest it on the aligned clock, and FLASH has 35 dumps in the window against
+  WarpX's 72 — so FLASH holds for two frames at a time, and stops ~0.04 $\omega_{ci}^{-1}$
+  before WarpX does. Both panels carry their own time, which is where that is visible.
 
 `--figures profiles` writes `flash_vs_warpx_profiles.png` (+ `.txt`): the two codes'
 density, ambient bulk velocity and ambient temperatures at ONE matched time, with a table

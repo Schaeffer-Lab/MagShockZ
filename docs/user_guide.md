@@ -165,6 +165,13 @@ python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.
 # the poster figure alone: n / v / T at one matched time + the shocked-layer scorecard
 python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml \
     --figures profiles --cache [--profile-time 0.95]
+
+# piston_comparison.mp4: the same two-species panels over EVERY WarpX dump, FLASH
+# beside WarpX. --jobs renders frames in parallel, so run it on a compute node --
+# a frame costs ~50 s (the FLASH slice dominates) and there are ~70 of them.
+salloc -N 1 -C cpu -A m5032 -t 1:00:00
+python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml \
+    --figures compare --cache --movie --jobs 24 [--fps 10]
 ```
 
 The heater-off null control answers "is the ambient heating numerical?". Give it its own

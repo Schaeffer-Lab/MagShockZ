@@ -30,7 +30,12 @@ Usage
     python scripts/flash_overview.py --config config/flash_3d_noshield.yaml \\
         [--stride 1] [--t-start 0] [--t-stop 20] \\
         [--snapshot-idx N] [--search-halfwidth 5e-3] \\
+        [--slice-fields edens tion tele zbar] [--slices-only] \\
         [--output-dir results/FLASH_3D_noshield]
+
+--slice-fields picks which yt SlicePlots are saved at the snapshot dump (edens, tele,
+tion, zbar; default edens tion), and --slices-only stops after them, skipping the streak
+sweep that loads every dump.
 
 --snapshot-idx defaults to the source's IC dump — the dump that seeded the OSIRIS run
 (via-run mode), or ``ic_index`` (direct mode, default 0) — so the reported Mach numbers
@@ -41,6 +46,7 @@ dump) to look at a different snapshot.
 import argparse
 import os
 import sys
+from dataclasses import dataclass
 
 import matplotlib
 matplotlib.use("Agg")
@@ -110,10 +116,23 @@ FIELD_CMAPS = {
     "tele":              "inferno",
     "tion":              "inferno",
 }
-SLICE_CMAPS = {
-    "El_number_density": "viridis",
-    "tion":              "hot",
+@dataclass(frozen=True)
+class SliceField:
+    """One selectable ``--slice-fields`` entry: what to slice and how to draw it."""
+    field: tuple
+    title: str
+    cmap: str
+    log: bool = True
+    unit: str | None = None
+
+
+SLICE_FIELDS = {
+    "edens": SliceField(("gas", "El_number_density"), "Electron density", "viridis"),
+    "tele":  SliceField(("flash", "tele"), "Electron temperature", "hot", unit="eV"),
+    "tion":  SliceField(("flash", "tion"), "Ion temperature", "hot", unit="eV"),
+    "zbar":  SliceField(fu.ZBAR_FIELD, "Mean charge state", "cividis", log=False),
 }
+DEFAULT_SLICE_FIELDS = ("edens", "tion")
 
 
 def plot_streak(ax, time_ns, x_um, Z, *, label, cmap, log, shock_lines):
@@ -217,14 +236,21 @@ def mass_continuity_vshock(lineouts, *, hand_fit=None, gap_cm=0.003, win_cm=0.01
     return out
 
 
-def save_yt_slice(path, slice_axis, field, output_path, title, cmap):
-    """Create a yt SlicePlot and save to file.  ``field`` is a (ftype, name) tuple."""
+def save_yt_slice(path, slice_axis, spec: SliceField, output_path):
+    """Create a yt SlicePlot of one ``SliceField`` and save it to ``output_path``."""
     # load_for_osiris is plugin-registered, so the plugin has to be enabled explicitly --
     # flash_utils no longer does it at import (see flash_utils.enable_osiris_fields).
     fu.enable_osiris_fields()
     ds = yt.load_for_osiris(path)
+    field = spec.field
+    if field == fu.ZBAR_FIELD:
+        fu.add_zbar_field(ds)
+    elif spec.unit == "eV":
+        # K → eV is the thermal equivalence, not a unit conversion: yt needs a field.
+        field = fu.add_temperature_ev_field(ds, field)
     slc = yt.SlicePlot(ds, slice_axis, field)
-    slc.set_cmap(field, cmap)
+    slc.set_cmap(field, spec.cmap)
+    slc.set_log(field, spec.log)
     try:
         slc.annotate_timestamp(corner="upper_left")
     except TypeError:
@@ -232,6 +258,31 @@ def save_yt_slice(path, slice_axis, field, output_path, title, cmap):
         pass
     slc.save(output_path)
     return output_path
+
+
+def save_slices(snap_file, slice_axis, names, out_dir):
+    """Save one SlicePlot per requested ``--slice-fields`` name; return the paths written."""
+    written = []
+    for name in names:
+        spec = SLICE_FIELDS[name]
+        path = os.path.join(out_dir,
+                            f"flash_slice_{name}_{os.path.basename(snap_file)}.png")
+        try:
+            save_yt_slice(snap_file, slice_axis, spec, path)
+            print(f"Saved → {path}")
+            written.append(path)
+        except Exception as e:
+            print(f"  Warning: could not save {spec.title} slice: {e}")
+    return written
+
+
+def resolve_snapshot_index(requested, loaded_indices, ic_index):
+    """Position in the loaded-dump list for the snapshot: ``requested``, else the IC dump."""
+    if requested is not None:
+        return requested % len(loaded_indices)
+    if ic_index in loaded_indices:
+        return loaded_indices.index(ic_index)
+    return int(np.argmin(np.abs(np.asarray(loaded_indices) - ic_index)))
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +308,13 @@ def main():
     parser.add_argument("--slice-axis", default="z", dest="slice_axis",
                         choices=["x", "y", "z"],
                         help="Axis perpendicular to the 2D slice in the snapshot figure (default z).")
+    parser.add_argument("--slice-fields", nargs="+", default=list(DEFAULT_SLICE_FIELDS),
+                        dest="slice_fields", choices=sorted(SLICE_FIELDS),
+                        help="Fields to save yt SlicePlots of at the snapshot dump "
+                             f"(default {' '.join(DEFAULT_SLICE_FIELDS)}).")
+    parser.add_argument("--slices-only", action="store_true", dest="slices_only",
+                        help="Save the slices and stop, skipping the streak sweep over "
+                             "every dump (which loads the whole run).")
     parser.add_argument("--vshock-window-ns", type=float, nargs=2, default=(2.0, 5.0),
                         dest="vshock_window_ns", metavar=("LO", "HI"),
                         help="Time window [ns] over which the hand-fit shock front is "
@@ -309,15 +367,27 @@ def main():
     loaded_indices = [i for i in idx_range if i < len(all_files)]   # plot-file index = config key
     dump_files = [all_files[i] for i in loaded_indices]
 
-    if len(dump_files) < 2:
+    if not dump_files:
         raise RuntimeError(
-            f"Need ≥2 dumps for streaks; found {len(dump_files)} "
-            f"in range [{args.t_start}, {args.t_stop}] with stride {args.stride}."
+            f"No dumps in range [{args.t_start}, {args.t_stop}] with stride {args.stride}."
         )
 
     out_dir = yaml_edit.out_dir(source.flash_dir, args.output_dir,
                                 cfg=cfg, config_path=args.config, subdir=source.label)
     os.makedirs(out_dir, exist_ok=True)
+
+    snap_idx = resolve_snapshot_index(args.snapshot_idx, loaded_indices, flash_ic_index)
+
+    print(f"\nCreating yt slice plots …", flush=True)
+    save_slices(dump_files[snap_idx], args.slice_axis, args.slice_fields, out_dir)
+    if args.slices_only:
+        return
+
+    if len(dump_files) < 2:
+        raise RuntimeError(
+            f"Need ≥2 dumps for streaks; found {len(dump_files)} "
+            f"in range [{args.t_start}, {args.t_stop}] with stride {args.stride}."
+        )
 
     print(f"Config     : {args.config}")
     print(f"FLASH dir  : {flash_dir}   (from {source.source})")
@@ -395,17 +465,10 @@ def main():
     # ------------------------------------------------------------------
     # Mach numbers (from upstream average at the snapshot dump)
     # ------------------------------------------------------------------
-    if args.snapshot_idx is None:
-        # Default: the dump that seeded the OSIRIS run (flash_ic_index), mapped
-        # into the loaded dump list — so FLASH's Mach numbers are computed at the
-        # same physical moment the OSIRIS deck was built from, not an arbitrary
-        # (e.g. last) dump. See CLAUDE.md / mach-number-self-consistent-dump memory.
-        if flash_ic_index in loaded_indices:
-            snap_idx = loaded_indices.index(flash_ic_index)
-        else:
-            snap_idx = int(np.argmin(np.abs(np.asarray(loaded_indices) - flash_ic_index)))
-    else:
-        snap_idx = args.snapshot_idx % len(lineouts)
+    # snap_idx defaults to the dump that seeded the OSIRIS run (flash_ic_index), so
+    # FLASH's Mach numbers are computed at the same physical moment the OSIRIS deck was
+    # built from, not an arbitrary (e.g. last) dump. See CLAUDE.md /
+    # mach-number-self-consistent-dump memory.
     snap_lo    = lineouts[snap_idx]
     x_shock_snap = x_det_cm[snap_idx] if np.isfinite(x_det_cm[snap_idx]) else float(x_pred_cm[snap_idx])
     upstream   = np.asarray(snap_lo["x"]) > x_shock_snap
@@ -617,31 +680,6 @@ def main():
     snap_t_ns = float((snap_lo["t_s"] * u.s).to("ns").value)
     x_um_snap = snap_lo["x"].to("um").value
     x_shock_um = (x_shock_snap * u.cm).to("um").value
-
-    # Save yt slice plots separately
-    print(f"\nCreating yt slice plots …", flush=True)
-    try:
-        slice_edens_path = os.path.join(
-            out_dir, f"flash_slice_edens_{os.path.basename(snap_file)}.png"
-        )
-        save_yt_slice(snap_file, args.slice_axis, ("gas", "El_number_density"),
-                      slice_edens_path,
-                      f"Electron density — {os.path.basename(snap_file)}",
-                      SLICE_CMAPS["El_number_density"])
-        print(f"Saved → {slice_edens_path}")
-    except Exception as e:
-        print(f"  Warning: could not save density slice: {e}")
-
-    try:
-        slice_tion_path = os.path.join(
-            out_dir, f"flash_slice_tion_{os.path.basename(snap_file)}.png"
-        )
-        save_yt_slice(snap_file, args.slice_axis, ("flash", "tion"), slice_tion_path,
-                      f"Ion temperature — {os.path.basename(snap_file)}",
-                      SLICE_CMAPS["tion"])
-        print(f"Saved → {slice_tion_path}")
-    except Exception as e:
-        print(f"  Warning: could not save Ti slice: {e}")
 
     # Lineout figure (2 panels)
     fig2, ax2 = plt.subplots(1, 2, figsize=plot_style.figsize(15, 6.5),

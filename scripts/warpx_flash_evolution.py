@@ -8,10 +8,17 @@ Figures, selected with ``--figures`` (default: all):
                      FLASH and WarpX overlaid, one column per time
                  ``evolution_slices.png``    2-D target-species slices at the same times,
                      FLASH above WarpX
-                 ``evolution_slices.mp4``    the same slices as a movie (--movie)
   ``compare``    ``piston_comparison.png``   the same two codes' pistons ROTATED so they
                      expand up the page, at TRUE ASPECT RATIO, three times; both species
                      overlaid in one panel under their own colormaps, with |B| over the top
+
+``--movie`` animates one of those two over EVERY WarpX dump rather than the handful of
+matched times the stills use: ``--movie`` (or ``--movie compare``) writes
+``piston_comparison.mp4``, the same panels with FLASH beside WarpX instead of above it;
+``--movie slices`` writes ``evolution_slices.mp4``, the stacked target-species slices.
+Each WarpX dump is paired with the FLASH dump nearest it on the aligned clock, and FLASH
+has roughly half as many over the window, so its panel holds for two frames at a time --
+which is why every panel carries its own time.
   ``shock``      ``shock_rh_prediction.png`` WarpX only: line-outs along the shock normal
                      showing the ambient piled up AHEAD of the piston, with the
                      perpendicular-MHD jump predicted from the measured upstream
@@ -88,7 +95,7 @@ Usage
     python scripts/warpx_flash_evolution.py --config runs/magshockz_2d_heater.warpx.yaml \\
         [--figures compare shock streaks profiles] [--compare-times 3] [--n-times 5] \\
         [--profile-time 1.27] [--align clock|front] [--diag-dir ...] [--cache] \\
-        [--movie] [--pub]
+        [--movie [compare|slices]] [--fps 10] [--jobs 32] [--pub]
 
 Run in the `analysis` conda env (yt).
 """
@@ -147,6 +154,13 @@ assert {PISTON_IONS, AMBIENT_IONS, PISTON_ELECTRONS} <= set(deck_module.SPECIES_
 #: shock question and each stands alone, so --figures can ask for just one.
 FIGURES = ("evolution", "compare", "shock", "streaks", "profiles")
 
+#: Which figure ``--movie`` animates.  Both run over every WarpX dump -- a movie is the
+#: one output with no reason to subsample the series.
+MOVIE_FIGURES = ("compare", "slices")
+
+#: What each of those writes, beside its own ``<name>_frames/`` directory of PNGs.
+MOVIE_FILES = {"compare": "piston_comparison.mp4", "slices": "evolution_slices.mp4"}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -176,9 +190,17 @@ def parse_args() -> argparse.Namespace:
                         help="FLASH slice transverse half-width; default matches the "
                              "WarpX transverse box, so both codes' panels cover the "
                              "same region")
-    parser.add_argument("--movie", action="store_true",
-                        help="also render evolution_slices.mp4 over every WarpX frame")
+    parser.add_argument("--movie", nargs="?", const="compare", choices=MOVIE_FIGURES,
+                        default=None,
+                        help="render a movie over EVERY WarpX dump: 'compare' (the "
+                             "default when the flag is bare) animates the piston "
+                             "comparison with the two codes SIDE BY SIDE, 'slices' "
+                             "animates the stacked target-species slices")
     parser.add_argument("--fps", type=int, default=10)
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="movie frames to render in parallel. Each worker re-reads "
+                             "the dumps its own frames need, so this is for a compute "
+                             "node (salloc), not the login node.")
     parser.add_argument("--cache", metavar="PATH", nargs="?", const="",
                         help="reuse the measured frames from PATH if it exists, else "
                              "write them there (default path: <output-dir>/frames.pkl). "
@@ -1331,6 +1353,17 @@ class OverlayStyle:
     alpha_gamma: float
 
 
+def overlay_style(args: argparse.Namespace) -> OverlayStyle:
+    """The overlay CLI group as one value object, so the still and the movie agree."""
+    return OverlayStyle(
+        piston_cmap=species_colormap(args.piston_cmap, PISTON_RAMP),
+        ambient_cmap=species_colormap(args.ambient_cmap, AMBIENT_RAMP),
+        piston_range=tuple(args.piston_range),
+        ambient_range=tuple(args.ambient_range),
+        b_mode=args.b_overlay, b_levels=tuple(args.b_levels),
+        b_smooth=args.b_smooth, alpha_gamma=args.alpha_gamma)
+
+
 def species_colormap(name: str, ramp: tuple[str, ...]) -> Colormap:
     """A named matplotlib colormap, or the built-in hue-separated ramp for ``"default"``."""
     if name == "default":
@@ -1416,6 +1449,62 @@ def _draw_magnetic_overlay(ax, extent: tuple[float, float, float, float],
             color="w", alpha=0.55)
 
 
+def _piston_panels(flash: dict, warpx: dict, along: float) -> tuple:
+    """The ``(frame, extent, title)`` triple for each code at one matched instant.
+
+    ``extent`` is ``(transverse_lo, transverse_hi, along_lo, along_hi)`` -- the along-axis
+    runs up the page here, which is the rotation that separates this figure from
+    :func:`plot_slices`.
+    """
+    los_lo, los_hi, tr_lo, tr_hi = flash["extent_di"]
+    return (
+        (flash, (tr_lo, tr_hi, los_lo, los_hi),
+         f"FLASH  {wci(flash['t_gyro']):.2f} ${TIME_UNIT}$"),
+        (warpx, (float(warpx["x_di"].min()), float(warpx["x_di"].max()), 0.0, along),
+         f"WarpX  {wci(warpx['t_gyro']):.2f} ${TIME_UNIT}$"),
+    )
+
+
+def _draw_piston_panel(ax, frame: dict, extent: tuple[float, float, float, float],
+                       title: str, style: OverlayStyle, piston_norm: LogNorm,
+                       ambient_norm: LogNorm, transverse: float, along: float) -> None:
+    """One code at one instant: ambient under piston under |B|, at true aspect ratio."""
+    ax.set_facecolor(EMPTY_COLOR)
+    # .T on every map: the stored arrays are [transverse, along] and the vertical
+    # axis is the along-axis. Ambient first, piston over it -- the piston is what the
+    # eye should land on, and it fades to transparent where it is absent.
+    for key, norm, cmap in (("ambient_map", ambient_norm, style.ambient_cmap),
+                            ("density_map", piston_norm, style.piston_cmap)):
+        ax.imshow(_species_rgba(np.asarray(frame[key]).T, norm, cmap, style.alpha_gamma),
+                  origin="lower", extent=extent, aspect="equal",
+                  interpolation="nearest")
+    _draw_magnetic_overlay(ax, extent, frame["b_map"], style)
+    ax.set_title(title, fontsize=10)
+    ax.set_xlim(-transverse, transverse)
+    ax.set_ylim(0.0, along)
+
+
+def _piston_colorbars(fig, axes: list, style: OverlayStyle, piston_norm: LogNorm,
+                      ambient_norm: LogNorm, fraction: float) -> None:
+    """One colorbar per species -- each carries its own scale, so neither can be shared."""
+    for norm, cmap, label in (
+            (piston_norm, style.piston_cmap, r"$n_\mathrm{piston} / n_\mathrm{amb}$"),
+            (ambient_norm, style.ambient_cmap, r"$n_\mathrm{ambient} / n_\mathrm{amb}$")):
+        fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=axes, label=label,
+                     fraction=fraction, pad=0.01)
+
+
+def _field_note(style: OverlayStyle) -> str:
+    """What the white overlay means, read back from the style so it cannot disagree."""
+    return {
+        "contour": (r"$\theta_{Bn} = 90^\circ$, white = iso $|B|/B_0$ at "
+                    + ", ".join(f"{v:g}" for v in style.b_levels)),
+        "stipple": (r"$\theta_{Bn} = 90^\circ$, white dots = field lines end-on, "
+                    "one per unit flux"),
+        "none": r"$\theta_{Bn} = 90^\circ$",
+    }[style.b_mode]
+
+
 def plot_piston_comparison(flash_frames: list, warpx_frames: list, out_path: str,
                            style: OverlayStyle) -> None:
     """FLASH above WarpX, both expanding BOTTOM TO TOP, at true aspect ratio.
@@ -1449,29 +1538,11 @@ def plot_piston_comparison(flash_frames: list, warpx_frames: list, out_path: str
                  2 * panel_width * along / (2 * transverse) + 2.2))
 
     for col, (flash, warpx) in enumerate(zip(flash_frames, warpx_frames)):
-        los_lo, los_hi, tr_lo, tr_hi = flash["extent_di"]
-        panels = (
-            (axes[0][col], flash, (tr_lo, tr_hi, los_lo, los_hi),
-             f"FLASH  {wci(flash['t_gyro']):.2f} ${TIME_UNIT}$"),
-            (axes[1][col], warpx,
-             (float(warpx["x_di"].min()), float(warpx["x_di"].max()), 0.0, along),
-             f"WarpX  {wci(warpx['t_gyro']):.2f} ${TIME_UNIT}$"),
-        )
-        for ax, frame, extent, title in panels:
-            ax.set_facecolor(EMPTY_COLOR)
-            # .T on every map: the stored arrays are [transverse, along] and the vertical
-            # axis is now the along-axis. Ambient first, piston over it -- the piston is
-            # what the eye should land on, and it fades to transparent where it is absent.
-            for key, norm, cmap in (("ambient_map", ambient_norm, style.ambient_cmap),
-                                    ("density_map", piston_norm, style.piston_cmap)):
-                ax.imshow(_species_rgba(np.asarray(frame[key]).T, norm, cmap,
-                                        style.alpha_gamma),
-                          origin="lower", extent=extent, aspect="equal",
-                          interpolation="nearest")
-            _draw_magnetic_overlay(ax, extent, frame["b_map"], style)
-            ax.set_title(title, fontsize=10)
-            ax.set_xlim(-transverse, transverse)
-            ax.set_ylim(0.0, along)
+        for row, (frame, extent, title) in enumerate(
+                _piston_panels(flash, warpx, along)):
+            ax = axes[row][col]
+            _draw_piston_panel(ax, frame, extent, title, style, piston_norm,
+                               ambient_norm, transverse, along)
             if col != 0:
                 ax.set_yticklabels([])
 
@@ -1480,22 +1551,12 @@ def plot_piston_comparison(flash_frames: list, warpx_frames: list, out_path: str
     # field note down the margin.
     fig.supylabel(r"distance from target [$d_i$]")
     fig.supxlabel(r"transverse [$d_i$]")
-    for norm, cmap, label in (
-            (piston_norm, style.piston_cmap, r"$n_\mathrm{piston} / n_\mathrm{amb}$"),
-            (ambient_norm, style.ambient_cmap, r"$n_\mathrm{ambient} / n_\mathrm{amb}$")):
-        fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=axes.ravel().tolist(),
-                     label=label, fraction=min(0.05, 0.09 / n_cols), pad=0.01)
+    _piston_colorbars(fig, axes.ravel().tolist(), style, piston_norm, ambient_norm,
+                      min(0.05, 0.09 / n_cols))
 
     # Down the left margin, mirroring the colorbar labels on the right rather than
-    # spending title lines on it -- this figure goes on a poster.  Levels are read back
-    # from the style so the note cannot disagree with what was drawn.
-    field_note = {
-        "contour": (r"$\theta_{Bn} = 90^\circ$, white = iso $|B|/B_0$ at "
-                    + ", ".join(f"{v:g}" for v in style.b_levels)),
-        "stipple": (r"$\theta_{Bn} = 90^\circ$, white dots = field lines end-on, "
-                    "one per unit flux"),
-        "none": r"$\theta_{Bn} = 90^\circ$",
-    }[style.b_mode]
+    # spending title lines on it -- this figure goes on a poster.
+    field_note = _field_note(style)
     # Negative x puts it OUTSIDE the axes, clear of the y labels; bbox_inches="tight"
     # then grows the saved canvas to include it (constrained_layout will not reserve
     # space for a figure-level text, so placing it at x=0 lands it on the labels).
@@ -1694,22 +1755,144 @@ def plot_streaks(frames: list, trajectory: pp.FrontTrajectory | None,
     plt.close(fig)
 
 
-def render_movie(flash_frames: list, warpx_frames: list, out_path: str,
-                 fps: int) -> None:
-    """One frame per matched pair, stitched with ffmpeg."""
-    frame_dir = out_path + "_frames"
-    os.makedirs(frame_dir, exist_ok=True)
-    for index, (flash, warpx) in enumerate(zip(flash_frames, warpx_frames)):
-        plot_slices([flash], [warpx], 0.0, "clock",
-                    os.path.join(frame_dir, f"f{index:04d}.png"), caveat_title=False)
+#: Width of ONE panel of a piston movie frame, in inches; its height follows from the
+#: domain, because the panels are equal-aspect.  The margins are what the canvas needs
+#: AROUND the two panels -- two colorbars and the y labels across, two title lines and
+#: the x label down.  They have to be right: constrained_layout gives the panels
+#: whatever is left, so a margin that is too generous shows up as a band of empty
+#: canvas rather than as a bigger picture.
+MOVIE_PANEL_WIDTH = 3.4
+MOVIE_MARGIN_WIDTH = 2.4
+MOVIE_MARGIN_HEIGHT = 1.5
+
+#: Fraction of the canvas width held back for the rotated y label -- see the comment in
+#: :func:`plot_piston_frame` for why it has to be reserved by hand.
+MOVIE_LABEL_STRIP = 0.03
+
+
+def piston_frame_figsize(transverse: float, along: float) -> tuple[float, float]:
+    """Canvas for :func:`plot_piston_frame` from the domain half-width and length, in d_i.
+
+    Computed once by the caller and reused for every frame: the panels are
+    ``aspect="equal"``, so letting each frame size its own canvas would make the movie
+    breathe as the titles change width.
+    """
+    return (2 * MOVIE_PANEL_WIDTH + MOVIE_MARGIN_WIDTH,
+            MOVIE_PANEL_WIDTH * along / (2 * transverse) + MOVIE_MARGIN_HEIGHT)
+
+
+def plot_piston_frame(flash: dict, warpx: dict, out_path: str, style: OverlayStyle,
+                      figsize: tuple[float, float]) -> None:
+    """One movie frame of the piston comparison: FLASH beside WarpX at one instant.
+
+    Side by side rather than stacked as on the poster, because a movie is watched on a
+    landscape screen; everything else -- the two species' colormaps and log ranges, the
+    |B| overlay, equal aspect on two ``d_i`` axes -- is
+    :func:`plot_piston_comparison`'s, so a frame grabbed out of the movie reads as one
+    column of that figure.
+
+    Saved WITHOUT ``bbox_inches="tight"``: every frame has to come out the same pixel
+    size or ffmpeg refuses the sequence, and a tight box shrinks to whatever that frame's
+    own labels need.
+    """
+    transverse = float(np.abs(warpx["x_di"]).max())
+    along = float(warpx["z_di"].max())
+    piston_norm = LogNorm(*style.piston_range)
+    ambient_norm = LogNorm(*style.ambient_range)
+
+    fig, axes = plt.subplots(1, 2, squeeze=False, layout="constrained", figsize=figsize)
+    for ax, (frame, extent, title) in zip(axes[0], _piston_panels(flash, warpx, along)):
+        _draw_piston_panel(ax, frame, extent, title, style, piston_norm, ambient_norm,
+                           transverse, along)
+    axes[0][1].set_yticklabels([])
+
+    # Reserve the left strip EXPLICITLY. With equal-aspect axes carrying colorbars
+    # attached to the pair, constrained_layout (matplotlib 3.11) sets no room aside for
+    # the y label at all: it lands on the tick numbers, and once savefig re-runs the
+    # layout at its own dpi it falls off the canvas entirely. The poster figure escapes
+    # this only because bbox_inches="tight" grows the canvas afterwards, which a movie
+    # frame may not do.
+    fig.get_layout_engine().set(
+        rect=(MOVIE_LABEL_STRIP, 0.0, 1.0 - MOVIE_LABEL_STRIP, 1.0))
+    fig.supylabel(r"distance from target [$d_i$]")
+    fig.supxlabel(r"transverse [$d_i$]")
+    _piston_colorbars(fig, axes.ravel().tolist(), style, piston_norm, ambient_norm, 0.045)
+    # The field note goes under the title, not down the left margin as on the poster: a
+    # rotated figure-level text only fits there because bbox_inches="tight" grows the
+    # canvas around it, and a movie frame's canvas may not grow.
+    fig.suptitle("FLASH vs WarpX piston formation and expansion\n" + _field_note(style),
+                 fontsize=11)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+@dataclass
+class MovieWork:
+    """Everything one movie frame needs: read its pair, draw it, name the file.
+
+    ``pair(index)`` returns the ``(flash, warpx)`` dicts for that frame, read on demand
+    -- a movie over every dump would otherwise hold ~70 full-box WarpX maps, ~7 MB each,
+    at once.
+    """
+
+    n_frames: int
+    pair: Callable[[int], tuple[dict, dict]]
+    draw: Callable[[dict, dict, str], None]
+    frame_dir: str
+
+    def render(self, index: int) -> None:
+        flash, warpx = self.pair(index)
+        self.draw(flash, warpx, os.path.join(self.frame_dir, f"f{index:04d}.png"))
+
+
+#: Parked here by :func:`render_movie` before it forks, because a pool worker must be a
+#: top-level function whose arguments PICKLE -- and neither the frame readers nor the
+#: draw callback do.  Under the fork start method the children inherit this module's
+#: globals, so each is handed only a frame index.
+_MOVIE_WORK: MovieWork | None = None
+
+
+def _render_movie_frame(index: int) -> int:
+    assert _MOVIE_WORK is not None
+    _MOVIE_WORK.render(index)
+    return index
+
+
+def render_movie(work: MovieWork, out_path: str, fps: int, jobs: int = 1) -> None:
+    """Draw every frame, then stitch them with ffmpeg.
+
+    ``jobs`` > 1 forks a pool over the frame INDICES, which is what turns a
+    seventy-frame movie from half an hour into a few minutes on a compute node.  Each
+    worker re-reads whatever dumps its own frames need, so the pool trades repeated IO
+    for wall clock -- worth it because a FLASH slice costs ~40 s and there are more
+    cores than frames.
+    """
+    global _MOVIE_WORK
+
+    os.makedirs(work.frame_dir, exist_ok=True)
+    _MOVIE_WORK = work
+    indices = range(work.n_frames)
+
+    if jobs > 1:
+        import multiprocessing
+
+        with multiprocessing.get_context("fork").Pool(jobs) as pool:
+            for done, index in enumerate(
+                    pool.imap_unordered(_render_movie_frame, indices), start=1):
+                print(f"         frame {done}/{work.n_frames}", flush=True)
+    else:
+        for index in indices:
+            work.render(index)
+            print(f"         frame {index + 1}/{work.n_frames}", flush=True)
+
     command = ["ffmpeg", "-y", "-framerate", str(fps),
-               "-i", os.path.join(frame_dir, "f%04d.png"),
+               "-i", os.path.join(work.frame_dir, "f%04d.png"),
                "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p", out_path]
     try:
         subprocess.run(command, check=True, capture_output=True)
         print(f"Saved -> {out_path}")
     except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"NOTE: movie not rendered ({exc}); frames kept in {frame_dir}")
+        print(f"NOTE: movie not rendered ({exc}); frames kept in {work.frame_dir}")
 
 
 def main() -> None:
@@ -1854,13 +2037,7 @@ def main() -> None:
             read_warpx_maps(warpx_paths, compare_warpx_idx, warpx_frames_all,
                             scales, cache),
             save(os.path.join(out_dir, "piston_comparison.png")),
-            OverlayStyle(
-                piston_cmap=species_colormap(args.piston_cmap, PISTON_RAMP),
-                ambient_cmap=species_colormap(args.ambient_cmap, AMBIENT_RAMP),
-                piston_range=tuple(args.piston_range),
-                ambient_range=tuple(args.ambient_range),
-                b_mode=args.b_overlay, b_levels=tuple(args.b_levels),
-                b_smooth=args.b_smooth, alpha_gamma=args.alpha_gamma))
+            overlay_style(args))
         cache.save()
 
     if "shock" in args.figures and trajectory is not None:
@@ -1920,16 +2097,42 @@ def main() -> None:
             save(os.path.join(out_dir, "flash_vs_warpx_profiles.png")))
 
     if args.movie:
-        movie_flash_idx, movie_warpx_idx, _ = pick_matched_times(
-            flash_gyro, warpx_gyro, min(len(warpx_paths), 60), args.align,
-            flash_fronts=None,
-            warpx_fronts=np.array([f["front_di"] for f in warpx_frames_all]))
-        movie_flash = [read_flash(flash_paths[i]) for i in movie_flash_idx]
-        movie_warpx = read_warpx_maps(warpx_paths, movie_warpx_idx, warpx_frames_all,
-                                      scales, cache)
+        # EVERY WarpX dump gets a frame -- the movie is the one output with no reason to
+        # subsample -- each paired with the FLASH dump nearest it on the aligned clock.
+        # FLASH has half as many dumps over the window and stops 0.04 w_ci^-1 short of
+        # WarpX, so its panel holds while WarpX advances; both panels carry their own
+        # time, so the figure says which frames those are.
+        movie_flash_idx = [int(np.argmin(np.abs(flash_gyro - (t - offset))))
+                           for t in warpx_gyro]
+        print(f"movie  : {len(warpx_paths)} frames over "
+              f"{len(set(movie_flash_idx))} distinct FLASH dumps")
+
+        def movie_pair(index: int) -> tuple[dict, dict]:
+            """The (FLASH, WarpX) pair for one frame, its maps read on demand.
+
+            The maps deliberately bypass ``cache``: 70 of them is ~500 MB, which does not
+            belong in a ``frames.pkl`` whose other entries are line-outs.
+            """
+            return (read_flash(flash_paths[movie_flash_idx[index]]),
+                    {**warpx_frames_all[index],
+                     **warpx_maps(warpx_paths[index], scales)})
+
+        if args.movie == "compare":
+            style = overlay_style(args)
+            figsize = piston_frame_figsize(
+                float(scales.transverse_halfwidth_di),
+                float(warpx_frames_all[0]["z_di"].max()))
+            draw = lambda flash, warpx, path: plot_piston_frame(
+                flash, warpx, path, style, figsize)
+        else:
+            draw = lambda flash, warpx, path: plot_slices(
+                [flash], [warpx], 0.0, "clock", path, caveat_title=False)
+
+        movie_path = os.path.join(out_dir, MOVIE_FILES[args.movie])
+        render_movie(MovieWork(n_frames=len(warpx_paths), pair=movie_pair, draw=draw,
+                               frame_dir=movie_path + "_frames"),
+                     movie_path, args.fps, args.jobs)
         cache.save()
-        render_movie(movie_flash, movie_warpx,
-                     os.path.join(out_dir, "evolution_slices.mp4"), args.fps)
 
 
 if __name__ == "__main__":

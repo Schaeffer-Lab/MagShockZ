@@ -48,6 +48,45 @@ def enable_osiris_fields() -> None:
     yt.enable_plugins()
 
 
+ZBAR_FIELD = ("gas", "zbar")
+
+
+def add_temperature_ev_field(ds, flash_field: tuple) -> tuple:
+    """Register the eV (kT) counterpart of a FLASH temperature field and return its tuple.
+
+    FLASH stores ``tele``/``tion`` in Kelvin, and yt refuses ``set_unit(…, "eV")`` on them
+    because temperature and energy are different dimensions — the conversion is the
+    ``thermal`` equivalence (kT), not a unit change.  Doing it once as a derived field lets
+    a plot ask for the field and get eV, with no per-caller ``.to("eV", "thermal")``.
+    """
+    ev_field = ("gas", f"{flash_field[1]}_ev")
+
+    def _t_ev(field, data):
+        return data[flash_field].to("K").to("eV", "thermal")
+
+    ds.add_field(ev_field, function=_t_ev, sampling_type="cell", units="eV",
+                 display_name=r"$T_e$" if flash_field[1] == "tele" else r"$T_i$")
+    return ev_field
+
+
+def add_zbar_field(ds) -> tuple[str, str]:
+    """Register the mean ionisation ``Zbar`` on ``ds`` and return its field tuple.
+
+    FLASH's multi-temperature EOS carries the ionisation state as two per-cell moments:
+    ``ye`` = electrons per nucleon (n_e / ρN_A) and ``sumy`` = 1/Abar (nuclei per
+    nucleon), so their ratio is the charge per nucleus that the EOS table actually
+    returned — the quantity ``ms_<mat>Z`` in flash.par is only the *atomic* number.
+    Registered per-dataset rather than through the yt plugin, so it costs nothing to
+    anyone who does not ask for it.
+    """
+    def _zbar(field, data):
+        return data[("flash", "ye")] / data[("flash", "sumy")]
+
+    ds.add_field(ZBAR_FIELD, function=_zbar, sampling_type="cell",
+                 units="dimensionless", take_log=False, display_name=r"$\bar{Z}$")
+    return ZBAR_FIELD
+
+
 def find_plot_files(data_dir: str) -> list:
     """Return sorted list of FLASH plot-file paths in data_dir."""
     pattern = os.path.join(data_dir, "MagShockZ_hdf5_plt_cnt_*")
