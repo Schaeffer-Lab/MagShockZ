@@ -131,7 +131,24 @@ SLICE_FIELDS = {
     "tele":  SliceField(("flash", "tele"), "Electron temperature", "hot", unit="eV"),
     "tion":  SliceField(("flash", "tion"), "Ion temperature", "hot", unit="eV"),
     "zbar":  SliceField(fu.ZBAR_FIELD, "Mean charge state", "cividis", log=False),
+    # Collisionality. "knudsen" is the ion stopping range over the ion inertial length --
+    # >> 1 means Coulomb collisions cannot have built the shock ramp.  It needs the
+    # shock-frame speed and so is only available when --v-shock is given; the *_thermal
+    # pair needs nothing but the local state.  See flash_utils.add_collisionality_fields.
+    "knudsen":         SliceField(("gas", "knudsen"), "Ion stopping range / $d_i$", "coolwarm"),
+    "knudsen_thermal": SliceField(("gas", "knudsen_thermal"),
+                                  "Thermal ion mfp / $d_i$", "coolwarm"),
+    "ion_range":       SliceField(("gas", "ion_range"), "Ion stopping range", "magma"),
+    "ion_mfp_thermal": SliceField(("gas", "ion_mfp_thermal"), "Thermal ion mfp", "magma"),
+    "electron_mfp":    SliceField(("gas", "electron_mfp"), "Electron mfp", "magma"),
 }
+
+#: Slice fields served by ``flash_utils.add_collisionality_fields`` rather than by yt or
+#: the flash2osiris plugin.  The subset after the split needs ``--v-shock``.
+COLLISIONALITY_SLICES = {"knudsen", "knudsen_thermal", "ion_range", "ion_mfp_thermal",
+                         "electron_mfp"}
+SHOCK_FRAME_SLICES = {"knudsen", "ion_range"}
+
 DEFAULT_SLICE_FIELDS = ("edens", "tion")
 
 
@@ -236,14 +253,21 @@ def mass_continuity_vshock(lineouts, *, hand_fit=None, gap_cm=0.003, win_cm=0.01
     return out
 
 
-def save_yt_slice(path, slice_axis, spec: SliceField, output_path):
+def save_yt_slice(path, slice_axis, spec: SliceField, output_path, *, name=None,
+                  v_shock_cms=None, normal_axis="x"):
     """Create a yt SlicePlot of one ``SliceField`` and save it to ``output_path``."""
     # load_for_osiris is plugin-registered, so the plugin has to be enabled explicitly --
     # flash_utils no longer does it at import (see flash_utils.enable_osiris_fields).
     fu.enable_osiris_fields()
     ds = yt.load_for_osiris(path)
     field = spec.field
-    if field == fu.ZBAR_FIELD:
+    if name in COLLISIONALITY_SLICES:
+        if name in SHOCK_FRAME_SLICES and v_shock_cms is None:
+            raise ValueError(f"--slice-fields {name} needs --v-shock (the shock-frame speed "
+                             f"is what the ion must be stopped from); "
+                             f"{sorted(COLLISIONALITY_SLICES - SHOCK_FRAME_SLICES)} do not.")
+        fu.add_collisionality_fields(ds, v_shock=v_shock_cms, normal_axis=normal_axis)
+    elif field == fu.ZBAR_FIELD:
         fu.add_zbar_field(ds)
     elif spec.unit == "eV":
         # K → eV is the thermal equivalence, not a unit conversion: yt needs a field.
@@ -260,7 +284,8 @@ def save_yt_slice(path, slice_axis, spec: SliceField, output_path):
     return output_path
 
 
-def save_slices(snap_file, slice_axis, names, out_dir):
+def save_slices(snap_file, slice_axis, names, out_dir, *, v_shock_cms=None,
+                normal_axis="x"):
     """Save one SlicePlot per requested ``--slice-fields`` name; return the paths written."""
     written = []
     for name in names:
@@ -268,7 +293,8 @@ def save_slices(snap_file, slice_axis, names, out_dir):
         path = os.path.join(out_dir,
                             f"flash_slice_{name}_{os.path.basename(snap_file)}.png")
         try:
-            save_yt_slice(snap_file, slice_axis, spec, path)
+            save_yt_slice(snap_file, slice_axis, spec, path, name=name,
+                          v_shock_cms=v_shock_cms, normal_axis=normal_axis)
             print(f"Saved → {path}")
             written.append(path)
         except Exception as e:
@@ -312,6 +338,14 @@ def main():
                         dest="slice_fields", choices=sorted(SLICE_FIELDS),
                         help="Fields to save yt SlicePlots of at the snapshot dump "
                              f"(default {' '.join(DEFAULT_SLICE_FIELDS)}).")
+    parser.add_argument("--v-shock", type=float, default=None, dest="v_shock_cms",
+                        metavar="CM_S",
+                        help="Shock speed along --shock-normal [cm/s].  Required by the "
+                             f"{sorted(SHOCK_FRAME_SLICES)} slice fields: the ion must be "
+                             "stopped from its speed in the SHOCK frame, not the lab frame.")
+    parser.add_argument("--shock-normal", default="x", dest="shock_normal",
+                        choices=["x", "y", "z"],
+                        help="Shock-normal axis for --v-shock (default x).")
     parser.add_argument("--slices-only", action="store_true", dest="slices_only",
                         help="Save the slices and stop, skipping the streak sweep over "
                              "every dump (which loads the whole run).")
@@ -379,7 +413,8 @@ def main():
     snap_idx = resolve_snapshot_index(args.snapshot_idx, loaded_indices, flash_ic_index)
 
     print(f"\nCreating yt slice plots …", flush=True)
-    save_slices(dump_files[snap_idx], args.slice_axis, args.slice_fields, out_dir)
+    save_slices(dump_files[snap_idx], args.slice_axis, args.slice_fields, out_dir,
+                v_shock_cms=args.v_shock_cms, normal_axis=args.shock_normal)
     if args.slices_only:
         return
 

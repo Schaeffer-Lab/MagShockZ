@@ -19,6 +19,7 @@ The lineout returns **unyt arrays** (yt.units) so the units travel with the data
 import functools
 import glob
 import os
+from dataclasses import dataclass
 from multiprocessing import Pool
 
 import numpy as np
@@ -460,3 +461,270 @@ def mach_numbers(
             "beta_i": (P_i / P_B).to("dimensionless")}
 
 
+
+
+COLLISIONALITY_FIELDS = (
+    "ion_inertial_length", "ion_gyroradius",
+    "ion_mfp_thermal", "knudsen_thermal",
+    "shock_frame_speed", "ion_mfp", "ion_range", "knudsen", "gyro_ratio",
+    "electron_mfp",
+)
+
+
+def add_collisionality_fields(ds, *, v_shock=None, normal_axis: str = "x",
+                              ion_species: str = "Al", nodes: int = 64) -> dict:
+    """Register Coulomb collisionality fields on ``ds`` and return ``{name: field tuple}``.
+
+    Answers "is the shock collisionless?" cell by cell: how far an ion travels before
+    Coulomb collisions stop it, against the ion inertial length the shock transitions over.
+    The physics lives in ``magshockz.common.collisionality``; this only feeds it FLASH's
+    ``n_i``, ``T_i``, ``T_e``, ``Zbar`` and velocity, and puts units back on the answer.
+
+    The ``*_thermal`` fields need nothing but the local state.  The shock fields need the
+    velocity of the ion **in the frame of the plasma it is entering**, which for a shock is
+    the shock frame -- so they are registered only when ``v_shock`` is given.
+
+    Parameters
+    ----------
+    v_shock : shock speed along ``normal_axis``, as a unyt quantity or a float in cm/s.
+        The shock-frame speed is then ``|v_normal - v_shock|``.
+    normal_axis : shock-normal axis, one of ``"x"``, ``"y"``, ``"z"``.
+    ion_species : plasmapy element symbol for the shocked ions (FLASH's chamber is Al).
+    nodes : quadrature nodes for the stopping range; 64 is within 0.2% of the converged
+        value and keeps the per-chunk allocation small.
+
+    Registered per-dataset rather than through the yt plugin, for the reason given in
+    ``enable_osiris_fields``: it must cost nothing to anyone who does not ask for it.
+    """
+    from magshockz.common import collisionality as coll
+
+    add_zbar_field(ds)
+
+    def state(data):
+        """FLASH's local plasma state as bare SI arrays, in the order the physics wants."""
+        return dict(
+            n_i=np.asarray(data[("gas", "ion_number_density")].to("m**-3").value, dtype=float),
+            n_e=np.asarray(data[("gas", "El_number_density")].to("m**-3").value, dtype=float),
+            T_i=np.asarray(data[("flash", "tion")].to("K").to("eV", "thermal").value, dtype=float),
+            T_e=np.asarray(data[("flash", "tele")].to("K").to("eV", "thermal").value, dtype=float),
+            z=np.asarray(data[ZBAR_FIELD].value, dtype=float),
+        )
+
+    def ion_slowing(data, v):
+        s = state(data)
+        return coll.slowing_down(v=v, n_field=s["n_i"], T_field=s["T_i"],
+                                 z_test=s["z"], z_field=s["z"],
+                                 test=ion_species, field=ion_species,
+                                 n_e=s["n_e"], T_e=s["T_e"], nodes=nodes)
+
+    def thermal_speed(data):
+        s = state(data)
+        m_i = coll.mass_number(ion_species) * 1.66053906892e-27
+        return np.sqrt(2.0 * s["T_i"] * 1.602176634e-19 / m_i)
+
+    def shock_frame_speed(data):
+        v_normal = data[("gas", f"velocity_{normal_axis}")].to("m/s").value
+        v_sh = v_shock.to("m/s").value if hasattr(v_shock, "to") else float(v_shock) * 1e-2
+        return np.abs(np.asarray(v_normal, dtype=float) - v_sh)
+
+    def scales(data):
+        """(d_i, rho_i) in metres, from the local density, charge state and field."""
+        s = state(data)
+        b = np.asarray(data[("gas", "magnetic_field_magnitude")].to("T").value, dtype=float)
+        return coll.shock_scales(n_e=s["n_e"], T_i=s["T_i"], z=s["z"], b=b,
+                                 ion_species=ion_species)
+
+    registered = {}
+
+    def register(name, fn, units, log=True):
+        field = ("gas", name)
+        ds.add_field(field, function=fn, sampling_type="cell", units=units, take_log=log)
+        registered[name] = field
+
+    register("ion_inertial_length", lambda field, data: scales(data)[0] * data.ds.units.m, "m")
+    register("ion_gyroradius", lambda field, data: scales(data)[1] * data.ds.units.m, "m")
+    register("ion_mfp_thermal",
+             lambda field, data: ion_slowing(data, thermal_speed(data)).mfp * data.ds.units.m, "m")
+    # The thermal comparison uses the mfp, not the range: an ion already at the background
+    # temperature has nothing to be stopped from, so its "range" is identically zero.
+    register("knudsen_thermal",
+             lambda field, data: (ion_slowing(data, thermal_speed(data)).mfp / scales(data)[0])
+             * data.ds.units.dimensionless, "dimensionless")
+    def electron_mfp(data):
+        s = state(data)
+        v_te = np.sqrt(2.0 * s["T_e"] * 1.602176634e-19 / 9.1093837139e-31)
+        return coll.slowing_down(v=v_te, n_field=s["n_i"], T_field=s["T_i"],
+                                 z_test=1.0, z_field=s["z"], test="e-", field=ion_species,
+                                 n_e=s["n_e"], T_e=s["T_e"], nodes=nodes).mfp
+
+    register("electron_mfp", lambda field, data: electron_mfp(data) * data.ds.units.m, "m")
+
+    if v_shock is None:
+        return registered
+
+    register("shock_frame_speed", lambda field, data: shock_frame_speed(data) * data.ds.units.m / data.ds.units.s,
+             "m/s", log=False)
+    register("ion_mfp", lambda field, data: ion_slowing(data, shock_frame_speed(data)).mfp * data.ds.units.m, "m")
+    register("ion_range",
+             lambda field, data: ion_slowing(data, shock_frame_speed(data)).stopping_range * data.ds.units.m, "m")
+    register("knudsen",
+             lambda field, data: (ion_slowing(data, shock_frame_speed(data)).stopping_range / scales(data)[0])
+             * data.ds.units.dimensionless, "dimensionless")
+    register("gyro_ratio",
+             lambda field, data: (ion_slowing(data, shock_frame_speed(data)).stopping_range / scales(data)[1])
+             * data.ds.units.dimensionless, "dimensionless")
+    return registered
+
+
+# ---------------------------------------------------------------------------
+# flash.par — the FLASH run's single source of truth
+# ---------------------------------------------------------------------------
+
+def parse_flash_par(path: str) -> dict:
+    """Parse a ``flash.par`` into ``{lowercase key: value}``.
+
+    Values are converted to ``float``/``bool`` where they parse as such and left as
+    stripped strings (quotes removed) otherwise, so a caller reads
+    ``par["ed_gradorder"]`` without caring how the deck spelled it.  FLASH itself is
+    case-insensitive on parameter names, hence the lowercasing.
+    """
+    par: dict = {}
+    with open(path) as fh:
+        for raw in fh:
+            line = raw.split("#")[0].split("!")[0].strip()
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip().lower()
+            val = val.strip().strip('"').strip("'").strip()
+            if val.lower() in (".true.", ".false."):
+                par[key] = val.lower() == ".true."
+                continue
+            try:
+                par[key] = float(val.replace("d", "e") if "d" in val.lower() and
+                                 "e" not in val.lower() else val)
+            except ValueError:
+                par[key] = val
+    return par
+
+
+@dataclass(frozen=True)
+class LaserBeam:
+    """One ``ed_*`` beam of a FLASH laser deck, in CGS.
+
+    ``lens`` and ``target`` are the beam axis endpoints as FLASH states them; the
+    ray bundle fills a cross section of semi-axis ``semi_axis`` at the target with
+    the ``gaussian2D`` weight ``exp(-(r/gaussian_radius)**exponent)``.
+    """
+
+    lens: tuple
+    target: tuple
+    semi_axis: float                 # ed_targetSemiAxisMajor [cm]
+    gaussian_radius: float           # ed_gaussianRadiusMajor [cm]
+    gaussian_exponent: float
+    wavelength_um: float
+    n_rays: int
+    pulse_time_s: np.ndarray         # ed_time_<pulse>_* [s]
+    pulse_power_erg_s: np.ndarray    # ed_power_<pulse>_* [erg/s]
+
+    @property
+    def axis(self) -> np.ndarray:
+        """Unit vector from the lens toward the target."""
+        d = np.asarray(self.target, float) - np.asarray(self.lens, float)
+        return d / np.linalg.norm(d)
+
+    @property
+    def critical_density_cm3(self) -> float:
+        """nc = 1.1148e21 / λ[µm]² cm⁻³ — the same constant FLASH's Config uses."""
+        return 1.1148e21 / self.wavelength_um**2
+
+    def power_erg_s(self, t_s: float) -> float:
+        """Beam power at time ``t_s``, linearly interpolated between pulse sections."""
+        return float(np.interp(t_s, self.pulse_time_s, self.pulse_power_erg_s,
+                               left=0.0, right=0.0))
+
+    def energy_erg(self) -> float:
+        """Total energy in the pulse, ∫P dt over the tabulated sections."""
+        return float(np.trapezoid(self.pulse_power_erg_s, self.pulse_time_s))
+
+
+def laser_beams(par: dict) -> list:
+    """Build a :class:`LaserBeam` per ``ed_numberOfBeams`` entry of a parsed deck.
+
+    FLASH's beam/pulse parameters are flat, 1-indexed and suffixed
+    (``ed_lensX_1``, ``ed_time_<pulse>_<section>``); this rehydrates them.  Powers
+    are converted W → erg/s because FLASH's laser deck is stated in Watts while
+    everything else in the deck (and in ``depo``) is CGS.
+    """
+    beams = []
+    for b in range(1, int(par.get("ed_numberofbeams", 0)) + 1):
+        p = int(par["ed_pulsenumber_%d" % b])
+        n_sec = int(par["ed_numberofsections_%d" % p])
+        t = np.array([par["ed_time_%d_%d" % (p, s)] for s in range(1, n_sec + 1)])
+        w = np.array([par["ed_power_%d_%d" % (p, s)] for s in range(1, n_sec + 1)])
+        beams.append(LaserBeam(
+            lens=tuple(par["ed_lens%s_%d" % (a, b)] for a in "xyz"),
+            target=tuple(par["ed_target%s_%d" % (a, b)] for a in "xyz"),
+            semi_axis=par["ed_targetsemiaxismajor_%d" % b],
+            gaussian_radius=par.get("ed_gaussianradiusmajor_%d" % b,
+                                    par["ed_targetsemiaxismajor_%d" % b]),
+            gaussian_exponent=par.get("ed_gaussianexponent_%d" % b, 2.0),
+            wavelength_um=par["ed_wavelength_%d" % b],
+            n_rays=int(par["ed_numberofrays_%d" % b]),
+            pulse_time_s=t,
+            pulse_power_erg_s=w * 1.0e7,
+        ))
+    return beams
+
+
+# ---------------------------------------------------------------------------
+# Inverse bremsstrahlung, exactly as FLASH's laser unit computes it
+# ---------------------------------------------------------------------------
+#
+# These mirror ed_CoulombFactor.F90 and ed_inverseBremsstrahlungRate.F90 rather than
+# using plasmapy's collision frequencies: the point of the comparison is to isolate
+# *numerics* (ray count, gradient order, mesh) from formula convention, which only
+# works if the analytic side is FLASH's own closure.  plasmapy's Spitzer frequency
+# and NRL's lnΛ differ from these by tens of percent — enough to swamp the effect
+# being measured.
+
+_E_ESU = 4.80320471257e-10      # statcoulomb
+_M_E_G = 9.1093837139e-28       # g
+_K_B_ERG_K = 1.380649e-16       # erg/K
+_C_CM_S = 2.99792458e10         # cm/s
+
+
+def flash_coulomb_factor(zbar, t_ele_K, n_ele_cm3):
+    """lnΛ = ln[(3/2Ze³)·√((kT)³/πnₑ)], floored at 1 (ed_CoulombFactor.F90)."""
+    kT = _K_B_ERG_K * np.asarray(t_ele_K, float)
+    lam = (1.5 / (np.asarray(zbar, float) * _E_ESU**3)) * np.sqrt(
+        kT**3 / (np.pi * np.asarray(n_ele_cm3, float)))
+    return np.maximum(np.log(lam), 1.0)
+
+
+def flash_ib_rate(zbar, t_ele_K, n_ele_cm3, n_crit_cm3):
+    """ν = (4/3)√(2π/mₑ)·(Ze⁴/n_c)·(nₑ²/(kT)^{3/2})·lnΛ  [1/s].
+
+    Straight from ed_inverseBremsstrahlungRate.F90.  Note the nₑ/n_c factor is
+    already inside: this is the *absorption* rate, not the bare e-i collision rate.
+    """
+    z = np.asarray(zbar, float)
+    ne = np.asarray(n_ele_cm3, float)
+    kT = _K_B_ERG_K * np.asarray(t_ele_K, float)
+    lnL = flash_coulomb_factor(z, t_ele_K, ne)
+    two_e2_ne = 2.0 * _E_ESU * _E_ESU * ne
+    return (z * two_e2_ne * two_e2_ne / (3.0 * n_crit_cm3)) \
+        * np.sqrt(2.0 * np.pi / (_M_E_G * kT**3)) * lnL
+
+
+def flash_ib_opacity(zbar, t_ele_K, n_ele_cm3, n_crit_cm3):
+    """Inverse-bremsstrahlung absorption coefficient κ [1/cm].
+
+    κ = ν / v_group with the ray group speed v_group = c·√(1 − nₑ/n_c): FLASH
+    attenuates a ray's power as dP/ds = −κP while stepping it at that speed.
+    Returns ``(kappa, ln_lambda)``.
+    """
+    ne = np.asarray(n_ele_cm3, float)
+    x = np.clip(ne / n_crit_cm3, 0.0, 0.999)
+    nu = flash_ib_rate(zbar, t_ele_K, ne, n_crit_cm3)
+    return nu / (_C_CM_S * np.sqrt(1.0 - x)), flash_coulomb_factor(zbar, t_ele_K, ne)

@@ -1,5 +1,24 @@
 # Collisionality of the MagShockZ upstream — FLASH-derived
 
+> **Superseded in part, 2026-08-21.** The numbers below are still reproducible, but they use
+> a definition that overstates the collisionless margin by **~8x**. The calculation now lives
+> in `magshockz/common/collisionality.py` (tested against plasmapy's
+> `SingleParticleCollisionFrequencies`), and two corrections apply:
+>
+> 1. **The `(1 + m_a/m_b)` factor was missing** from the slowing-down rate — a factor of 2 for
+>    like ions. `Slowing.mfp_lorentz` reproduces the old convention; `Slowing.mfp` is correct.
+> 2. **A mean free path is not a stopping range.** Because `lambda ~ v^4`, an ion's mfp
+>    collapses as it slows, so the distance it actually penetrates is
+>    `int dv / nu_s(v) = mfp / 4` in the beam limit — not `mfp`. `Slowing.stopping_range` is
+>    the honest "can collisions stop it over the ramp" number.
+>
+> Together these move the headline `lambda_ii / d_i ~ 26` (los45, 9 ns) to a **stopping range
+> over `d_i` of ~3**. That is still collisionless, but the margin is single-digit rather than
+> comfortable, and the weakest column (los45 at 12 ns) falls close to 1. The table below has
+> **not** been regenerated; do that with `scripts/flash_overview.py --slice-fields knudsen
+> --v-shock <cm/s>` (grid-wide) or `scripts/collisionality_explorer.py` (parameter sweep)
+> before quoting a number on a poster.
+
 Companion to [upstream_parameters.md](upstream_parameters.md). Every input here is taken
 from that document's upstream table (the corrected sqrt(4pi) `FLASH_MagShockZ3D-corrected`
 dataset); nothing is re-measured from the dumps. The purpose is a single citable number for

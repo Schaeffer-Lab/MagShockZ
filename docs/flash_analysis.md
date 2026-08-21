@@ -133,3 +133,43 @@ unit-tested in CI like the rest of the package:
 Caveat worth repeating in any write-up: shadowgraphy brightness responds to `∇²∫nₑ dl`
 through the probe, not to a point sample of nₑ — front *positions* are comparable, signal
 *amplitudes* are not.
+
+## Laser ray trace and deposition: `scripts/flash_laser_audit.py`
+
+Not shock analysis — this one asks whether FLASH's laser is depositing energy where it
+should on the way *in*. Four checks, run together or individually with `--checks`:
+
+- **`energy`** reads `<basenm>_LaserEnergyProfile.dat`. FLASH writes it every step from
+  `ed_printEnergyStamp` with no runtime switch, and it holds the laser energy pumped
+  into the domain and the energy rays carried back out. If the file is missing from a
+  run directory it was lost in a copy, not never written — for the 3D MagShockZ runs on
+  scratch it is missing, and reconstructing the out-of-domain fraction then takes a
+  checkpoint and arithmetic.
+- **`deposition`** sums ρ·`depo`·dV, split by material mass fraction and binned by
+  distance from the beam axis and along it. **Checkpoints only**: `depo` and `lase` are
+  in `unk`, but the production `plot_var` list omits them, so no plot file of the 3D runs
+  carries a deposition field. `depo` is `TYPE: PER_MASS`, i.e. the specific energy
+  deposited during the step the file was written in, so the sum is an energy and
+  compares directly with P·dt. That comparison is only valid with
+  `ed_depoReuseMaxSteps = -1`; with reuse on, `depo` is a previous step's value and only
+  FLASH's own counters get rescaled.
+- **`tau`** integrates FLASH's *own* κ_IB along a fan of rays across the beam footprint
+  and reports the Gaussian-weighted Σw·(1 − e^−τ) up to the first cell with
+  `targ > 1/2`. `flash_utils.flash_ib_opacity` / `flash_coulomb_factor` mirror
+  `ed_inverseBremsstrahlungRate.F90` and `ed_CoulombFactor.F90` line for line rather
+  than using plasmapy's Spitzer frequency and NRL's lnΛ — deliberately, and against the
+  usual preference for `formulary`: the point is to isolate *numerics* from formula
+  convention, and the two conventions differ by enough to swamp what is being measured.
+- **`mesh`** reports cell size, `lrefine` and nₑ/n_c along the beam axis, with the beam
+  radius in cells, over the ambient the beam crosses (`cham > 1/2`, before the target) —
+  the plume in between is neither ambient nor target and its keV temperatures would
+  otherwise be reported as if they described the background.
+
+Beam geometry, pulse and wavelength come from the run's `flash.par` via
+`flash_utils.parse_flash_par` / `laser_beams`, so the deck stays the source of truth
+and nothing about the beam is restated in a config. `--run-dir` is a FLASH run
+directory; no analysis config or line of sight is involved.
+
+The FLASH-side counterpart — the 2D Simulation unit, the `IO_writeIntegralQuantities`
+override that reports the per-material deposition live, and the convergence-scan deck
+generator — lives in `flash/`; see `flash/README.md` for what the audit concluded.

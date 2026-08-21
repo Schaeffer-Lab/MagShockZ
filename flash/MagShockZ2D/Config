@@ -1,0 +1,110 @@
+# Configuration for MagShockZ2D — the 2D (x-y) reduction of the MagShockZ3D
+# laser-driven magnetized shock problem, built for the laser ray-trace /
+# deposition convergence scan (see README.md).
+#
+# Layered in y, which is the beam-propagation direction, exactly as the 3D problem:
+#
+#     y > sim_PlasmaThickiness                          vac   (chamber wall)
+#     sim_AblatorThickiness < y < sim_PlasmaThickiness  cham  (Al foam ambient)
+#     0 < y < sim_AblatorThickiness                     targ  (Si target)
+#     y < 0                                             vac   (backing)
+#
+# The applied field is uniform and OUT OF PLANE (magz): the MagShockZ shock is
+# perpendicular, so no in-plane field lines exist and a 2D x-y plane carries the
+# whole field as a single cell-centered component.  Parameter names deliberately
+# match the 3D deck (including its spelling of "Thickiness") so a 3D flash.par
+# transfers its values here verbatim rather than being re-typed.
+#
+# Setup line:
+#
+#   ./setup -auto MagShockZ2D -2d -nxb=16 -nyb=16 +cartesian +hdf5typeio \
+#           species=cham,targ,vac +mtmmmt +laser +usm3t +mgd mgd_meshgroups=1 \
+#           -maxblocks=500 -site perlmutter.nersc.gov
+
+REQUIRES Driver
+REQUIRES physics/Hydro
+REQUIRES physics/Diffuse/DiffuseFluxBased
+REQUIRES physics/Eos/EosMain/Tabulated
+
+USESETUPVARS ThreeT
+
+IF ThreeT
+   REQUESTS physics/Diffuse/DiffuseMain/Unsplit
+   REQUESTS physics/sourceTerms/Heatexchange/HeatexchangeMain/Spitzer
+   REQUESTS physics/materialProperties/Conductivity/ConductivityMain/JiHeld
+   REQUIRES physics/materialProperties/MagneticResistivity/MagneticResistivityMain
+   REQUESTS physics/materialProperties/MagneticResistivity/MagneticResistivityMain/SpitzerHighZ
+ENDIF
+
+##########################
+#                        #
+#   GEOMETRY PARAMETERS  #
+#                        #
+##########################
+
+D sim_AblatorThickiness Thickness of the solid target slab, from y = 0 upward [cm]
+PARAMETER sim_AblatorThickiness REAL 2000.e-4
+
+D sim_PlasmaThickiness Top of the ambient plasma column; vacuum above it [cm]
+PARAMETER sim_PlasmaThickiness  REAL 40000.e-4
+
+##########################
+#                        #
+#   FIELD PARAMETERS     #
+#                        #
+##########################
+
+D sim_MagField Uniform out-of-plane field Bz, in FLASH's unitsystem=none units
+D & (Gauss / sqrt(4 pi)), so 7 T = 70 kG is 1.9747e4 here
+PARAMETER sim_MagField REAL 1.9747e+04
+
+##########################
+#                        #
+#   MATERIAL PARAMETERS  #
+#                        #
+##########################
+
+# Target: Si slab.
+D sim_rhoTarg Initial target density
+PARAMETER sim_rhoTarg   REAL 2.33
+D sim_teleTarg Initial target electron temperature
+PARAMETER sim_teleTarg  REAL 500.02911375
+D sim_tionTarg Initial target ion temperature
+PARAMETER sim_tionTarg  REAL 500.02911375
+D sim_tradTarg Initial target radiation temperature
+PARAMETER sim_tradTarg  REAL 500.002911375
+D sim_eosTarg target EOS type
+PARAMETER sim_eosTarg   STRING "eos_tab" ["eos_tab","eos_gam"]
+
+# Ambient: Al foam.  This is the material whose laser heating the scan is about.
+D sim_rhoCham Initial chamber density
+PARAMETER sim_rhoCham   REAL 0.0000373
+D sim_teleCham Initial chamber electron temperature
+PARAMETER sim_teleCham  REAL 114060.
+D sim_tionCham Initial chamber ion temperature
+PARAMETER sim_tionCham  REAL 114060.
+D sim_tradCham Initial chamber radiation temperature
+PARAMETER sim_tradCham  REAL 114060.
+D sim_eosCham chamber EOS type
+PARAMETER sim_eosCham   STRING "eos_tab" ["eos_tab","eos_gam"]
+
+# Backing / wall: stainless steel.
+D sim_rhoVac Initial backing density
+PARAMETER sim_rhoVac   REAL 7.75
+D sim_teleVac Initial backing electron temperature
+PARAMETER sim_teleVac  REAL 100.02911375
+D sim_tionVac Initial backing ion temperature
+PARAMETER sim_tionVac  REAL 100.02911375
+D sim_tradVac Initial backing radiation temperature
+PARAMETER sim_tradVac  REAL 100.0002911375
+D sim_eosVac backing EOS type
+PARAMETER sim_eosVac   STRING "eos_tab" ["eos_tab","eos_gam"]
+
+##########################
+#                        #
+#   LASER DIAGNOSTICS    #
+#                        #
+##########################
+
+D lase_variable Irradiance deposited by the EnergyDeposition unit, cf. ed_irradVarName
+VARIABLE lase TYPE: PER_VOLUME
